@@ -26,6 +26,7 @@ source("R/mod_clock_drift.R")
 source("R/mod_config.R")
 source("R/mod_methods.R")
 source("R/mod_plot_timeseries.R")
+source("R/mod_pulse_trace.R")
 source("R/utils.R")
 
 # Increase file upload size limit
@@ -122,14 +123,35 @@ ui <- dashboardPage(
 
       # JavaScript to auto-close Shiny notifications (blue toasts) after 5 seconds
       tags$script(HTML("
+        // Method 1: Listen for Shiny notification event
         $(document).on('shiny:notification', function(event) {
-          // Auto-close notification after 5 seconds
+          console.log('Notification event fired:', event.notification.id);
           setTimeout(function() {
-            if (event.notification && event.notification.id) {
-              Shiny.notifications.remove(event.notification.id);
-            }
+            console.log('Removing notification:', event.notification.id);
+            Shiny.notifications.remove(event.notification.id);
           }, 5000);
         });
+
+        // Method 2: Watch for notification elements being added to DOM
+        var observer = new MutationObserver(function(mutations) {
+          mutations.forEach(function(mutation) {
+            mutation.addedNodes.forEach(function(node) {
+              if (node.classList && node.classList.contains('shiny-notification')) {
+                console.log('Notification element added to DOM:', node.id);
+                setTimeout(function() {
+                  console.log('Removing notification element:', node.id);
+                  if (node.parentNode) {
+                    node.parentNode.removeChild(node);
+                  }
+                }, 5000);
+              }
+            });
+          });
+        });
+
+        // Start observing
+        observer.observe(document.body, { childList: true, subtree: true });
+        console.log('Notification auto-close script loaded');
       "))
     ),
 
@@ -189,18 +211,9 @@ ui <- dashboardPage(
 
         plotTimeseriesUI("plot_timeseries"),
 
-        fluidRow(
-          box(
-            width = 12,
-            title = "Pulse Trace Viewer",
-            status = "info",
-            collapsible = TRUE,
-            collapsed = TRUE,
+        hr(),
 
-            p("Pulse trace viewer will be implemented in Session 5."),
-            p("Click on time series plot to view individual pulse temperature traces.")
-          )
-        )
+        pulseTraceUI("pulse_trace")
       ),
 
       # Tab 5: Export ----
@@ -288,8 +301,11 @@ server <- function(input, output, session) {
     rv$vh_results <- vh_results()
   })
 
-  # Module: Plot Time Series
-  plotTimeseriesServer("plot_timeseries", vh_results)
+  # Module: Plot Time Series (returns selected pulse ID from clicks)
+  selected_pulse_id <- plotTimeseriesServer("plot_timeseries", vh_results)
+
+  # Module: Pulse Trace Viewer
+  pulseTraceServer("pulse_trace", reactive(rv$corrected_data), selected_pulse_id)
 
   # Data Summary Output
   output$data_summary <- renderPrint({

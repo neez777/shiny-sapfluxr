@@ -37,6 +37,11 @@ plotTimeseriesUI <- function(id) {
 
           hr(),
 
+          h5("Quality Flags to Display"),
+          uiOutput(ns("flag_checkboxes")),
+
+          hr(),
+
           h5("Time Range"),
           p(class = "help-text", style = "font-size: 0.9em; color: #666;",
             "Set the date/time range to display. Updates automatically when you use the range slider."),
@@ -99,6 +104,15 @@ plotTimeseriesUI <- function(id) {
           collapsed = TRUE,
 
           uiOutput(ns("plot_info"))
+        ),
+
+        box(
+          width = NULL,
+          title = "Quality Control Summary",
+          status = "warning",
+          solidHeader = TRUE,
+
+          uiOutput(ns("qc_summary"))
         )
       ),
 
@@ -125,6 +139,9 @@ plotTimeseriesServer <- function(id, vh_results) {
     # Store current axis ranges
     current_xrange <- reactiveVal(NULL)
     current_yrange <- reactiveVal(NULL)
+
+    # Store selected pulse ID from click
+    selected_pulse_id <- reactiveVal(NULL)
 
     # Initialize date/time range inputs with full data range
     observe({
@@ -172,6 +189,59 @@ plotTimeseriesServer <- function(id, vh_results) {
       )
     })
 
+    # Available quality flags from data
+    available_flags <- reactive({
+      req(vh_results())
+      if (!"quality_flag" %in% names(vh_results())) {
+        return(c("OK"))
+      }
+      unique(vh_results()$quality_flag)
+    })
+
+    # Dynamic quality flag checkboxes
+    output$flag_checkboxes <- renderUI({
+      flags <- available_flags()
+      req(length(flags) > 0)
+
+      # Create friendly labels for flags
+      flag_labels <- c(
+        "OK" = "OK (No issues)",
+        "DATA_OUTLIER" = "Outliers",
+        "DATA_SUSPECT" = "Suspect",
+        "DATA_MISSING" = "Missing",
+        "DATA_ILLOGICAL" = "Illogical",
+        "CALC_FAILED" = "Calc Failed",
+        "CALC_INFINITE" = "Calc Infinite",
+        "CALC_EXTREME" = "Calc Extreme"
+      )
+
+      # Only show flags that exist in data
+      choices <- flags
+      names(choices) <- sapply(flags, function(f) {
+        if (f %in% names(flag_labels)) flag_labels[[f]] else f
+      })
+
+      # Default: show all flags
+      checkboxGroupInput(
+        session$ns("quality_flags"),
+        NULL,
+        choices = choices,
+        selected = flags
+      )
+    })
+
+    # Flag colors (consistent with scientific QC standards)
+    flag_colors <- c(
+      "OK" = "#2ca02c",              # Green
+      "DATA_SUSPECT" = "#ff7f0e",    # Orange
+      "DATA_OUTLIER" = "#d62728",    # Red
+      "DATA_MISSING" = "#7f7f7f",    # Gray
+      "DATA_ILLOGICAL" = "#8b0000",  # Dark red
+      "CALC_FAILED" = "#9467bd",     # Purple
+      "CALC_INFINITE" = "#e377c2",   # Pink
+      "CALC_EXTREME" = "#bcbd22"     # Yellow-green
+    )
+
     # Filtered data based on selections
     filtered_data <- reactive({
       req(vh_results())
@@ -187,6 +257,14 @@ plotTimeseriesServer <- function(id, vh_results) {
       # Filter by sensor position
       data <- data %>%
         filter(sensor_position %in% input$sensor_position)
+
+      # Filter by quality flags (if quality_flags input exists and has selections)
+      if (!is.null(input$quality_flags) && length(input$quality_flags) > 0) {
+        if ("quality_flag" %in% names(data)) {
+          data <- data %>%
+            filter(quality_flag %in% input$quality_flags)
+        }
+      }
 
       data
     })
@@ -229,6 +307,66 @@ plotTimeseriesServer <- function(id, vh_results) {
             )
           )
         }
+      )
+    })
+
+    # Quality Control Summary
+    output$qc_summary <- renderUI({
+      req(vh_results())
+      data <- vh_results()
+
+      # Check if quality_flag column exists
+      if (!"quality_flag" %in% names(data)) {
+        return(p("No quality control data available."))
+      }
+
+      # Calculate flag counts across ALL data (not just filtered)
+      flag_counts <- data %>%
+        count(quality_flag) %>%
+        arrange(quality_flag)
+
+      total_points <- sum(flag_counts$n)
+
+      # Create colored list items
+      flag_items <- lapply(seq_len(nrow(flag_counts)), function(i) {
+        flag <- flag_counts$quality_flag[i]
+        count <- flag_counts$n[i]
+        pct <- round(count / total_points * 100, 1)
+
+        # Get color for this flag
+        color <- if (flag %in% names(flag_colors)) {
+          flag_colors[[flag]]
+        } else {
+          "#333333"  # Default gray
+        }
+
+        # Create friendly label
+        flag_label <- switch(flag,
+          "OK" = "OK (No issues)",
+          "DATA_OUTLIER" = "Outliers",
+          "DATA_SUSPECT" = "Suspect",
+          "DATA_MISSING" = "Missing",
+          "DATA_ILLOGICAL" = "Illogical",
+          "CALC_FAILED" = "Calc Failed",
+          "CALC_INFINITE" = "Calc Infinite",
+          "CALC_EXTREME" = "Calc Extreme",
+          flag  # Default to flag name
+        )
+
+        tags$li(
+          style = paste0("color: ", color, "; font-weight: bold;"),
+          paste0(flag_label, ": ", format(count, big.mark = ","),
+                 " (", pct, "%)")
+        )
+      })
+
+      tagList(
+        p(strong(paste("Total Measurements:", format(total_points, big.mark = ",")))),
+        tags$ul(style = "list-style-type: none; padding-left: 10px;",
+          flag_items
+        ),
+        p(style = "font-size: 0.85em; color: #666; margin-top: 10px;",
+          "Use the 'Quality Flags to Display' filter above to show/hide specific flags on the plot.")
       )
     })
 
@@ -400,40 +538,56 @@ plotTimeseriesServer <- function(id, vh_results) {
         markers <- quality_markers()
 
         if (nrow(markers) > 0) {
-          # Filter markers to displayed methods/positions
+          # Filter markers to displayed methods/positions and selected flags
           markers <- markers %>%
             filter(method %in% input$methods,
                    sensor_position %in% input$sensor_position)
 
+          # Also filter by selected quality flags if input exists
+          if (!is.null(input$quality_flags) && length(input$quality_flags) > 0) {
+            markers <- markers %>%
+              filter(quality_flag %in% input$quality_flags)
+          }
+
           if (nrow(markers) > 0) {
             # Define marker shapes by quality flag
             flag_shapes <- c(
-              "WARNING" = "triangle-up",
-              "ERROR" = "x",
-              "SUSPECT" = "diamond"
-            )
-
-            flag_colours <- c(
-              "WARNING" = "#FFA500",
-              "ERROR" = "#FF0000",
-              "SUSPECT" = "#FF00FF"
+              "DATA_OUTLIER" = "x",
+              "DATA_SUSPECT" = "diamond",
+              "DATA_MISSING" = "square",
+              "DATA_ILLOGICAL" = "triangle-up",
+              "CALC_FAILED" = "circle-open",
+              "CALC_INFINITE" = "star",
+              "CALC_EXTREME" = "triangle-down"
             )
 
             for (flag in unique(markers$quality_flag)) {
               flag_data <- markers %>% filter(quality_flag == !!flag)
 
-              # Get shape and color safely - use defaults if not defined
+              # Get shape and color using our flag_colors definition
               flag_shape <- if (flag %in% names(flag_shapes)) {
                 flag_shapes[[flag]]
               } else {
                 "circle"  # Default shape
               }
 
-              flag_color <- if (flag %in% names(flag_colours)) {
-                flag_colours[[flag]]
+              flag_color <- if (flag %in% names(flag_colors)) {
+                flag_colors[[flag]]
               } else {
                 "#999999"  # Default gray
               }
+
+              # Friendly label
+              flag_label <- switch(flag,
+                "DATA_OUTLIER" = "Outlier",
+                "DATA_SUSPECT" = "Suspect",
+                "DATA_MISSING" = "Missing",
+                "DATA_ILLOGICAL" = "Illogical",
+                "CALC_FAILED" = "Calc Failed",
+                "CALC_INFINITE" = "Calc Infinite",
+                "CALC_EXTREME" = "Calc Extreme",
+                flag
+              )
 
               p <- p %>%
                 add_trace(
@@ -442,15 +596,15 @@ plotTimeseriesServer <- function(id, vh_results) {
                   y = ~Vh_cm_hr,
                   type = "scatter",
                   mode = "markers",
-                  name = flag,
+                  name = flag_label,
                   marker = list(
                     symbol = flag_shape,
-                    size = 10,
+                    size = 8,
                     color = flag_color,
-                    line = list(width = 1, color = "black")
+                    line = list(width = 1, color = "white")
                   ),
                   hovertemplate = paste0(
-                    "<b>", flag, "</b><br>",
+                    "<b>", flag_label, "</b><br>",
                     "Time: %{x}<br>",
                     "Vh: %{y:.2f} cm/hr<br>",
                     "<extra></extra>"
@@ -506,7 +660,8 @@ plotTimeseriesServer <- function(id, vh_results) {
             scale = 2
           )
         ) %>%
-        event_register("plotly_relayout")
+        event_register("plotly_relayout") %>%
+        event_register("plotly_click")
 
         p
 
@@ -534,34 +689,29 @@ plotTimeseriesServer <- function(id, vh_results) {
 
       if (!is.null(relayout_data)) {
         cat("\n=== PLOTLY RELAYOUT EVENT ===\n")
-        cat("Event data:", names(relayout_data), "\n")
+        cat("Event data fields:", paste(names(relayout_data), collapse = ", "), "\n")
 
-        # Check if this is a range update (not just a resize)
-        if (!is.null(relayout_data$`xaxis.range[0]`)) {
-          xrange <- c(relayout_data$`xaxis.range[0]`, relayout_data$`xaxis.range[1]`)
-          current_xrange(xrange)
+        # Print all values for debugging
+        for (name in names(relayout_data)) {
+          cat("  ", name, "=", relayout_data[[name]], "\n")
+        }
 
-          cat("xaxis.range[0]:", relayout_data$`xaxis.range[0]`, "\n")
-          cat("xaxis.range[1]:", relayout_data$`xaxis.range[1]`, "\n")
+        # Check if this is a range update
+        # Plotly can send either "xaxis.range" (a vector) or "xaxis.range[0]" and "xaxis.range[1]"
+        if (!is.null(relayout_data$xaxis.range) && length(relayout_data$xaxis.range) == 2) {
+          # Single field with vector [start, end]
+          xrange <- relayout_data$xaxis.range
 
-          # Plotly sends dates as ISO strings like "2024-01-15 12:30:00"
-          # Try to parse them directly as POSIXct
-          start_date <- tryCatch({
-            as.POSIXct(relayout_data$`xaxis.range[0]`, tz = "UTC")
-          }, error = function(e) {
-            # If that fails, try converting from milliseconds
-            as.POSIXct(xrange[1] / 1000, origin = "1970-01-01", tz = "UTC")
-          })
+          cat("xaxis.range vector:", xrange[1], "to", xrange[2], "\n")
 
-          end_date <- tryCatch({
-            as.POSIXct(relayout_data$`xaxis.range[1]`, tz = "UTC")
-          }, error = function(e) {
-            as.POSIXct(xrange[2] / 1000, origin = "1970-01-01", tz = "UTC")
-          })
+          # Parse dates - plotly sends ISO strings
+          start_date <- as.POSIXct(xrange[1], tz = "UTC")
+          end_date <- as.POSIXct(xrange[2], tz = "UTC")
 
           cat("Converted start_date:", as.character(start_date), "\n")
           cat("Converted end_date:", as.character(end_date), "\n")
 
+          # Update date inputs
           shinyWidgets::updateAirDateInput(
             session = session,
             inputId = "start_datetime",
@@ -573,6 +723,41 @@ plotTimeseriesServer <- function(id, vh_results) {
             inputId = "end_datetime",
             value = end_date
           )
+
+          # Store current range
+          current_xrange(xrange)
+
+          cat("Date inputs updated\n")
+
+        } else if (!is.null(relayout_data$`xaxis.range[0]`)) {
+          # Separate fields for start and end
+          xrange <- c(relayout_data$`xaxis.range[0]`, relayout_data$`xaxis.range[1]`)
+
+          cat("xaxis.range[0]:", relayout_data$`xaxis.range[0]`, "\n")
+          cat("xaxis.range[1]:", relayout_data$`xaxis.range[1]`, "\n")
+
+          # Parse dates
+          start_date <- as.POSIXct(xrange[1], tz = "UTC")
+          end_date <- as.POSIXct(xrange[2], tz = "UTC")
+
+          cat("Converted start_date:", as.character(start_date), "\n")
+          cat("Converted end_date:", as.character(end_date), "\n")
+
+          # Update date inputs
+          shinyWidgets::updateAirDateInput(
+            session = session,
+            inputId = "start_datetime",
+            value = start_date
+          )
+
+          shinyWidgets::updateAirDateInput(
+            session = session,
+            inputId = "end_datetime",
+            value = end_date
+          )
+
+          # Store current range
+          current_xrange(xrange)
 
           cat("Date inputs updated\n")
         }
@@ -679,6 +864,61 @@ plotTimeseriesServer <- function(id, vh_results) {
           "yaxis.autorange" = TRUE
         ))
     })
+
+    # Capture click events on plot points
+    observeEvent(event_data("plotly_click", source = "timeseries"), {
+      click_data <- event_data("plotly_click", source = "timeseries")
+
+      if (!is.null(click_data)) {
+        cat("\n=== PLOT CLICK EVENT ===\n")
+        cat("Click data:", names(click_data), "\n")
+        cat("Point number:", click_data$pointNumber, "\n")
+        cat("Curve number:", click_data$curveNumber, "\n")
+
+        # Get the clicked point's data
+        # The customdata field should contain pulse_id if we set it
+        req(vh_results())
+        data <- filtered_data()
+
+        # Get curve number and point number
+        curve_num <- click_data$curveNumber + 1  # plotly is 0-indexed
+        point_num <- click_data$pointNumber + 1  # plotly is 0-indexed
+
+        cat("Adjusted curve:", curve_num, "point:", point_num, "\n")
+
+        # Try to extract pulse_id from the clicked point
+        # We need to figure out which row in filtered_data this corresponds to
+        # For now, use the x value (datetime) to find the pulse
+        clicked_datetime <- click_data$x
+
+        cat("Clicked datetime:", clicked_datetime, "\n")
+
+        # Find pulse_id for this datetime
+        matching_row <- data %>%
+          filter(abs(as.numeric(difftime(datetime, clicked_datetime, units = "secs"))) < 1) %>%
+          slice(1)
+
+        if (nrow(matching_row) > 0) {
+          pulse_id <- matching_row$pulse_id[1]
+          cat("Found pulse_id:", pulse_id, "\n")
+          selected_pulse_id(pulse_id)
+
+          # Show notification
+          shinyWidgets::sendSweetAlert(
+            session = session,
+            title = "Pulse Selected",
+            text = paste("Viewing Pulse ID:", pulse_id),
+            type = "info",
+            timer = 2000
+          )
+        } else {
+          cat("No matching pulse found\n")
+        }
+      }
+    })
+
+    # Return the selected pulse ID reactive
+    return(selected_pulse_id)
 
   })
 }

@@ -234,6 +234,23 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
           })
         }
 
+        # Apply quality control
+        shinyWidgets::updateProgressBar(
+          session = session,
+          id = "calc_progress",
+          value = 90,
+          title = "Running Quality Control..."
+        )
+
+        # Suppress verbose output and get just the flagged data frame
+        results <- progressr::without_progress({
+          sapfluxr::flag_vh_quality(
+            results,
+            verbose = FALSE,
+            return_full_report = FALSE  # Just get data frame, not full report
+          )
+        })
+
         # Complete progress
         shinyWidgets::updateProgressBar(
           session = session,
