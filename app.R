@@ -118,7 +118,19 @@ ui <- dashboardPage(
     # Load custom CSS and favicon
     tags$head(
       tags$link(rel = "stylesheet", type = "text/css", href = "custom.css"),
-      tags$link(rel = "icon", type = "image/png", href = "sapfluxR.png")
+      tags$link(rel = "icon", type = "image/png", href = "sapfluxR.png"),
+
+      # JavaScript to auto-close Shiny notifications (blue toasts) after 5 seconds
+      tags$script(HTML("
+        $(document).on('shiny:notification', function(event) {
+          // Auto-close notification after 5 seconds
+          setTimeout(function() {
+            if (event.notification && event.notification.id) {
+              Shiny.notifications.remove(event.notification.id);
+            }
+          }, 5000);
+        });
+      "))
     ),
 
     tabItems(

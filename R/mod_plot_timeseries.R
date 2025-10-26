@@ -46,8 +46,7 @@ plotTimeseriesUI <- function(id) {
             "Start Date/Time:",
             value = NULL,
             timepicker = TRUE,
-            dateFormat = "yyyy-MM-dd",
-            timeFormat = "HH:mm"
+            dateFormat = "yyyy-MM-dd HH:mm"
           ),
 
           shinyWidgets::airDatepickerInput(
@@ -55,8 +54,7 @@ plotTimeseriesUI <- function(id) {
             "End Date/Time:",
             value = NULL,
             timepicker = TRUE,
-            dateFormat = "yyyy-MM-dd",
-            timeFormat = "HH:mm"
+            dateFormat = "yyyy-MM-dd HH:mm"
           ),
 
           actionButton(
@@ -317,8 +315,8 @@ plotTimeseriesServer <- function(id, vh_results) {
         cat("Color names:", paste(names(colours), collapse = ", "), "\n")
         req(!is.null(colours), length(colours) > 0)
 
-        # Create base plot
-        p <- plot_ly()
+        # Create base plot with source for event tracking
+        p <- plot_ly(source = "timeseries")
 
         # Add trace for each method
         for (method in unique(data$method)) {
@@ -535,15 +533,34 @@ plotTimeseriesServer <- function(id, vh_results) {
       relayout_data <- event_data("plotly_relayout", source = "timeseries")
 
       if (!is.null(relayout_data)) {
+        cat("\n=== PLOTLY RELAYOUT EVENT ===\n")
+        cat("Event data:", names(relayout_data), "\n")
+
         # Check if this is a range update (not just a resize)
         if (!is.null(relayout_data$`xaxis.range[0]`)) {
           xrange <- c(relayout_data$`xaxis.range[0]`, relayout_data$`xaxis.range[1]`)
           current_xrange(xrange)
 
-          # Update date/time inputs to match slider
-          # Convert from plotly timestamp (milliseconds since epoch) to POSIXct
-          start_date <- as.POSIXct(xrange[1] / 1000, origin = "1970-01-01", tz = "UTC")
-          end_date <- as.POSIXct(xrange[2] / 1000, origin = "1970-01-01", tz = "UTC")
+          cat("xaxis.range[0]:", relayout_data$`xaxis.range[0]`, "\n")
+          cat("xaxis.range[1]:", relayout_data$`xaxis.range[1]`, "\n")
+
+          # Plotly sends dates as ISO strings like "2024-01-15 12:30:00"
+          # Try to parse them directly as POSIXct
+          start_date <- tryCatch({
+            as.POSIXct(relayout_data$`xaxis.range[0]`, tz = "UTC")
+          }, error = function(e) {
+            # If that fails, try converting from milliseconds
+            as.POSIXct(xrange[1] / 1000, origin = "1970-01-01", tz = "UTC")
+          })
+
+          end_date <- tryCatch({
+            as.POSIXct(relayout_data$`xaxis.range[1]`, tz = "UTC")
+          }, error = function(e) {
+            as.POSIXct(xrange[2] / 1000, origin = "1970-01-01", tz = "UTC")
+          })
+
+          cat("Converted start_date:", as.character(start_date), "\n")
+          cat("Converted end_date:", as.character(end_date), "\n")
 
           shinyWidgets::updateAirDateInput(
             session = session,
@@ -556,6 +573,8 @@ plotTimeseriesServer <- function(id, vh_results) {
             inputId = "end_datetime",
             value = end_date
           )
+
+          cat("Date inputs updated\n")
         }
 
         if (!is.null(relayout_data$`yaxis.range[0]`)) {
@@ -593,34 +612,44 @@ plotTimeseriesServer <- function(id, vh_results) {
     apply_time_range <- function() {
       req(input$start_datetime, input$end_datetime)
 
-      # Convert POSIXct to plotly timestamps (milliseconds since epoch)
-      start_ms <- as.numeric(input$start_datetime) * 1000
-      end_ms <- as.numeric(input$end_datetime) * 1000
+      cat("\n=== APPLYING TIME RANGE ===\n")
+      cat("Start datetime:", as.character(input$start_datetime), "\n")
+      cat("End datetime:", as.character(input$end_datetime), "\n")
+
+      # Convert POSIXct to ISO date strings for plotly
+      start_str <- format(input$start_datetime, "%Y-%m-%d %H:%M:%S")
+      end_str <- format(input$end_datetime, "%Y-%m-%d %H:%M:%S")
+
+      cat("Formatted start:", start_str, "\n")
+      cat("Formatted end:", end_str, "\n")
 
       # Update plot range using plotlyProxy
       plotly::plotlyProxy("timeseries_plot", session) %>%
         plotly::plotlyProxyInvoke("relayout", list(
-          "xaxis.range" = c(start_ms, end_ms)
+          "xaxis.range" = list(start_str, end_str)
         ))
 
-      # Store current range
-      current_xrange(c(start_ms, end_ms))
+      # Store current range (as ISO strings)
+      current_xrange(c(start_str, end_str))
+
+      cat("Plot range applied\n")
     }
 
     # Apply range when button clicked
     observeEvent(input$apply_range, {
+      cat("Apply range button clicked\n")
       apply_time_range()
     })
 
     # Preserve time range when filters change (methods, sensor position, etc.)
+    # Use priority = -1 to run AFTER the plot has rendered
     observeEvent(list(input$methods, input$sensor_position, input$show_points, input$show_quality_flags), {
       # Only apply if user has set a custom range (date/time inputs are set)
-      req(input$start_datetime, input$end_datetime)
-
-      # Small delay to allow plot to render, then apply range
-      Sys.sleep(0.1)
-      apply_time_range()
-    }, ignoreNULL = FALSE, ignoreInit = TRUE)
+      if (!is.null(input$start_datetime) && !is.null(input$end_datetime)) {
+        cat("\n=== FILTER CHANGED - PRESERVING ZOOM ===\n")
+        apply_time_range()
+      }
+    }, ignoreNULL = FALSE, ignoreInit = TRUE, priority = -1)
 
     # Reset zoom button - reset to full data range
     observeEvent(input$reset_zoom, {

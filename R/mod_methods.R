@@ -196,13 +196,16 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
         )
 
         # Call sapfluxr calculation
-        results <- sapfluxr::calc_heat_pulse_velocity(
-          heat_pulse_data = data,
-          methods = input$methods,
-          probe_config = probe,
-          wood_properties = wood,
-          confirm_parameters = FALSE  # Don't ask for confirmation in Shiny
-        )
+        # Suppress progressr to prevent blue toast notifications
+        results <- progressr::without_progress({
+          sapfluxr::calc_heat_pulse_velocity(
+            heat_pulse_data = data,
+            methods = input$methods,
+            probe_config = probe,
+            wood_properties = wood,
+            confirm_parameters = FALSE  # Don't ask for confirmation in Shiny
+          )
+        })
 
         # Update progress to 80% after main calculation
         shinyWidgets::updateProgressBar(
@@ -221,11 +224,14 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
             title = "Applying sDMA Processing..."
           )
 
-          results <- sapfluxr::apply_sdma_processing(
-            vh_results = results,
-            secondary_method = input$sdma_secondary,
-            show_progress = FALSE  # Don't show console progress
-          )
+          # Suppress progressr for sDMA too
+          results <- progressr::without_progress({
+            sapfluxr::apply_sdma_processing(
+              vh_results = results,
+              secondary_method = input$sdma_secondary,
+              show_progress = FALSE  # Don't show console progress
+            )
+          })
         }
 
         # Complete progress

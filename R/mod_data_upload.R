@@ -61,7 +61,10 @@ dataUploadServer <- function(id) {
         )
 
         # Read and validate data
-        data <- sapfluxr::read_heat_pulse_data(input$file$datapath)
+        # Suppress progressr to prevent blue toast notifications
+        data <- progressr::without_progress({
+          sapfluxr::read_heat_pulse_data(input$file$datapath)
+        })
 
         # Override temp filename with original filename
         data$metadata$file_name <- input$file$name
