@@ -1,0 +1,136 @@
+/* Custom CSS for Sap Flow Analysis Shiny App */
+
+/* Derived values displayed in blue */
+.derived-value {
+  color: #2196F3;
+  font-weight: 500;
+}
+
+/* Info boxes for derived values */
+.derived-info {
+  background-color: #E3F2FD;
+  border-left: 4px solid #2196F3;
+  padding: 10px;
+  margin: 10px 0;
+}
+
+/* Success messages */
+.success-message {
+  color: #4CAF50;
+  font-weight: bold;
+}
+
+/* Warning messages */
+.warning-message {
+  color: #FF9800;
+  font-weight: bold;
+}
+
+/* Error messages */
+.error-message {
+  color: #F44336;
+  font-weight: bold;
+}
+
+/* Quality flag indicators */
+.quality-ok {
+  color: #4CAF50;
+}
+
+.quality-warning {
+  color: #FF9800;
+}
+
+.quality-error {
+  color: #F44336;
+}
+
+.quality-suspect {
+  color: #9C27B0;
+}
+
+/* Better spacing for sidebar panels */
+.box {
+  margin-bottom: 15px;
+}
+
+/* Method selection checkboxes */
+.method-checkbox-group {
+  padding: 10px;
+}
+
+/* Make file upload area more prominent */
+.file-upload-area {
+  border: 2px dashed #ccc;
+  border-radius: 5px;
+  padding: 20px;
+  text-align: center;
+  background-color: #fafafa;
+}
+
+.file-upload-area:hover {
+  border-color: #2196F3;
+  background-color: #f5f5f5;
+}
+
+/* Plotly plot containers */
+.plotly-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* Help text styling */
+.help-text {
+  color: #666;
+  font-size: 0.9em;
+  font-style: italic;
+  margin-top: 5px;
+}
+
+/* Collapsible sections */
+.collapse-header {
+  cursor: pointer;
+  padding: 10px;
+  background-color: #f5f5f5;
+  border-radius: 3px;
+  margin: 5px 0;
+}
+
+.collapse-header:hover {
+  background-color: #e0e0e0;
+}
+
+/* Results summary table */
+.results-summary {
+  margin-top: 20px;
+}
+
+/* Configuration form styling */
+.config-form-group {
+  margin-bottom: 15px;
+}
+
+.config-label {
+  font-weight: 500;
+  color: #333;
+}
+
+/* Required field indicator */
+.required::after {
+  content: " *";
+  color: #F44336;
+}
+
+/* Loading spinner overlay */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 9999;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
