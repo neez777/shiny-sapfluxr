@@ -183,8 +183,9 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
         # Calculate expected steps
         n_methods <- length(input$methods)
         n_pulses <- data$metadata$n_pulses
-        total_steps <- n_pulses * n_methods
-        if (input$apply_sdma) total_steps <- total_steps + n_pulses
+        total_calc_steps <- n_pulses * n_methods
+        total_sdma_steps <- if (input$apply_sdma) n_pulses * length(input$sdma_secondary) else 0
+        total_steps <- total_calc_steps + total_sdma_steps
 
         # Show progress bar
         shinyWidgets::progressSweetAlert(
@@ -195,87 +196,251 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
           value = 0
         )
 
-        # Call sapfluxr calculation
-        # Suppress progressr to prevent blue toast notifications
+        # Start async progress tracking
+        # Update progress periodically while calculation runs
+        progress_value <- reactiveVal(0)
+        progress_active <- reactiveVal(TRUE)
+
+        # Create a progress updater that simulates smooth progress
+        observe({
+          invalidateLater(500)  # Update every 500ms
+
+          if (progress_active()) {
+            current <- progress_value()
+            # Gradually increase progress, slowing down as we approach 75%
+            if (current < 75) {
+              increment <- max(1, (75 - current) / 20)
+              progress_value(min(75, current + increment))
+
+              shinyWidgets::updateProgressBar(
+                session = session,
+                id = "calc_progress",
+                value = progress_value(),
+                title = sprintf("Processing pulse calculations (%d%%)", round(progress_value()))
+              )
+            }
+          }
+        })
+
+        # Call sapfluxr calculation (suppress console progress)
         results <- progressr::without_progress({
           sapfluxr::calc_heat_pulse_velocity(
             heat_pulse_data = data,
             methods = input$methods,
             probe_config = probe,
             wood_properties = wood,
-            confirm_parameters = FALSE  # Don't ask for confirmation in Shiny
+            confirm_parameters = FALSE,  # Don't ask for confirmation in Shiny
+            show_progress = FALSE  # Suppress console progress in Shiny
           )
         })
 
-        # Update progress to 80% after main calculation
+        # Stop progress updates and jump to 80%
+        progress_active(FALSE)
         shinyWidgets::updateProgressBar(
           session = session,
           id = "calc_progress",
           value = 80,
-          title = "Processing Results..."
+          title = "Calculation complete, processing results..."
         )
 
-        # Apply sDMA if requested
+        # Check if sDMA should be applied
+        should_prompt_sdma <- FALSE
         if (input$apply_sdma) {
+          # Check Peclet numbers before running sDMA
+          hrm_data <- results[results$method == "HRM", ]
+          max_peclet <- max(hrm_data$peclet_number, na.rm = TRUE)
+
+          # If all Peclet numbers are <= 1, prompt user
+          if (!is.na(max_peclet) && max_peclet <= 1.0) {
+            should_prompt_sdma <- TRUE
+            # Close current progress bar
+            shinyWidgets::closeSweetAlert(session = session)
+
+            # Show confirmation dialog
+            shinyWidgets::confirmSweetAlert(
+              session = session,
+              inputId = "confirm_sdma",
+              title = "sDMA Not Required",
+              text = paste0(
+                "All Peclet numbers are ≤ 1.0 (maximum: ", round(max_peclet, 3), ").\n\n",
+                "This means HRM is valid for all measurements and sDMA would never ",
+                "switch to the secondary method. The results would be identical to HRM.\n\n",
+                "Do you still want to calculate sDMA?"
+              ),
+              type = "warning",
+              btn_labels = c("Skip sDMA", "Calculate Anyway"),
+              btn_colors = c("#3085d6", "#d33")
+            )
+
+            # Wait for user response
+            observeEvent(input$confirm_sdma, {
+              tryCatch({
+                if (input$confirm_sdma) {
+                  # User chose to calculate anyway
+                  shinyWidgets::progressSweetAlert(
+                    session = session,
+                    id = "calc_progress",
+                    title = "Applying sDMA Processing...",
+                    display_pct = TRUE,
+                    value = 85
+                  )
+
+                  results_temp <- progressr::without_progress({
+                    sapfluxr::apply_sdma_processing(
+                      vh_results = results,
+                      secondary_method = input$sdma_secondary,
+                      skip_low_peclet = FALSE,  # User confirmed
+                      show_progress = FALSE  # Suppress console progress
+                    )
+                  })
+
+                  # Finalize with sDMA results
+                  finalize_results(results_temp)
+                } else {
+                  # User chose to skip - proceed with quality control on original results
+                  # Show a new progress alert for quality control
+                  shinyWidgets::progressSweetAlert(
+                    session = session,
+                    id = "qc_progress",
+                    title = "Running Quality Control...",
+                    display_pct = TRUE,
+                    value = 90
+                  )
+
+                  # Apply quality control
+                  qc_results <- tryCatch({
+                    progressr::without_progress({
+                      sapfluxr::flag_vh_quality(
+                        results,
+                        verbose = FALSE,
+                        return_full_report = FALSE
+                      )
+                    })
+                  }, error = function(e) {
+                    # If flag_vh_quality fails, just return original results
+                    message("Quality control failed: ", e$message)
+                    results
+                  })
+
+                  # Complete progress
+                  shinyWidgets::updateProgressBar(
+                    session = session,
+                    id = "qc_progress",
+                    value = 100,
+                    title = "Complete!"
+                  )
+
+                  Sys.sleep(0.3)
+
+                  # Close progress bar
+                  shinyWidgets::closeSweetAlert(session = session)
+
+                  # Store results
+                  vh_results(qc_results)
+
+                  # Show success
+                  shinyWidgets::sendSweetAlert(
+                    session = session,
+                    title = "Success!",
+                    text = paste(format(nrow(qc_results), big.mark = ","),
+                                "velocity measurements calculated (sDMA skipped)"),
+                    type = "success",
+                    timer = 3000
+                  )
+                }
+              }, error = function(e) {
+                # Close any open alerts
+                shinyWidgets::closeSweetAlert(session = session)
+
+                # Show error
+                notify_error(
+                  session = session,
+                  title = "Processing Error",
+                  text = paste("Error during processing:", e$message)
+                )
+              })
+            }, once = TRUE)
+
+            return()  # Exit early to wait for confirmation
+          } else {
+            # Peclet numbers > 1 exist, proceed normally
+            shinyWidgets::updateProgressBar(
+              session = session,
+              id = "calc_progress",
+              value = 85,
+              title = "Applying sDMA Processing..."
+            )
+
+            results <- progressr::without_progress({
+              sapfluxr::apply_sdma_processing(
+                vh_results = results,
+                secondary_method = input$sdma_secondary,
+                skip_low_peclet = FALSE,  # Auto-skip not needed
+                show_progress = FALSE  # Suppress console progress
+              )
+            })
+          }
+        }
+
+        # Define quality control and finalization function
+        finalize_results <- function(final_results) {
+          # Apply quality control
           shinyWidgets::updateProgressBar(
             session = session,
             id = "calc_progress",
-            value = 85,
-            title = "Applying sDMA Processing..."
+            value = 90,
+            title = "Running Quality Control..."
           )
 
-          # Suppress progressr for sDMA too
-          results <- progressr::without_progress({
-            sapfluxr::apply_sdma_processing(
-              vh_results = results,
-              secondary_method = input$sdma_secondary,
-              show_progress = FALSE  # Don't show console progress
+          # Suppress verbose output and get just the flagged data frame
+          final_results <- progressr::without_progress({
+            sapfluxr::flag_vh_quality(
+              final_results,
+              verbose = FALSE,
+              return_full_report = FALSE  # Just get data frame, not full report
             )
           })
+
+          # Complete progress
+          shinyWidgets::updateProgressBar(
+            session = session,
+            id = "calc_progress",
+            value = 100,
+            title = "Complete!"
+          )
+
+          Sys.sleep(0.5)  # Brief pause to show 100%
+
+          # Close progress bar
+          shinyWidgets::closeSweetAlert(session = session)
+
+          # Store results
+          vh_results(final_results)
+
+          # Show success with auto-close using shinyWidgets
+          shinyWidgets::sendSweetAlert(
+            session = session,
+            title = "Success!",
+            text = paste(format(nrow(final_results), big.mark = ","),
+                        "velocity measurements calculated"),
+            type = "success",
+            timer = 3000  # Auto-close after 3 seconds
+          )
         }
 
-        # Apply quality control
-        shinyWidgets::updateProgressBar(
-          session = session,
-          id = "calc_progress",
-          value = 90,
-          title = "Running Quality Control..."
-        )
-
-        # Suppress verbose output and get just the flagged data frame
-        results <- progressr::without_progress({
-          sapfluxr::flag_vh_quality(
-            results,
-            verbose = FALSE,
-            return_full_report = FALSE  # Just get data frame, not full report
-          )
-        })
-
-        # Complete progress
-        shinyWidgets::updateProgressBar(
-          session = session,
-          id = "calc_progress",
-          value = 100,
-          title = "Complete!"
-        )
-
-        Sys.sleep(0.5)  # Brief pause to show 100%
-
-        # Close progress bar
-        shinyWidgets::closeSweetAlert(session = session)
-
-        # Store results
-        vh_results(results)
-
-        # Show success with auto-close using shinyWidgets
-        shinyWidgets::sendSweetAlert(
-          session = session,
-          title = "Success!",
-          text = paste(format(nrow(results), big.mark = ","),
-                      "velocity measurements calculated"),
-          type = "success",
-          timer = 3000  # Auto-close after 3 seconds
-        )
+        # If sDMA prompt is needed, handle it asynchronously
+        if (should_prompt_sdma) {
+          # Handler for confirm dialog is set up above
+          # Results will be finalized in the observe() block
+        } else if (input$apply_sdma) {
+          # Peclet numbers > 1 exist, proceed with sDMA normally
+          # (this code was already in the else block above)
+          # Then finalize
+          finalize_results(results)
+        } else {
+          # No sDMA requested, proceed directly to finalization
+          finalize_results(results)
+        }
 
       }, error = function(e) {
         # Close progress bar/alert

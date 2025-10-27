@@ -313,14 +313,17 @@ plotTimeseriesServer <- function(id, vh_results) {
     # Quality Control Summary
     output$qc_summary <- renderUI({
       req(vh_results())
-      data <- vh_results()
+
+      # Use filtered data so summary reflects current method/sensor selection
+      data <- filtered_data()
+      req(nrow(data) > 0)
 
       # Check if quality_flag column exists
       if (!"quality_flag" %in% names(data)) {
         return(p("No quality control data available."))
       }
 
-      # Calculate flag counts across ALL data (not just filtered)
+      # Calculate flag counts based on filtered data (selected methods/sensors)
       flag_counts <- data %>%
         count(quality_flag) %>%
         arrange(quality_flag)
@@ -361,12 +364,13 @@ plotTimeseriesServer <- function(id, vh_results) {
       })
 
       tagList(
-        p(strong(paste("Total Measurements:", format(total_points, big.mark = ",")))),
+        p(strong(paste("Filtered Data:", format(total_points, big.mark = ","), "measurements"))),
         tags$ul(style = "list-style-type: none; padding-left: 10px;",
           flag_items
         ),
         p(style = "font-size: 0.85em; color: #666; margin-top: 10px;",
-          "Use the 'Quality Flags to Display' filter above to show/hide specific flags on the plot.")
+          "Summary reflects currently selected methods and sensor positions. ",
+          "Use the 'Quality Flags to Display' filter to show/hide specific flags on the plot.")
       )
     })
 
@@ -616,24 +620,36 @@ plotTimeseriesServer <- function(id, vh_results) {
       }
 
       # Layout with range slider
+      # Build xaxis config - include range if date/time inputs are set
+      xaxis_config <- list(
+        title = "Date/Time",
+        rangeslider = list(
+          visible = TRUE,
+          thickness = 0.1
+        ),
+        rangeselector = list(
+          buttons = list(
+            list(count = 1, label = "1d", step = "day", stepmode = "backward"),
+            list(count = 7, label = "1w", step = "day", stepmode = "backward"),
+            list(count = 1, label = "1m", step = "month", stepmode = "backward"),
+            list(count = 3, label = "3m", step = "month", stepmode = "backward"),
+            list(step = "all", label = "All")
+          )
+        )
+      )
+
+      # If user has set a custom time range, apply it to the plot
+      if (!is.null(input$start_datetime) && !is.null(input$end_datetime)) {
+        xaxis_config$range <- c(
+          format(input$start_datetime, "%Y-%m-%d %H:%M:%S"),
+          format(input$end_datetime, "%Y-%m-%d %H:%M:%S")
+        )
+        cat("Applying time range to plot:", xaxis_config$range[1], "to", xaxis_config$range[2], "\n")
+      }
+
       p <- p %>%
         layout(
-          xaxis = list(
-            title = "Date/Time",
-            rangeslider = list(
-              visible = TRUE,
-              thickness = 0.1  # Height of range slider as fraction of plot height
-            ),
-            rangeselector = list(
-              buttons = list(
-                list(count = 1, label = "1d", step = "day", stepmode = "backward"),
-                list(count = 7, label = "1w", step = "day", stepmode = "backward"),
-                list(count = 1, label = "1m", step = "month", stepmode = "backward"),
-                list(count = 3, label = "3m", step = "month", stepmode = "backward"),
-                list(step = "all", label = "All")
-              )
-            )
-          ),
+          xaxis = xaxis_config,
           yaxis = list(
             title = "Heat Pulse Velocity (cm/hr)",
             rangemode = "tozero"
@@ -825,16 +841,6 @@ plotTimeseriesServer <- function(id, vh_results) {
       cat("Apply range button clicked\n")
       apply_time_range()
     })
-
-    # Preserve time range when filters change (methods, sensor position, etc.)
-    # Use priority = -1 to run AFTER the plot has rendered
-    observeEvent(list(input$methods, input$sensor_position, input$show_points, input$show_quality_flags), {
-      # Only apply if user has set a custom range (date/time inputs are set)
-      if (!is.null(input$start_datetime) && !is.null(input$end_datetime)) {
-        cat("\n=== FILTER CHANGED - PRESERVING ZOOM ===\n")
-        apply_time_range()
-      }
-    }, ignoreNULL = FALSE, ignoreInit = TRUE, priority = -1)
 
     # Reset zoom button - reset to full data range
     observeEvent(input$reset_zoom, {
