@@ -121,6 +121,10 @@ clockDriftServer <- function(id, heat_pulse_data) {
       # Set device time to last pulse time
       updateDateInput(session, "device_time", value = as.Date(times$last))
       updateTextInput(session, "device_time_time", value = format(times$last, "%H:%M:%S"))
+
+      # Set actual time to last pulse time as well (more likely to be within 30 mins)
+      updateDateInput(session, "actual_time", value = as.Date(times$last))
+      updateTextInput(session, "actual_time_time", value = format(times$last, "%H:%M:%S"))
     })
 
     # Display data range info
@@ -141,36 +145,9 @@ clockDriftServer <- function(id, heat_pulse_data) {
       )
     })
 
-    # Check for large time difference and show warning
+    # Placeholder for drift warning (only shown when Apply button is clicked)
     output$drift_warning <- renderUI({
-      req(input$device_time, input$device_time_time, pulse_times())
-
-      # Parse device time
-      tryCatch({
-        time_pattern <- "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$"
-        if (!grepl(time_pattern, input$device_time_time)) {
-          return(NULL)
-        }
-
-        device_time <- as.POSIXct(paste(input$device_time, input$device_time_time))
-        last_pulse <- pulse_times()$last
-
-        # Calculate difference in minutes
-        diff_mins <- abs(as.numeric(difftime(device_time, last_pulse, units = "mins")))
-
-        if (diff_mins > 30) {
-          div(
-            style = "padding: 10px; background-color: #FFF3CD; border-left: 4px solid #FF9800; margin-bottom: 10px;",
-            p(
-              icon("exclamation-triangle"),
-              strong(" Warning:"),
-              sprintf(" Large time difference detected (%.1f minutes between last pulse and entered device time).", diff_mins),
-              br(),
-              "This is unusual. Please verify your times are correct."
-            )
-          )
-        }
-      }, error = function(e) NULL)
+      NULL
     })
 
     # Apply clock drift correction
@@ -190,10 +167,23 @@ clockDriftServer <- function(id, heat_pulse_data) {
 
         # Get first pulse time (assumed correct)
         first_pulse <- pulse_times()$first
+        last_pulse <- pulse_times()$last
 
         # Parse device and actual times (end of collection)
         device_time_end <- as.POSIXct(paste(input$device_time, input$device_time_time))
         actual_time_end <- as.POSIXct(paste(input$actual_time, input$actual_time_time))
+
+        # Check for large time difference between device time and last pulse
+        diff_mins <- abs(as.numeric(difftime(device_time_end, last_pulse, units = "mins")))
+
+        if (diff_mins > 30) {
+          notify_warning(
+            session = session,
+            title = "Large Time Difference",
+            text = sprintf("Warning: %.1f minutes difference between last pulse and entered device time. Please verify your times are correct.", diff_mins),
+            timer = 5000
+          )
+        }
 
         # Create observed time vectors: first pulse (no drift) + end time (with drift)
         observed_device <- c(first_pulse, device_time_end)

@@ -28,19 +28,19 @@ configUI <- function(id) {
             ns("probe_mode"),
             "Configuration Source:",
             choices = c(
-              "Built-in YAML" = "builtin",
+              "Default" = "builtin",
               "Upload YAML" = "upload",
               "Manual Entry" = "manual"
             ),
             selected = "builtin"
           ),
 
-          # Built-in YAML selector
+          # Built-in configurations selector
           conditionalPanel(
             condition = sprintf("input['%s'] == 'builtin'", ns("probe_mode")),
             selectInput(
               ns("probe_yaml_builtin"),
-              "Select Probe Type:",
+              "Built-in configurations:",
               choices = NULL  # Will be populated in server
             )
           ),
@@ -80,19 +80,19 @@ configUI <- function(id) {
             ns("wood_mode"),
             "Configuration Source:",
             choices = c(
-              "Built-in YAML" = "builtin",
+              "Default" = "builtin",
               "Upload YAML" = "upload",
               "Manual Entry" = "manual"
             ),
             selected = "builtin"
           ),
 
-          # Built-in YAML selector
+          # Built-in configurations selector
           conditionalPanel(
             condition = sprintf("input['%s'] == 'builtin'", ns("wood_mode")),
             selectInput(
               ns("wood_yaml_builtin"),
-              "Select Wood Type:",
+              "Built-in configurations:",
               choices = NULL  # Will be populated in server
             )
           ),
@@ -253,12 +253,11 @@ configServer <- function(id, heat_pulse_data = NULL) {
 
       tagList(
         h5("Probe Geometry"),
-        numericInput(ns("probe_spacing"), "Probe Spacing (cm):", value = 0.5, min = 0.1, max = 2, step = 0.1),
         numericInput(ns("probe_diameter"), "Probe Diameter (mm):", value = 1.5, min = 0.5, max = 5, step = 0.1),
 
         h5("Sensor Positions"),
-        numericInput(ns("x_up"), "Upstream Distance (cm):", value = 0.5, min = 0.1, max = 2, step = 0.1),
-        numericInput(ns("x_down"), "Downstream Distance (cm):", value = 0.5, min = 0.1, max = 2, step = 0.1),
+        numericInput(ns("x_up"), "Upstream Distance (mm):", value = 5, min = 1, max = 20, step = 0.5),
+        numericInput(ns("x_down"), "Downstream Distance (mm):", value = 5, min = 1, max = 20, step = 0.5),
 
         h5("Heat Pulse"),
         numericInput(ns("heat_duration"), "Heat Pulse Duration (s):", value = 2, min = 0.5, max = 10, step = 0.5),
@@ -478,12 +477,26 @@ configServer <- function(id, heat_pulse_data = NULL) {
         return(p("No configuration loaded", style = "color: #999;"))
       }
 
+      # Extract upstream and downstream distances from sensor positions (in cm, convert to mm)
+      upstream_mm <- abs(config$sensor_positions$upstream_inner * 10)
+      downstream_mm <- abs(config$sensor_positions$downstream_inner * 10)
+
+      # Extract recommended methods from yaml_data or method_priorities
+      recommended_methods <- if (!is.null(config$yaml_data$methods$recommended)) {
+        paste(config$yaml_data$methods$recommended, collapse = ", ")
+      } else if (!is.null(config$method_priorities)) {
+        paste(head(config$method_priorities, 3), collapse = ", ")
+      } else {
+        "Not specified"
+      }
+
       div(
         style = "background-color: #f9f9f9; padding: 10px; border-radius: 3px;",
         p(strong("Configuration: "), config$config_name),
         tags$ul(
-          tags$li(paste("Probe spacing:", config$probe_spacing, "cm")),
-          tags$li(paste("Sensor positions: ±", config$x, "cm"))
+          tags$li(paste("Upstream distance:", upstream_mm, "mm")),
+          tags$li(paste("Downstream distance:", downstream_mm, "mm")),
+          tags$li(paste("Recommended methods:", recommended_methods))
         )
       )
     })

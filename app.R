@@ -123,35 +123,36 @@ ui <- dashboardPage(
 
       # JavaScript to auto-close Shiny notifications (blue toasts) after 5 seconds
       tags$script(HTML("
-        // Method 1: Listen for Shiny notification event
-        $(document).on('shiny:notification', function(event) {
-          console.log('Notification event fired:', event.notification.id);
-          setTimeout(function() {
-            console.log('Removing notification:', event.notification.id);
-            Shiny.notifications.remove(event.notification.id);
-          }, 5000);
-        });
+        // Simple approach: every 500ms, check for and auto-close old notifications
+        setInterval(function() {
+          // Find all shiny notification elements
+          var notifications = document.querySelectorAll('.shiny-notification');
 
-        // Method 2: Watch for notification elements being added to DOM
-        var observer = new MutationObserver(function(mutations) {
-          mutations.forEach(function(mutation) {
-            mutation.addedNodes.forEach(function(node) {
-              if (node.classList && node.classList.contains('shiny-notification')) {
-                console.log('Notification element added to DOM:', node.id);
-                setTimeout(function() {
-                  console.log('Removing notification element:', node.id);
-                  if (node.parentNode) {
-                    node.parentNode.removeChild(node);
-                  }
-                }, 5000);
+          notifications.forEach(function(notification) {
+            // Skip if this is a progress notification (has a progress bar inside)
+            if (notification.querySelector('.shiny-progress') ||
+                notification.querySelector('.progress')) {
+              return; // Don't auto-close progress bars
+            }
+
+            // If this notification doesn't have a timestamp, add one
+            if (!notification.dataset.addedAt) {
+              notification.dataset.addedAt = Date.now();
+              console.log('New notification found, will close in 5 seconds');
+            } else {
+              // Check if it's been 5 seconds since it was added
+              var age = Date.now() - parseInt(notification.dataset.addedAt);
+              if (age >= 5000) {
+                console.log('Removing notification after 5 seconds');
+                $(notification).fadeOut(300, function() {
+                  $(this).remove();
+                });
               }
-            });
+            }
           });
-        });
+        }, 500);
 
-        // Start observing
-        observer.observe(document.body, { childList: true, subtree: true });
-        console.log('Notification auto-close script loaded');
+        console.log('Notification auto-close script loaded (polling method)');
       "))
     ),
 

@@ -41,7 +41,7 @@ pulseTraceUI <- function(id) {
 
           h5("Calculation Windows"),
           p(class = "help-text", style = "font-size: 0.9em;",
-            "Show calculation windows used by each method. Times are relative to heat pulse injection."),
+            "Show calculation windows used by each method. Heat pulse injection is at t=0."),
 
           checkboxGroupInput(
             ns("show_windows"),
@@ -50,7 +50,7 @@ pulseTraceUI <- function(id) {
               "HRM Window (60-100s after pulse)" = "HRM",
               "MHR Peaks (time to max \u0394T)" = "MHR",
               "Tmax Peaks (time to max \u0394T)" = "Tmax",
-              "Baseline (Pre-pulse period)" = "baseline"
+              "Baseline (Pre-pulse period, t<0)" = "baseline"
             ),
             selected = c("HRM", "baseline")
           ),
@@ -126,7 +126,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id) {
           plot_ly() %>%
             layout(
               title = list(text = "Click on a point in the time series plot to view pulse trace"),
-              xaxis = list(title = "Time (seconds)"),
+              xaxis = list(title = "Time relative to heat pulse injection (seconds)"),
               yaxis = list(title = "\u0394T (\u00B0C)")
             )
         )
@@ -150,7 +150,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id) {
           plot_ly() %>%
             layout(
               title = list(text = paste("No data for Pulse ID:", pulse_id)),
-              xaxis = list(title = "Time (seconds)"),
+              xaxis = list(title = "Time relative to heat pulse injection (seconds)"),
               yaxis = list(title = "\u0394T (\u00B0C)")
             )
         )
@@ -166,7 +166,13 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id) {
 
       # Calculate pre-pulse baseline (typically first 30 seconds)
       pre_pulse_period <- 30
-      baseline_indices <- pulse_data$time_sec < pre_pulse_period
+
+      # Adjust time_sec so heat pulse injection is at time 0
+      # Pre-pulse period becomes negative (e.g., -30 to 0)
+      pulse_data <- pulse_data %>%
+        mutate(time_sec = time_sec - pre_pulse_period)
+
+      baseline_indices <- pulse_data$time_sec < 0
 
       # Calculate baseline mean temperatures
       do_baseline <- mean(pulse_data$do[baseline_indices], na.rm = TRUE)
@@ -247,12 +253,12 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id) {
           )
       }
 
-      # Add vertical line at heat pulse injection (typically 30 seconds)
+      # Add vertical line at heat pulse injection (now at time 0)
       max_deltaT <- max(pulse_data$deltaT_do, pulse_data$deltaT_di,
                        pulse_data$deltaT_uo, pulse_data$deltaT_ui, na.rm = TRUE)
       p <- p %>%
         add_segments(
-          x = pre_pulse_period, xend = pre_pulse_period,
+          x = 0, xend = 0,
           y = 0, yend = max_deltaT,
           line = list(color = "red", width = 2, dash = "dash"),
           name = "Heat Pulse Injection",
@@ -267,16 +273,16 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id) {
 
       # Add calculation windows as shaded regions
       if ("baseline" %in% input$show_windows) {
-        # Baseline window (pre-pulse, typically 0-30 seconds)
+        # Baseline window (pre-pulse, now from -pre_pulse_period to 0)
         p <- p %>%
           add_trace(
-            x = c(0, pre_pulse_period, pre_pulse_period, 0, 0),
+            x = c(-pre_pulse_period, 0, 0, -pre_pulse_period, -pre_pulse_period),
             y = c(min_deltaT, min_deltaT, max_deltaT, max_deltaT, min_deltaT),
             type = "scatter",
             mode = "none",
             fill = "toself",
             fillcolor = "rgba(128, 128, 128, 0.1)",
-            name = sprintf("Baseline (0-%ds)", pre_pulse_period),
+            name = sprintf("Baseline (-%ds to 0)", pre_pulse_period),
             showlegend = TRUE,
             hoverinfo = "name"
           )
@@ -284,21 +290,19 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id) {
 
       if ("HRM" %in% input$show_windows) {
         # HRM window (typically 60-100 seconds after pulse injection)
-        # These times are relative to pulse injection, so add pre_pulse_period
-        hrm_start_after_pulse <- 60
-        hrm_end_after_pulse <- 100
-        hrm_start_recording <- pre_pulse_period + hrm_start_after_pulse
-        hrm_end_recording <- pre_pulse_period + hrm_end_after_pulse
+        # Times are now relative to pulse injection (time 0)
+        hrm_start <- 60
+        hrm_end <- 100
 
         p <- p %>%
           add_trace(
-            x = c(hrm_start_recording, hrm_end_recording, hrm_end_recording, hrm_start_recording, hrm_start_recording),
+            x = c(hrm_start, hrm_end, hrm_end, hrm_start, hrm_start),
             y = c(min_deltaT, min_deltaT, max_deltaT, max_deltaT, min_deltaT),
             type = "scatter",
             mode = "none",
             fill = "toself",
             fillcolor = "rgba(31, 119, 180, 0.15)",
-            name = sprintf("HRM Window (%d-%ds after pulse)", hrm_start_after_pulse, hrm_end_after_pulse),
+            name = sprintf("HRM Window (%d-%ds after pulse)", hrm_start, hrm_end),
             showlegend = TRUE,
             hoverinfo = "name"
           )
@@ -313,10 +317,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id) {
           do_peak_time <- pulse_data$time_sec[do_peak_idx]
           uo_peak_time <- pulse_data$time_sec[uo_peak_idx]
 
-          # Calculate times relative to pulse injection
-          do_peak_after_pulse <- do_peak_time - pre_pulse_period
-          uo_peak_after_pulse <- uo_peak_time - pre_pulse_period
-
+          # Times are already relative to pulse injection
           p <- p %>%
             add_trace(
               x = c(uo_peak_time, do_peak_time, do_peak_time, uo_peak_time, uo_peak_time),
@@ -325,7 +326,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id) {
               mode = "none",
               fill = "toself",
               fillcolor = "rgba(255, 127, 14, 0.15)",
-              name = sprintf("MHR Peaks (%.0f-%.0fs after pulse)", uo_peak_after_pulse, do_peak_after_pulse),
+              name = sprintf("MHR Peaks (%.0f-%.0fs after pulse)", uo_peak_time, do_peak_time),
               showlegend = TRUE,
               hoverinfo = "name"
             )
@@ -335,9 +336,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id) {
           di_peak_time <- pulse_data$time_sec[di_peak_idx]
           ui_peak_time <- pulse_data$time_sec[ui_peak_idx]
 
-          di_peak_after_pulse <- di_peak_time - pre_pulse_period
-          ui_peak_after_pulse <- ui_peak_time - pre_pulse_period
-
+          # Times are already relative to pulse injection
           p <- p %>%
             add_trace(
               x = c(ui_peak_time, di_peak_time, di_peak_time, ui_peak_time, ui_peak_time),
@@ -346,7 +345,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id) {
               mode = "none",
               fill = "toself",
               fillcolor = "rgba(255, 127, 14, 0.15)",
-              name = sprintf("MHR Peaks (%.0f-%.0fs after pulse)", ui_peak_after_pulse, di_peak_after_pulse),
+              name = sprintf("MHR Peaks (%.0f-%.0fs after pulse)", ui_peak_time, di_peak_time),
               showlegend = TRUE,
               hoverinfo = "name"
             )
@@ -359,27 +358,27 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id) {
         if (show_outer) {
           do_peak_idx <- which.max(pulse_data$deltaT_do)
           do_peak_time <- pulse_data$time_sec[do_peak_idx]
-          do_peak_after_pulse <- do_peak_time - pre_pulse_period
 
+          # Time is already relative to pulse injection
           p <- p %>%
             add_segments(
               x = do_peak_time, xend = do_peak_time,
               y = min_deltaT, yend = max_deltaT,
               line = list(color = "#d62728", width = 2, dash = "dot"),
-              name = sprintf("Tmax DO (%.0fs after pulse)", do_peak_after_pulse),
+              name = sprintf("Tmax DO (%.0fs after pulse)", do_peak_time),
               showlegend = TRUE
             )
         } else {
           di_peak_idx <- which.max(pulse_data$deltaT_di)
           di_peak_time <- pulse_data$time_sec[di_peak_idx]
-          di_peak_after_pulse <- di_peak_time - pre_pulse_period
 
+          # Time is already relative to pulse injection
           p <- p %>%
             add_segments(
               x = di_peak_time, xend = di_peak_time,
               y = min_deltaT, yend = max_deltaT,
               line = list(color = "#ff7f0e", width = 2, dash = "dot"),
-              name = sprintf("Tmax DI (%.0fs after pulse)", di_peak_after_pulse),
+              name = sprintf("Tmax DI (%.0fs after pulse)", di_peak_time),
               showlegend = TRUE
             )
         }
@@ -390,9 +389,9 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id) {
         layout(
           title = paste("Pulse ID:", pulse_id),
           xaxis = list(
-            title = "Time (seconds from start of recording)",
+            title = "Time relative to heat pulse injection (seconds)",
             showgrid = TRUE,
-            range = c(0, max(pulse_data$time_sec, na.rm = TRUE))
+            range = c(min(pulse_data$time_sec, na.rm = TRUE), max(pulse_data$time_sec, na.rm = TRUE))
           ),
           yaxis = list(
             title = "\u0394T (\u00B0C)",  # Delta T (temperature change)
@@ -407,9 +406,9 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id) {
           ),
           annotations = list(
             list(
-              x = pre_pulse_period,
+              x = 0,
               y = max_deltaT * 0.95,
-              text = sprintf("Heat Pulse<br>Injection<br>(%ds)", pre_pulse_period),
+              text = "Heat Pulse<br>Injection<br>(t = 0)",
               showarrow = FALSE,
               xanchor = "left",
               xshift = 5,

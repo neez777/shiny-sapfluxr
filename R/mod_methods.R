@@ -60,10 +60,10 @@ methodsUI <- function(id) {
               "Secondary Methods for sDMA:",
               choices = c(
                 "MHR" = "MHR",
-                "Tmax (Cohen)" = "Tmax_Coh",
-                "Tmax (Kluitenberg)" = "Tmax_Klu",
                 "HRMXa" = "HRMXa",
-                "HRMXb" = "HRMXb"
+                "HRMXb" = "HRMXb",
+                "Tmax (Cohen)" = "Tmax_Coh",
+                "Tmax (Kluitenberg)" = "Tmax_Klu"
               ),
               selected = "MHR"
             )
@@ -124,6 +124,24 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
 
     # Reactive to store results
     vh_results <- reactiveVal(NULL)
+
+    # Auto-select matching sDMA methods when apply_sdma is checked
+    observeEvent(input$apply_sdma, {
+      if (input$apply_sdma) {
+        # Get currently selected main methods (excluding HRM)
+        selected_methods <- setdiff(input$methods, "HRM")
+
+        # Only select methods that are available in sDMA secondary options
+        # Available: MHR, HRMXa, HRMXb, Tmax_Coh, Tmax_Klu
+        sdma_methods <- intersect(selected_methods,
+                                  c("MHR", "HRMXa", "HRMXb", "Tmax_Coh", "Tmax_Klu"))
+
+        # Update the sDMA secondary methods selection
+        if (length(sdma_methods) > 0) {
+          updateCheckboxGroupInput(session, "sdma_secondary", selected = sdma_methods)
+        }
+      }
+    })
 
     # Check if HRM is selected when sDMA is enabled
     output$sdma_warning <- renderUI({
@@ -385,7 +403,7 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
         p(
           icon("arrow-down"),
           " View detailed results in the table below, or proceed to ",
-          strong("5. Visualise"),
+          strong("4. Visualise"),
           " to create plots."
         )
       )
