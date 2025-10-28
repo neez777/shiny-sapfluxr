@@ -229,7 +229,7 @@ ui <- dashboardPage(
             status = "primary",
             solidHeader = TRUE,
 
-            p("Export functionality will be implemented in Session 6."),
+            p("Export functionality will be implemented next."),
             p("Export formats:"),
             tags$ul(
               tags$li(strong("Plots:"), " PNG, PDF, TIF (publication quality), HTML (interactive)"),
@@ -306,7 +306,7 @@ server <- function(input, output, session) {
   selected_pulse_id <- plotTimeseriesServer("plot_timeseries", vh_results)
 
   # Module: Pulse Trace Viewer
-  pulseTraceServer("pulse_trace", reactive(rv$corrected_data), selected_pulse_id)
+  pulseTraceServer("pulse_trace", reactive(rv$corrected_data), selected_pulse_id, vh_results)
 
   # Data Summary Output
   output$data_summary <- renderPrint({

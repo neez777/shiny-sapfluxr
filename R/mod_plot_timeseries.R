@@ -85,6 +85,12 @@ plotTimeseriesUI <- function(id) {
             value = FALSE
           ),
 
+          checkboxInput(
+            ns("show_peclet"),
+            "Show Peclet number (right axis)",
+            value = FALSE
+          ),
+
           hr(),
 
           actionButton(
@@ -619,6 +625,57 @@ plotTimeseriesServer <- function(id, vh_results) {
         }
       }
 
+      # Add Peclet number if enabled
+      if (input$show_peclet) {
+        # Check if peclet_number column exists
+        if ("peclet_number" %in% names(data)) {
+          # Filter to just HRM methods that have Peclet numbers
+          peclet_data <- data %>%
+            filter(!is.na(peclet_number))
+
+          if (nrow(peclet_data) > 0) {
+            # Add Peclet number trace on secondary y-axis
+            p <- p %>%
+              add_trace(
+                data = peclet_data,
+                x = ~datetime,
+                y = ~peclet_number,
+                type = "scatter",
+                mode = "lines",
+                name = "Peclet Number",
+                line = list(
+                  color = "#666666",
+                  width = 1.5,
+                  dash = "dot"
+                ),
+                yaxis = "y2",
+                hovertemplate = paste0(
+                  "<b>Peclet Number</b><br>",
+                  "Time: %{x}<br>",
+                  "Pe: %{y:.3f}<br>",
+                  "<extra></extra>"
+                )
+              ) %>%
+              # Add horizontal line at Pe = 1.0
+              add_trace(
+                x = range(peclet_data$datetime, na.rm = TRUE),
+                y = c(1, 1),
+                type = "scatter",
+                mode = "lines",
+                name = "Pe = 1.0",
+                line = list(
+                  color = "black",
+                  width = 1,
+                  dash = "dash"
+                ),
+                yaxis = "y2",
+                showlegend = TRUE,
+                hoverinfo = "skip"
+              )
+          }
+        }
+      }
+
       # Layout with range slider
       # Build xaxis config - include range if date/time inputs are set
       xaxis_config <- list(
@@ -647,23 +704,45 @@ plotTimeseriesServer <- function(id, vh_results) {
         cat("Applying time range to plot:", xaxis_config$range[1], "to", xaxis_config$range[2], "\n")
       }
 
+      # Build layout configuration
+      layout_config <- list(
+        xaxis = xaxis_config,
+        yaxis = list(
+          title = "Heat Pulse Velocity (cm/hr)",
+          rangemode = "tozero"
+        ),
+        hovermode = "closest",
+        legend = list(
+          orientation = "h",
+          x = 0,
+          y = -0.25,
+          xanchor = "left",
+          yanchor = "top"
+        ),
+        margin = list(b = 150)  # Increased for range slider
+      )
+
+      # Add secondary y-axis if Peclet is enabled
+      if (input$show_peclet && "peclet_number" %in% names(data)) {
+        peclet_data <- data %>% filter(!is.na(peclet_number))
+        if (nrow(peclet_data) > 0) {
+          # Extend range to ensure Pe=1.0 is visible
+          pe_range <- range(peclet_data$peclet_number, na.rm = TRUE)
+          pe_range[1] <- min(pe_range[1], 0)
+          pe_range[2] <- max(pe_range[2], 1.5)
+
+          layout_config$yaxis2 <- list(
+            title = "Peclet Number (Pe)",
+            overlaying = "y",
+            side = "right",
+            rangemode = "tozero",
+            range = pe_range
+          )
+        }
+      }
+
       p <- p %>%
-        layout(
-          xaxis = xaxis_config,
-          yaxis = list(
-            title = "Heat Pulse Velocity (cm/hr)",
-            rangemode = "tozero"
-          ),
-          hovermode = "closest",
-          legend = list(
-            orientation = "h",
-            x = 0,
-            y = -0.25,
-            xanchor = "left",
-            yanchor = "top"
-          ),
-          margin = list(b = 150)  # Increased for range slider
-        ) %>%
+        layout(layout_config) %>%
         config(
           displayModeBar = TRUE,
           displaylogo = FALSE,
