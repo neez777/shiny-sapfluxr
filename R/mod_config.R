@@ -117,6 +117,39 @@ configUI <- function(id) {
           uiOutput(ns("wood_summary"))
         )
       )
+    ),
+
+    # Probe Visualisation
+    fluidRow(
+      box(
+        width = 12,
+        title = "Probe Configuration Visualisation",
+        status = "info",
+        solidHeader = TRUE,
+        collapsible = TRUE,
+        collapsed = FALSE,
+
+        p(
+          "Visual representation of probe placement relative to tree anatomy.",
+          style = "margin-bottom: 15px;"
+        ),
+
+        fluidRow(
+          column(
+            width = 6,
+            plotOutput(ns("probe_vertical_plot"), height = "400px")
+          ),
+          column(
+            width = 6,
+            plotOutput(ns("probe_radial_plot"), height = "400px")
+          )
+        ),
+
+        hr(),
+
+        # Configuration assessment feedback
+        uiOutput(ns("config_assessment"))
+      )
     )
   )
 }
@@ -252,16 +285,90 @@ configServer <- function(id, heat_pulse_data = NULL) {
       ns <- session$ns
 
       tagList(
-        h5("Probe Geometry"),
-        numericInput(ns("probe_diameter"), "Probe Diameter (mm):", value = 1.5, min = 0.5, max = 5, step = 0.1),
+        tabsetPanel(
+          id = ns("probe_tabs"),
 
-        h5("Sensor Positions"),
-        numericInput(ns("x_up"), "Upstream Distance (mm):", value = 5, min = 1, max = 20, step = 0.5),
-        numericInput(ns("x_down"), "Downstream Distance (mm):", value = 5, min = 1, max = 20, step = 0.5),
+          # Metadata Tab
+          tabPanel(
+            "Metadata",
+            br(),
+            textInput(ns("probe_config_name"), "Configuration Name:",
+                     value = "Custom Probe Configuration"),
 
-        h5("Heat Pulse"),
-        numericInput(ns("heat_duration"), "Heat Pulse Duration (s):", value = 2, min = 0.5, max = 10, step = 0.5),
+            textInput(ns("probe_description"), "Description:",
+                     value = "User-defined probe configuration"),
 
+            textInput(ns("probe_manufacturer"), "Manufacturer:",
+                     value = "ICT"),
+
+            textInput(ns("probe_model"), "Model:",
+                     value = "SFM1")
+          ),
+
+          # Probe Layout Tab
+          tabPanel(
+            "Probe Layout",
+            br(),
+            p(class = "help-text", "Define the spatial arrangement of thermistor sensors relative to the heater."),
+
+            numericInput(ns("heater_position"), "Heater Position (mm):",
+                        value = 0, min = 0, max = 10, step = 0.1),
+
+            numericInput(ns("upstream_distance"), "Upstream Distance (mm):",
+                        value = 5, min = 1, max = 20, step = 0.5),
+
+            numericInput(ns("downstream_distance"), "Downstream Distance (mm):",
+                        value = 5, min = 1, max = 20, step = 0.5)
+          ),
+
+          # Probe Configuration Tab
+          tabPanel(
+            "Probe Configuration",
+            br(),
+            p(class = "help-text", "Physical dimensions and sensor positions."),
+
+            numericInput(ns("probe_diameter"), "Probe Diameter (mm):",
+                        value = 1.27, min = 0.5, max = 5, step = 0.01),
+
+            numericInput(ns("probe_length"), "Probe Length (mm):",
+                        value = 35, min = 10, max = 100, step = 1),
+
+            numericInput(ns("needle_diameter"), "Needle Diameter (mm):",
+                        value = 1.27, min = 0.5, max = 5, step = 0.01),
+
+            numericInput(ns("inner_sensor"), "Inner Sensor (distance from tip, mm):",
+                        value = 7.5, min = 1, max = 50, step = 0.5),
+
+            numericInput(ns("outer_sensor"), "Outer Sensor (distance from tip, mm):",
+                        value = 22.5, min = 1, max = 50, step = 0.5),
+
+            numericInput(ns("heat_pulse_duration"), "Heat Pulse Duration (s):",
+                        value = 2, min = 0.5, max = 10, step = 0.5)
+          ),
+
+          # Methods Tab
+          tabPanel(
+            "Methods",
+            br(),
+            p(class = "help-text", "Select calculation methods compatible with this probe configuration."),
+
+            h5("Compatible Methods"),
+            checkboxGroupInput(ns("compatible_methods"), NULL,
+                             choices = c("HRM", "MHR", "DMA", "Tmax_Coh", "Tmax_Klu",
+                                       "HRMx", "CHPM", "DRM"),
+                             selected = c("HRM", "MHR", "DMA", "Tmax_Coh", "Tmax_Klu", "HRMx")),
+
+            br(),
+            h5("Recommended Methods"),
+            p(class = "help-text", "Select the subset of methods recommended for this configuration."),
+            checkboxGroupInput(ns("recommended_methods"), NULL,
+                             choices = c("HRM", "MHR", "DMA", "Tmax_Coh", "Tmax_Klu",
+                                       "HRMx", "CHPM", "DRM"),
+                             selected = c("HRM", "Tmax_Coh", "MHR", "DMA"))
+          )
+        ),
+
+        br(),
         actionButton(ns("apply_probe_manual"), "Apply Manual Configuration", class = "btn-primary")
       )
     })
@@ -307,7 +414,7 @@ configServer <- function(id, heat_pulse_data = NULL) {
             numericInput(ns("dry_density"), "Dry Density (kg/m³):",
                         value = 400, min = 200, max = 1000, step = 10),
 
-            numericInput(ns("basic_density"), "Basic Density (kg/m³):",
+            numericInput(ns("fresh_density"), "Fresh Density (kg/m³):",
                         value = NULL, min = 200, max = 1000, step = 10),
 
             numericInput(ns("moisture_content"), "Moisture Content (%):",
@@ -324,10 +431,13 @@ configServer <- function(id, heat_pulse_data = NULL) {
             p(class = "help-text", "Optional - tree-specific measurements for scaling calculations."),
 
             numericInput(ns("dbh"), "DBH - Diameter at Breast Height (cm):",
-                        value = NULL, min = 1, max = 300, step = 0.1),
+                        value = 20, min = 1, max = 300, step = 0.1),
+
+            numericInput(ns("bark_thickness"), "Bark Thickness (cm):",
+                        value = 0.5, min = 0.1, max = 5, step = 0.1),
 
             numericInput(ns("sapwood_depth"), "Sapwood Depth (cm):",
-                        value = NULL, min = 0.1, max = 50, step = 0.1),
+                        value = 3.0, min = 0.1, max = 50, step = 0.1),
 
             numericInput(ns("sapwood_area"), "Sapwood Area (cm²):",
                         value = NULL, min = 1, max = 10000, step = 1),
@@ -427,9 +537,78 @@ configServer <- function(id, heat_pulse_data = NULL) {
     # Apply manual probe configuration
     observeEvent(input$apply_probe_manual, {
       # Create probe config from manual inputs
-      # This would call sapfluxr's ProbeConfig R6 class
-      # For now, placeholder
-      notify_success(session, "Success!", "Manual probe configuration applied")
+      tryCatch({
+        # Convert distances from mm to cm for sensor positions
+        x_upstream <- input$upstream_distance / 10
+        x_downstream <- input$downstream_distance / 10
+
+        # Create sensor positions list
+        sensor_positions <- list(
+          upstream_inner = -x_upstream,
+          downstream_inner = x_downstream,
+          upstream_outer = -x_upstream,
+          downstream_outer = x_downstream
+        )
+
+        # Determine config type
+        config_type <- ifelse(
+          input$upstream_distance == input$downstream_distance,
+          "symmetric",
+          "asymmetric"
+        )
+
+        # Create yaml_data structure for compatibility with probe_summary
+        yaml_data <- list(
+          metadata = list(
+            config_name = input$probe_config_name,
+            description = input$probe_description
+          ),
+          probe = list(
+            heater_position = input$heater_position,
+            upstream_distance = input$upstream_distance,
+            downstream_distance = input$downstream_distance,
+            diameter = input$probe_diameter,
+            length = input$probe_length,
+            needle_diameter = input$needle_diameter,
+            inner_sensor = input$inner_sensor,
+            outer_sensor = input$outer_sensor,
+            manufacturer = input$probe_manufacturer,
+            model = input$probe_model,
+            heat_pulse_duration = input$heat_pulse_duration
+          ),
+          methods = list(
+            compatible = input$compatible_methods,
+            recommended = input$recommended_methods,
+            priority_order = input$recommended_methods
+          )
+        )
+
+        # Create ProbeConfiguration object
+        config <- sapfluxr::ProbeConfiguration$new(
+          config_name = input$probe_config_name,
+          config_type = config_type,
+          heater_position = input$heater_position,
+          sensor_positions = sensor_positions,
+          probe_diameter = input$probe_diameter,
+          heat_pulse_duration = input$heat_pulse_duration,
+          thermal_diffusivity = NULL,
+          compatible_methods = input$compatible_methods,
+          method_priorities = input$recommended_methods,
+          required_parameters = list(
+            x = mean(c(x_upstream, x_downstream)),
+            heat_pulse_duration = input$heat_pulse_duration
+          ),
+          yaml_source = "manual_entry",
+          yaml_data = yaml_data
+        )
+
+        probe_config(config)
+
+        notify_success(session, "Success!", "Manual probe configuration applied")
+
+      }, error = function(e) {
+        notify_error(session, "Error creating configuration:", e$message)
+      })
     })
 
     # Apply manual wood configuration
@@ -444,7 +623,7 @@ configServer <- function(id, heat_pulse_data = NULL) {
           thermal_conductivity = input$thermal_conductivity,
           volumetric_heat_capacity = input$volumetric_heat_capacity,
           dry_density = input$dry_density,
-          basic_density = input$basic_density,
+          fresh_density = input$fresh_density,
           moisture_content = input$moisture_content,
           species = input$species,
           wood_type = input$wood_type,
@@ -517,6 +696,140 @@ configServer <- function(id, heat_pulse_data = NULL) {
           if (!is.null(config$tree_measurements$dbh)) {
             tags$li(paste("DBH:", config$tree_measurements$dbh, "cm"))
           }
+        )
+      )
+    })
+
+    # Probe Visualisation ----
+
+    # Get current probe config for visualization (includes manual entry)
+    current_probe_config <- reactive({
+      if (input$probe_mode == "manual") {
+        # Return a minimal list structure with values from manual inputs
+        # This won't be a full R6 object, so validation function will use fallbacks
+        req(input$upstream_distance, input$downstream_distance)
+
+        list(
+          sensor_positions = list(
+            upstream_inner = -input$upstream_distance / 10,    # Convert mm to cm, negative for upstream
+            downstream_inner = input$downstream_distance / 10,
+            upstream_outer = -input$upstream_distance / 10,
+            downstream_outer = input$downstream_distance / 10
+          ),
+          yaml_data = list(
+            probe = list(
+              diameter = if (!is.null(input$probe_diameter)) input$probe_diameter else 1.27,
+              length = if (!is.null(input$probe_length)) input$probe_length else 35,
+              inner_sensor = if (!is.null(input$inner_sensor)) input$inner_sensor else 7.5,
+              outer_sensor = if (!is.null(input$outer_sensor)) input$outer_sensor else 22.5
+            )
+          )
+        )
+      } else {
+        # Use the stored configuration (works for both builtin and upload modes)
+        req(probe_config())
+        probe_config()
+      }
+    })
+
+    # Get current wood properties for visualization (includes manual entry)
+    current_wood_properties <- reactive({
+      if (input$wood_mode == "manual") {
+        # Return a minimal list structure with values from manual inputs
+        req(input$dbh, input$bark_thickness, input$sapwood_depth)
+
+        list(
+          tree_measurements = list(
+            dbh = input$dbh,
+            bark_thickness = input$bark_thickness,
+            sapwood_depth = input$sapwood_depth
+          )
+        )
+      } else {
+        # Use the stored configuration
+        req(wood_properties())
+        wood_properties()
+      }
+    })
+
+    # Validate probe and tree configuration
+    validation_data <- reactive({
+      req(current_probe_config(), current_wood_properties())
+
+      validate_probe_tree_config(
+        probe_config = current_probe_config(),
+        wood_properties = current_wood_properties()
+      )
+    })
+
+    # Render vertical view
+    output$probe_vertical_plot <- renderPlot({
+      req(validation_data())
+
+      plot_probe_vertical(validation_data())
+    })
+
+    # Render radial view
+    output$probe_radial_plot <- renderPlot({
+      req(validation_data())
+
+      plot_probe_radial(validation_data())
+    })
+
+    # Configuration assessment feedback
+    output$config_assessment <- renderUI({
+      req(validation_data())
+
+      val <- validation_data()
+
+      # Status indicators for each sensor
+      outer_status <- if (val$outer_in_sapwood) {
+        div(
+          style = "color: green; font-weight: bold; margin: 5px 0;",
+          icon("check-circle"), " Outer sensor is in SAPWOOD"
+        )
+      } else {
+        div(
+          style = "color: red; font-weight: bold; margin: 5px 0;",
+          icon("times-circle"), " Outer sensor is in HEARTWOOD"
+        )
+      }
+
+      inner_status <- if (val$inner_in_sapwood) {
+        div(
+          style = "color: green; font-weight: bold; margin: 5px 0;",
+          icon("check-circle"), " Inner sensor is in SAPWOOD"
+        )
+      } else {
+        div(
+          style = "color: red; font-weight: bold; margin: 5px 0;",
+          icon("times-circle"), " Inner sensor is in HEARTWOOD"
+        )
+      }
+
+      # Summary information
+      div(
+        style = "background-color: #f9f9f9; padding: 15px; border-radius: 5px;",
+        h4("Configuration Assessment", style = "margin-top: 0;"),
+
+        div(
+          style = "margin: 10px 0;",
+          outer_status,
+          inner_status
+        ),
+
+        hr(),
+
+        div(
+          style = "font-size: 0.9em;",
+          tags$ul(
+            tags$li(paste("Tree radius:", round(val$radius, 2), "cm")),
+            tags$li(paste("Bark depth:", round(val$bark_depth, 2), "cm")),
+            tags$li(paste("Sapwood depth:", round(val$sapwood_depth, 2), "cm")),
+            tags$li(paste("Sapwood/heartwood boundary:", round(val$sapwood_boundary, 2), "cm from bark surface")),
+            tags$li(paste("Outer sensor depth:", round(val$outer_sensor_depth, 2), "cm from bark surface")),
+            tags$li(paste("Inner sensor depth:", round(val$inner_sensor_depth, 2), "cm from bark surface"))
+          )
         )
       )
     })

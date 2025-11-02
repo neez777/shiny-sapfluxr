@@ -680,6 +680,8 @@ plotTimeseriesServer <- function(id, vh_results) {
       # Build xaxis config - include range if date/time inputs are set
       xaxis_config <- list(
         title = "Date/Time",
+        showgrid = TRUE,
+        gridcolor = "#E5E5E5",
         rangeslider = list(
           visible = TRUE,
           thickness = 0.1
@@ -704,45 +706,98 @@ plotTimeseriesServer <- function(id, vh_results) {
         cat("Applying time range to plot:", xaxis_config$range[1], "to", xaxis_config$range[2], "\n")
       }
 
-      # Build layout configuration
-      layout_config <- list(
-        xaxis = xaxis_config,
-        yaxis = list(
-          title = "Heat Pulse Velocity (cm/hr)",
-          rangemode = "tozero"
-        ),
-        hovermode = "closest",
-        legend = list(
-          orientation = "h",
-          x = 0,
-          y = -0.25,
-          xanchor = "left",
-          yanchor = "top"
-        ),
-        margin = list(b = 150)  # Increased for range slider
-      )
-
-      # Add secondary y-axis if Peclet is enabled
+      # Apply layout - conditionally add yaxis2 if Peclet is enabled
       if (input$show_peclet && "peclet_number" %in% names(data)) {
         peclet_data <- data %>% filter(!is.na(peclet_number))
         if (nrow(peclet_data) > 0) {
-          # Extend range to ensure Pe=1.0 is visible
-          pe_range <- range(peclet_data$peclet_number, na.rm = TRUE)
-          pe_range[1] <- min(pe_range[1], 0)
-          pe_range[2] <- max(pe_range[2], 1.5)
-
-          layout_config$yaxis2 <- list(
-            title = "Peclet Number (Pe)",
-            overlaying = "y",
-            side = "right",
-            rangemode = "tozero",
-            range = pe_range
-          )
+          # Layout with secondary y-axis for Peclet
+          p <- p %>%
+            layout(
+              xaxis = xaxis_config,
+              yaxis = list(
+                title = "Heat Pulse Velocity (cm/hr)",
+                rangemode = "tozero",
+                showgrid = TRUE,
+                gridcolor = "#E5E5E5",
+                zeroline = TRUE,
+                zerolinecolor = "#969696",
+                zerolinewidth = 1
+              ),
+              yaxis2 = list(
+                title = "Peclet Number (Pe)",
+                overlaying = "y",
+                side = "right",
+                showgrid = FALSE,  # Don't show gridlines for secondary axis
+                zeroline = FALSE   # Don't show zero line for secondary axis
+              ),
+              hovermode = "closest",
+              legend = list(
+                orientation = "h",
+                x = 0,
+                y = -0.25,
+                xanchor = "left",
+                yanchor = "top"
+              ),
+              plot_bgcolor = "white",
+              paper_bgcolor = "white",
+              margin = list(b = 150, r = 80)  # Increased right margin for y-axis label
+            )
+        } else {
+          # No Peclet data, use single axis
+          p <- p %>%
+            layout(
+              xaxis = xaxis_config,
+              yaxis = list(
+                title = "Heat Pulse Velocity (cm/hr)",
+                rangemode = "tozero",
+                showgrid = TRUE,
+                gridcolor = "#E5E5E5",
+                zeroline = TRUE,
+                zerolinecolor = "#969696",
+                zerolinewidth = 1
+              ),
+              hovermode = "closest",
+              legend = list(
+                orientation = "h",
+                x = 0,
+                y = -0.25,
+                xanchor = "left",
+                yanchor = "top"
+              ),
+              plot_bgcolor = "white",
+              paper_bgcolor = "white",
+              margin = list(b = 150)  # Increased for range slider
+            )
         }
+      } else {
+        # Peclet not enabled, use single axis
+        p <- p %>%
+          layout(
+            xaxis = xaxis_config,
+            yaxis = list(
+              title = "Heat Pulse Velocity (cm/hr)",
+              rangemode = "tozero",
+              showgrid = TRUE,
+              gridcolor = "#E5E5E5",
+              zeroline = TRUE,
+              zerolinecolor = "#969696",
+              zerolinewidth = 1
+            ),
+            hovermode = "closest",
+            legend = list(
+              orientation = "h",
+              x = 0,
+              y = -0.25,
+              xanchor = "left",
+              yanchor = "top"
+            ),
+            plot_bgcolor = "white",
+            paper_bgcolor = "white",
+            margin = list(b = 150)  # Increased for range slider
+          )
       }
 
       p <- p %>%
-        layout(layout_config) %>%
         config(
           displayModeBar = TRUE,
           displaylogo = FALSE,
@@ -779,8 +834,13 @@ plotTimeseriesServer <- function(id, vh_results) {
     })
 
     # Capture current plot zoom/ranges when user interacts with range slider
-    observeEvent(event_data("plotly_relayout", source = "timeseries"), {
-      relayout_data <- event_data("plotly_relayout", source = "timeseries")
+    # Use debouncing to prevent excessive updates while dragging
+    relayout_debounced <- debounce(reactive({
+      event_data("plotly_relayout", source = "timeseries")
+    }), 500)  # Wait 500ms after user stops dragging
+
+    observeEvent(relayout_debounced(), {
+      relayout_data <- relayout_debounced()
 
       if (!is.null(relayout_data)) {
         cat("\n=== PLOTLY RELAYOUT EVENT ===\n")
