@@ -13,6 +13,16 @@ configUI <- function(id) {
   ns <- NS(id)
 
   tagList(
+    # JavaScript for adding/removing CSS classes
+    tags$script(HTML("
+      Shiny.addCustomMessageHandler('addClass', function(message) {
+        $('#' + message.id).addClass(message.class);
+      });
+      Shiny.addCustomMessageHandler('removeClass', function(message) {
+        $('#' + message.id).removeClass(message.class);
+      });
+    ")),
+
     fluidRow(
       # Probe Configuration
       column(
@@ -168,6 +178,10 @@ configServer <- function(id, heat_pulse_data = NULL) {
       if (yaml_dir == "") return(NULL)
 
       files <- list.files(yaml_dir, pattern = "^probe_.*\\.yaml$", full.names = TRUE)
+
+      # Filter out asymmetrical probe configurations
+      files <- files[!grepl("asymmetrical", basename(files), ignore.case = TRUE)]
+
       file_names <- basename(files)
       file_names <- gsub("^probe_", "", file_names)
       file_names <- gsub("\\.yaml$", "", file_names)
@@ -197,9 +211,18 @@ configServer <- function(id, heat_pulse_data = NULL) {
     observe({
       yamls <- available_probe_yamls()
       if (!is.null(yamls)) {
+        # Find symmetrical but NOT asymmetrical
+        sym_idx <- grep("^probe_symmetrical\\.yaml$", basename(yamls))
+        if (length(sym_idx) == 0) {
+          # Fallback: find first file with "symmetrical" that doesn't have "asymmetrical"
+          sym_idx <- grep("symmetrical", yamls, ignore.case = TRUE)
+          sym_idx <- sym_idx[!grepl("asymmetrical", yamls[sym_idx], ignore.case = TRUE)]
+        }
+        default_selection <- if (length(sym_idx) > 0) yamls[sym_idx[1]] else yamls[1]
+
         updateSelectInput(session, "probe_yaml_builtin",
                          choices = yamls,
-                         selected = yamls[grep("symmetrical", yamls, ignore.case = TRUE)[1]])
+                         selected = default_selection)
       }
     })
 
@@ -280,6 +303,135 @@ configServer <- function(id, heat_pulse_data = NULL) {
       # Manual mode handled separately
     })
 
+    # Populate manual entry fields when switching to manual mode with loaded config
+    observeEvent(input$wood_mode, {
+      # Only update when switching to manual mode
+      req(input$wood_mode == "manual")
+
+      # Get current wood properties if any
+      config <- isolate(wood_properties())
+      if (!is.null(config)) {
+        # Update thermal properties
+        if (!is.null(config$thermal_diffusivity)) {
+          updateNumericInput(session, "thermal_diffusivity", value = config$thermal_diffusivity)
+        }
+        if (!is.null(config$thermal_conductivity)) {
+          updateNumericInput(session, "thermal_conductivity", value = config$thermal_conductivity)
+        }
+        if (!is.null(config$volumetric_heat_capacity)) {
+          updateNumericInput(session, "volumetric_heat_capacity", value = config$volumetric_heat_capacity)
+        }
+
+        # Update physical properties
+        if (!is.null(config$species)) {
+          updateTextInput(session, "species", value = config$species)
+        }
+        if (!is.null(config$wood_type)) {
+          updateSelectInput(session, "wood_type", selected = config$wood_type)
+        }
+        if (!is.null(config$dry_density) && !is.na(config$dry_density)) {
+          updateNumericInput(session, "dry_density", value = config$dry_density)
+        }
+        if (!is.null(config$fresh_density) && !is.na(config$fresh_density)) {
+          updateNumericInput(session, "fresh_density", value = config$fresh_density)
+        }
+        if (!is.null(config$moisture_content) && !is.na(config$moisture_content)) {
+          updateNumericInput(session, "moisture_content", value = config$moisture_content)
+        }
+
+        # Update tree measurements
+        if (!is.null(config$tree_measurements)) {
+          if (!is.null(config$tree_measurements$dbh)) {
+            updateNumericInput(session, "dbh", value = config$tree_measurements$dbh)
+          }
+          if (!is.null(config$tree_measurements$bark_thickness)) {
+            updateNumericInput(session, "bark_thickness", value = config$tree_measurements$bark_thickness)
+          }
+          if (!is.null(config$tree_measurements$sapwood_depth)) {
+            updateNumericInput(session, "sapwood_depth", value = config$tree_measurements$sapwood_depth)
+          }
+          if (!is.null(config$tree_measurements$sapwood_area)) {
+            updateNumericInput(session, "sapwood_area", value = config$tree_measurements$sapwood_area)
+          }
+        }
+
+        # Update quality thresholds
+        if (!is.null(config$quality_thresholds)) {
+          if (!is.null(config$quality_thresholds$max_velocity_cm_hr)) {
+            updateNumericInput(session, "max_velocity", value = config$quality_thresholds$max_velocity_cm_hr)
+          }
+          if (!is.null(config$quality_thresholds$min_velocity_cm_hr)) {
+            updateNumericInput(session, "min_velocity", value = config$quality_thresholds$min_velocity_cm_hr)
+          }
+          if (!is.null(config$quality_thresholds$temperature_range)) {
+            updateSliderInput(session, "temp_range", value = config$quality_thresholds$temperature_range)
+          }
+        }
+      }
+    })
+
+    # Also update manual fields when wood_properties() changes while in manual mode
+    observe({
+      req(input$wood_mode == "manual")
+      config <- wood_properties()
+      req(!is.null(config))
+
+      # Update all fields when properties change
+      if (!is.null(config$thermal_diffusivity) && !is.na(config$thermal_diffusivity)) {
+        updateNumericInput(session, "thermal_diffusivity", value = config$thermal_diffusivity)
+      }
+      if (!is.null(config$thermal_conductivity) && !is.na(config$thermal_conductivity)) {
+        updateNumericInput(session, "thermal_conductivity", value = config$thermal_conductivity)
+      }
+      if (!is.null(config$volumetric_heat_capacity) && !is.na(config$volumetric_heat_capacity)) {
+        updateNumericInput(session, "volumetric_heat_capacity", value = config$volumetric_heat_capacity)
+      }
+      if (!is.null(config$dry_density) && !is.na(config$dry_density)) {
+        updateNumericInput(session, "dry_density", value = config$dry_density)
+      }
+      if (!is.null(config$fresh_density) && !is.na(config$fresh_density)) {
+        updateNumericInput(session, "fresh_density", value = config$fresh_density)
+      }
+      if (!is.null(config$moisture_content) && !is.na(config$moisture_content)) {
+        updateNumericInput(session, "moisture_content", value = config$moisture_content)
+      }
+      if (!is.null(config$species)) {
+        updateTextInput(session, "species", value = config$species)
+      }
+      if (!is.null(config$wood_type)) {
+        updateSelectInput(session, "wood_type", selected = config$wood_type)
+      }
+
+      # Update tree measurements
+      if (!is.null(config$tree_measurements)) {
+        if (!is.null(config$tree_measurements$dbh) && !is.na(config$tree_measurements$dbh)) {
+          updateNumericInput(session, "dbh", value = config$tree_measurements$dbh)
+        }
+        if (!is.null(config$tree_measurements$bark_thickness) && !is.na(config$tree_measurements$bark_thickness)) {
+          updateNumericInput(session, "bark_thickness", value = config$tree_measurements$bark_thickness)
+        }
+        if (!is.null(config$tree_measurements$sapwood_depth) && !is.na(config$tree_measurements$sapwood_depth)) {
+          updateNumericInput(session, "sapwood_depth", value = config$tree_measurements$sapwood_depth)
+        }
+        if (!is.null(config$tree_measurements$sapwood_area) && !is.na(config$tree_measurements$sapwood_area)) {
+          updateNumericInput(session, "sapwood_area", value = config$tree_measurements$sapwood_area)
+        }
+      }
+
+      # Update quality thresholds
+      if (!is.null(config$quality_thresholds)) {
+        if (!is.null(config$quality_thresholds$max_velocity_cm_hr) && !is.na(config$quality_thresholds$max_velocity_cm_hr)) {
+          updateNumericInput(session, "max_velocity", value = config$quality_thresholds$max_velocity_cm_hr)
+        }
+        if (!is.null(config$quality_thresholds$min_velocity_cm_hr) && !is.na(config$quality_thresholds$min_velocity_cm_hr)) {
+          updateNumericInput(session, "min_velocity", value = config$quality_thresholds$min_velocity_cm_hr)
+        }
+        if (!is.null(config$quality_thresholds$temperature_range)) {
+          updateSliderInput(session, "temp_range", value = config$quality_thresholds$temperature_range)
+        }
+      }
+    })
+
     # Probe manual entry UI
     output$probe_manual_ui <- renderUI({
       ns <- session$ns
@@ -318,7 +470,14 @@ configServer <- function(id, heat_pulse_data = NULL) {
                         value = 5, min = 1, max = 20, step = 0.5),
 
             numericInput(ns("downstream_distance"), "Downstream Distance (mm):",
-                        value = 5, min = 1, max = 20, step = 0.5)
+                        value = 5, min = 1, max = 20, step = 0.5),
+
+            hr(),
+            h6(strong("Probe Insertion"), style = "margin-top: 15px;"),
+            p(class = "help-text", "If probe is not fully inserted (e.g., due to external spacer for thin bark/sapwood), enter spacer thickness."),
+
+            numericInput(ns("spacer_thickness"), "Spacer Thickness (mm):",
+                        value = 0, min = 0, max = 10, step = 0.5)
           ),
 
           # Probe Configuration Tab
@@ -354,17 +513,15 @@ configServer <- function(id, heat_pulse_data = NULL) {
 
             h5("Compatible Methods"),
             checkboxGroupInput(ns("compatible_methods"), NULL,
-                             choices = c("HRM", "MHR", "DMA", "Tmax_Coh", "Tmax_Klu",
-                                       "HRMx", "CHPM", "DRM"),
-                             selected = c("HRM", "MHR", "DMA", "Tmax_Coh", "Tmax_Klu", "HRMx")),
+                             choices = c("HRM", "MHR", "Tmax_Coh", "Tmax_Klu", "HRMx"),
+                             selected = c("HRM", "MHR", "Tmax_Coh", "Tmax_Klu", "HRMx")),
 
             br(),
             h5("Recommended Methods"),
             p(class = "help-text", "Select the subset of methods recommended for this configuration."),
             checkboxGroupInput(ns("recommended_methods"), NULL,
-                             choices = c("HRM", "MHR", "DMA", "Tmax_Coh", "Tmax_Klu",
-                                       "HRMx", "CHPM", "DRM"),
-                             selected = c("HRM", "Tmax_Coh", "MHR", "DMA"))
+                             choices = c("HRM", "MHR", "Tmax_Coh", "Tmax_Klu", "HRMx"),
+                             selected = c("HRM", "Tmax_Coh", "MHR"))
           )
         ),
 
@@ -415,13 +572,10 @@ configServer <- function(id, heat_pulse_data = NULL) {
                         value = 400, min = 200, max = 1000, step = 10),
 
             numericInput(ns("fresh_density"), "Fresh Density (kg/m³):",
-                        value = NULL, min = 200, max = 1000, step = 10),
+                        value = 350, min = 200, max = 1000, step = 10),
 
             numericInput(ns("moisture_content"), "Moisture Content (%):",
-                        value = 30, min = 0, max = 200, step = 1),
-
-            numericInput(ns("temperature"), "Temperature (°C):",
-                        value = 20, min = -10, max = 50, step = 1)
+                        value = 30, min = 0, max = 200, step = 1)
           ),
 
           # Tree Measurements Tab
@@ -439,10 +593,24 @@ configServer <- function(id, heat_pulse_data = NULL) {
             numericInput(ns("sapwood_depth"), "Sapwood Depth (cm):",
                         value = 3.0, min = 0.1, max = 50, step = 0.1),
 
-            numericInput(ns("sapwood_area"), "Sapwood Area (cm²):",
-                        value = NULL, min = 1, max = 10000, step = 1),
-
-            uiOutput(ns("derived_tree_values"))
+            div(
+              id = ns("sapwood_area_container"),
+              numericInput(ns("sapwood_area"), "Sapwood Area (cm²):",
+                          value = NULL, min = 1, max = 10000, step = 1)
+            ),
+            tags$style(HTML(sprintf("
+              #%s.calculated-value input {
+                color: #2196F3 !important;
+                font-weight: bold !important;
+              }
+              #%s.calculated-value label::after {
+                content: ' (calculated)';
+                color: #2196F3;
+                font-weight: normal;
+                font-size: 0.9em;
+                font-style: italic;
+              }
+            ", ns("sapwood_area_container"), ns("sapwood_area_container"))))
           ),
 
           # Quality Thresholds Tab
@@ -511,25 +679,33 @@ configServer <- function(id, heat_pulse_data = NULL) {
       }
     })
 
-    # Calculate and display derived tree values
-    output$derived_tree_values <- renderUI({
+    # Calculate and update sapwood area when DBH or sapwood_depth changes
+    observe({
+      req(input$wood_mode == "manual")
+
       dbh <- input$dbh
       sapwood_depth <- input$sapwood_depth
 
-      if (!is.null(dbh) && !is.null(sapwood_depth)) {
+      if (!is.null(dbh) && !is.null(sapwood_depth) && dbh > 0 && sapwood_depth > 0) {
         # Calculate sapwood area
         # Outer radius = DBH/2, inner radius = DBH/2 - sapwood_depth
         outer_r <- dbh / 2
         inner_r <- max(0, outer_r - sapwood_depth)
         sapwood_area <- pi * (outer_r^2 - inner_r^2)
 
-        div(
-          style = "margin-top: 15px; padding: 10px; background-color: #E3F2FD; border-radius: 3px;",
-          p(strong("Calculated from DBH & Sapwood Depth:"), class = "derived-value"),
-          p(
-            "Sapwood Area: ",
-            span(sprintf("%.1f cm²", sapwood_area), class = "derived-value")
-          )
+        # Update the sapwood_area input field
+        updateNumericInput(session, "sapwood_area", value = round(sapwood_area, 1))
+
+        # Add calculated-value class to the container for styling using JavaScript
+        session$sendCustomMessage(
+          type = "addClass",
+          message = list(id = session$ns("sapwood_area_container"), class = "calculated-value")
+        )
+      } else {
+        # Remove calculated-value class if inputs are invalid
+        session$sendCustomMessage(
+          type = "removeClass",
+          message = list(id = session$ns("sapwood_area_container"), class = "calculated-value")
         )
       }
     })
@@ -572,6 +748,7 @@ configServer <- function(id, heat_pulse_data = NULL) {
             needle_diameter = input$needle_diameter,
             inner_sensor = input$inner_sensor,
             outer_sensor = input$outer_sensor,
+            spacer_thickness = input$spacer_thickness,
             manufacturer = input$probe_manufacturer,
             model = input$probe_model,
             heat_pulse_duration = input$heat_pulse_duration
@@ -627,7 +804,6 @@ configServer <- function(id, heat_pulse_data = NULL) {
           moisture_content = input$moisture_content,
           species = input$species,
           wood_type = input$wood_type,
-          temperature = input$temperature,
           tree_measurements = list(
             dbh = input$dbh,
             sapwood_depth = input$sapwood_depth,
@@ -656,9 +832,71 @@ configServer <- function(id, heat_pulse_data = NULL) {
         return(p("No configuration loaded", style = "color: #999;"))
       }
 
+      ns <- session$ns
+
       # Extract upstream and downstream distances from sensor positions (in cm, convert to mm)
       upstream_mm <- abs(config$sensor_positions$upstream_inner * 10)
       downstream_mm <- abs(config$sensor_positions$downstream_inner * 10)
+
+      # Get probe dimensions from yaml_data
+      probe_diameter <- if (!is.null(config$yaml_data$probe$diameter)) {
+        config$yaml_data$probe$diameter
+      } else if (!is.null(config$probe_diameter)) {
+        config$probe_diameter
+      } else {
+        NA
+      }
+
+      probe_length <- if (!is.null(config$yaml_data$probe$length)) {
+        config$yaml_data$probe$length
+      } else {
+        NA
+      }
+
+      inner_sensor <- if (!is.null(config$yaml_data$probe$inner_sensor)) {
+        config$yaml_data$probe$inner_sensor
+      } else {
+        NA
+      }
+
+      outer_sensor <- if (!is.null(config$yaml_data$probe$outer_sensor)) {
+        config$yaml_data$probe$outer_sensor
+      } else {
+        NA
+      }
+
+      spacer_thickness <- if (!is.null(config$yaml_data$probe$spacer_thickness)) {
+        config$yaml_data$probe$spacer_thickness
+      } else {
+        0
+      }
+
+      heat_pulse_duration <- if (!is.null(config$heat_pulse_duration)) {
+        config$heat_pulse_duration
+      } else if (!is.null(config$yaml_data$probe$heat_pulse_duration)) {
+        config$yaml_data$probe$heat_pulse_duration
+      } else {
+        NA
+      }
+
+      manufacturer <- if (!is.null(config$yaml_data$probe$manufacturer)) {
+        config$yaml_data$probe$manufacturer
+      } else {
+        "Unknown"
+      }
+
+      model <- if (!is.null(config$yaml_data$probe$model)) {
+        config$yaml_data$probe$model
+      } else {
+        "Unknown"
+      }
+
+      # Get description
+      description <- if (!is.null(config$yaml_data$metadata$description)) {
+        config$yaml_data$metadata$description
+      } else {
+        NULL
+      }
 
       # Extract recommended methods from yaml_data or method_priorities
       recommended_methods <- if (!is.null(config$yaml_data$methods$recommended)) {
@@ -669,13 +907,63 @@ configServer <- function(id, heat_pulse_data = NULL) {
         "Not specified"
       }
 
+      # Extract compatible methods
+      compatible_methods <- if (!is.null(config$yaml_data$methods$compatible)) {
+        paste(config$yaml_data$methods$compatible, collapse = ", ")
+      } else if (!is.null(config$compatible_methods)) {
+        paste(config$compatible_methods, collapse = ", ")
+      } else {
+        "Not specified"
+      }
+
       div(
         style = "background-color: #f9f9f9; padding: 10px; border-radius: 3px;",
-        p(strong("Configuration: "), config$config_name),
-        tags$ul(
-          tags$li(paste("Upstream distance:", upstream_mm, "mm")),
-          tags$li(paste("Downstream distance:", downstream_mm, "mm")),
-          tags$li(paste("Recommended methods:", recommended_methods))
+        h5(strong(config$config_name), style = "margin-top: 0; margin-bottom: 5px;"),
+        if (!is.null(description)) {
+          p(style = "font-size: 0.9em; color: #666; margin-bottom: 5px;", description)
+        },
+        p(style = "font-size: 0.9em; color: #666; margin-bottom: 10px;",
+          paste(manufacturer, model, sep = " - ")),
+
+        # Two-column layout using fluidRow
+        fluidRow(
+          column(
+            width = 6,
+            h6(strong("Probe Geometry"), style = "margin-top: 10px;"),
+            tags$ul(
+              style = "font-size: 0.9em; padding-left: 20px;",
+              if (!is.na(probe_diameter)) tags$li(paste("Diameter:", probe_diameter, "mm")),
+              if (!is.na(probe_length)) tags$li(paste("Length:", probe_length, "mm")),
+              tags$li(paste("Upstream:", upstream_mm, "mm")),
+              tags$li(paste("Downstream:", downstream_mm, "mm")),
+              tags$li(paste("Spacer thickness:", spacer_thickness, "mm"))
+            )
+          ),
+          column(
+            width = 6,
+            h6(strong("Sensor Configuration"), style = "margin-top: 10px;"),
+            tags$ul(
+              style = "font-size: 0.9em; padding-left: 20px;",
+              if (!is.na(inner_sensor)) tags$li(paste("Inner sensor:", inner_sensor, "mm from tip")),
+              if (!is.na(outer_sensor)) tags$li(paste("Outer sensor:", outer_sensor, "mm from tip")),
+              if (!is.na(heat_pulse_duration)) tags$li(paste("Pulse duration:", heat_pulse_duration, "s"))
+            ),
+            h6(strong("Methods"), style = "margin-top: 10px;"),
+            tags$ul(
+              style = "font-size: 0.9em; padding-left: 20px;",
+              tags$li(paste("Compatible:", compatible_methods)),
+              tags$li(paste("Recommended:", recommended_methods))
+            )
+          )
+        ),
+
+        hr(),
+        downloadButton(
+          ns("download_probe_yaml"),
+          "Export to YAML",
+          icon = icon("download"),
+          class = "btn-sm btn-primary",
+          style = "width: 100%;"
         )
       )
     })
@@ -687,15 +975,83 @@ configServer <- function(id, heat_pulse_data = NULL) {
         return(p("No configuration loaded", style = "color: #999;"))
       }
 
+      ns <- session$ns
+
       div(
         style = "background-color: #f9f9f9; padding: 10px; border-radius: 3px;",
-        p(strong("Configuration: "), config$config_name),
-        tags$ul(
-          tags$li(paste("Species:", config$species)),
-          tags$li(paste("Thermal diffusivity:", config$thermal_diffusivity, "cm²/s")),
-          if (!is.null(config$tree_measurements$dbh)) {
-            tags$li(paste("DBH:", config$tree_measurements$dbh, "cm"))
-          }
+        h5(strong(config$config_name), style = "margin-top: 0;"),
+
+        # Two-column layout using fluidRow
+        fluidRow(
+          column(
+            width = 6,
+            h6(strong("Species & Thermal Properties"), style = "margin-top: 10px;"),
+            tags$ul(
+              style = "font-size: 0.9em; padding-left: 20px;",
+              tags$li(paste("Species:", if (!is.null(config$species)) config$species else "Unknown")),
+              tags$li(paste("Wood type:", if (!is.null(config$wood_type)) config$wood_type else "Unknown")),
+              tags$li(paste("Thermal diffusivity:", config$thermal_diffusivity, "cm²/s")),
+              if (!is.null(config$thermal_conductivity)) {
+                tags$li(paste("Thermal conductivity:", config$thermal_conductivity, "W/(m·K)"))
+              },
+              if (!is.null(config$volumetric_heat_capacity)) {
+                tags$li(paste("Heat capacity:", format(config$volumetric_heat_capacity, scientific = FALSE), "J/(m³·K)"))
+              }
+            ),
+
+            h6(strong("Physical Properties"), style = "margin-top: 10px;"),
+            tags$ul(
+              style = "font-size: 0.9em; padding-left: 20px;",
+              if (!is.null(config$dry_density)) {
+                tags$li(paste("Dry density:", config$dry_density, "kg/m³"))
+              },
+              if (!is.null(config$fresh_density)) {
+                tags$li(paste("Fresh density:", config$fresh_density, "kg/m³"))
+              },
+              if (!is.null(config$moisture_content)) {
+                tags$li(paste("Moisture:", config$moisture_content, "%"))
+              }
+            )
+          ),
+          column(
+            width = 6,
+            h6(strong("Tree Measurements"), style = "margin-top: 10px;"),
+            tags$ul(
+              style = "font-size: 0.9em; padding-left: 20px;",
+              if (!is.null(config$tree_measurements$dbh)) {
+                tags$li(paste("DBH:", config$tree_measurements$dbh, "cm"))
+              },
+              if (!is.null(config$tree_measurements$bark_thickness)) {
+                tags$li(paste("Bark thickness:", config$tree_measurements$bark_thickness, "cm"))
+              },
+              if (!is.null(config$tree_measurements$sapwood_depth)) {
+                tags$li(paste("Sapwood depth:", config$tree_measurements$sapwood_depth, "cm"))
+              },
+              if (!is.null(config$tree_measurements$sapwood_area)) {
+                tags$li(paste("Sapwood area:", round(config$tree_measurements$sapwood_area, 1), "cm²"))
+              }
+            ),
+
+            h6(strong("Quality Thresholds"), style = "margin-top: 10px;"),
+            tags$ul(
+              style = "font-size: 0.9em; padding-left: 20px;",
+              if (!is.null(config$quality_thresholds$max_velocity_cm_hr)) {
+                tags$li(paste("Max velocity:", config$quality_thresholds$max_velocity_cm_hr, "cm/hr"))
+              },
+              if (!is.null(config$quality_thresholds$min_velocity_cm_hr)) {
+                tags$li(paste("Min velocity:", config$quality_thresholds$min_velocity_cm_hr, "cm/hr"))
+              }
+            )
+          )
+        ),
+
+        hr(),
+        downloadButton(
+          ns("download_wood_yaml"),
+          "Export to YAML",
+          icon = icon("download"),
+          class = "btn-sm btn-primary",
+          style = "width: 100%;"
         )
       )
     })
@@ -721,7 +1077,8 @@ configServer <- function(id, heat_pulse_data = NULL) {
               diameter = if (!is.null(input$probe_diameter)) input$probe_diameter else 1.27,
               length = if (!is.null(input$probe_length)) input$probe_length else 35,
               inner_sensor = if (!is.null(input$inner_sensor)) input$inner_sensor else 7.5,
-              outer_sensor = if (!is.null(input$outer_sensor)) input$outer_sensor else 22.5
+              outer_sensor = if (!is.null(input$outer_sensor)) input$outer_sensor else 22.5,
+              spacer_thickness = if (!is.null(input$spacer_thickness)) input$spacer_thickness else 0
             )
           )
         )
@@ -782,11 +1139,16 @@ configServer <- function(id, heat_pulse_data = NULL) {
 
       val <- validation_data()
 
-      # Status indicators for each sensor
-      outer_status <- if (val$outer_in_sapwood) {
+      # Status indicators for each sensor based on tissue type
+      outer_status <- if (val$outer_tissue == "sapwood") {
         div(
           style = "color: green; font-weight: bold; margin: 5px 0;",
           icon("check-circle"), " Outer sensor is in SAPWOOD"
+        )
+      } else if (val$outer_tissue == "bark") {
+        div(
+          style = "color: red; font-weight: bold; margin: 5px 0;",
+          icon("times-circle"), " Outer sensor is in BARK"
         )
       } else {
         div(
@@ -795,10 +1157,15 @@ configServer <- function(id, heat_pulse_data = NULL) {
         )
       }
 
-      inner_status <- if (val$inner_in_sapwood) {
+      inner_status <- if (val$inner_tissue == "sapwood") {
         div(
           style = "color: green; font-weight: bold; margin: 5px 0;",
           icon("check-circle"), " Inner sensor is in SAPWOOD"
+        )
+      } else if (val$inner_tissue == "bark") {
+        div(
+          style = "color: red; font-weight: bold; margin: 5px 0;",
+          icon("times-circle"), " Inner sensor is in BARK"
         )
       } else {
         div(
@@ -833,6 +1200,172 @@ configServer <- function(id, heat_pulse_data = NULL) {
         )
       )
     })
+
+    # Download handlers ----
+
+    # Download probe configuration as YAML
+    output$download_probe_yaml <- downloadHandler(
+      filename = function() {
+        "my_probe_config.yaml"
+      },
+      content = function(file) {
+        config <- probe_config()
+        if (is.null(config)) {
+          stop("No probe configuration to export")
+        }
+
+        # Use yaml_data if available (from loaded YAML or manual entry)
+        if (!is.null(config$yaml_data)) {
+          yaml_content <- config$yaml_data
+        } else {
+          # Construct YAML structure from config object
+          yaml_content <- list(
+            metadata = list(
+              config_name = config$config_name,
+              description = paste("Exported on", Sys.Date()),
+              created_date = as.character(Sys.Date()),
+              version = "1.0"
+            ),
+            probe = list(
+              heater_position = 0,
+              upstream_distance = abs(config$sensor_positions$upstream_inner * 10),  # Convert cm to mm
+              downstream_distance = abs(config$sensor_positions$downstream_inner * 10),
+              diameter = config$probe_diameter,
+              spacer_thickness = 0,  # Default to 0 if not specified
+              heat_pulse_duration = config$heat_pulse_duration,
+              manufacturer = "Custom",
+              model = "Custom"
+            ),
+            methods = list(
+              compatible = config$compatible_methods,
+              recommended = config$method_priorities,
+              priority_order = config$method_priorities
+            )
+          )
+        }
+
+        # Write to YAML
+        yaml::write_yaml(yaml_content, file)
+
+        notify_success(
+          session = session,
+          title = "Export Complete",
+          text = "Probe configuration exported successfully"
+        )
+      }
+    )
+
+    # Download wood properties as YAML
+    output$download_wood_yaml <- downloadHandler(
+      filename = function() {
+        # Try to get filename from heat_pulse_data
+        if (!is.null(heat_pulse_data) && !is.null(heat_pulse_data())) {
+          data <- heat_pulse_data()
+          if (!is.null(data$metadata$file_name)) {
+            # Extract base filename without extension
+            base_name <- tools::file_path_sans_ext(data$metadata$file_name)
+            return(paste0(base_name, ".yaml"))
+          }
+        }
+        # Fallback to generic name
+        "my_wood_properties.yaml"
+      },
+      content = function(file) {
+        config <- wood_properties()
+        if (is.null(config)) {
+          stop("No wood properties to export")
+        }
+
+        # Construct YAML structure
+        yaml_content <- list(
+          metadata = list(
+            config_name = config$config_name,
+            description = paste("Exported on", Sys.Date()),
+            created_date = as.character(Sys.Date()),
+            version = "1.0"
+          ),
+          species = list(
+            common_name = if (!is.null(config$species)) config$species else "Unknown",
+            wood_type = if (!is.null(config$wood_type)) config$wood_type else "unknown"
+          ),
+          thermal_properties = list(
+            thermal_diffusivity = list(
+              value = config$thermal_diffusivity,
+              units = "cm²/s"
+            ),
+            thermal_conductivity = if (!is.null(config$thermal_conductivity)) {
+              list(value = config$thermal_conductivity, units = "W/(m·K)")
+            } else NULL,
+            volumetric_heat_capacity = if (!is.null(config$volumetric_heat_capacity)) {
+              list(value = config$volumetric_heat_capacity, units = "J/(m³·K)")
+            } else NULL
+          ),
+          physical_properties = list(
+            dry_density = if (!is.null(config$dry_density)) {
+              list(value = config$dry_density, units = "kg/m³")
+            } else NULL,
+            fresh_density = if (!is.null(config$fresh_density)) {
+              list(value = config$fresh_density, units = "kg/m³")
+            } else NULL,
+            moisture_content = if (!is.null(config$moisture_content)) {
+              list(value = config$moisture_content, units = "fraction")
+            } else NULL
+          ),
+          tree_measurements = if (!is.null(config$tree_measurements)) {
+            list(
+              dbh = if (!is.null(config$tree_measurements$dbh)) {
+                list(value = config$tree_measurements$dbh, units = "cm")
+              } else NULL,
+              bark_thickness = if (!is.null(config$tree_measurements$bark_thickness)) {
+                list(value = config$tree_measurements$bark_thickness, units = "cm")
+              } else NULL,
+              sapwood_depth = if (!is.null(config$tree_measurements$sapwood_depth)) {
+                list(value = config$tree_measurements$sapwood_depth, units = "cm")
+              } else NULL,
+              sapwood_area = if (!is.null(config$tree_measurements$sapwood_area)) {
+                list(value = config$tree_measurements$sapwood_area, units = "cm²")
+              } else NULL
+            )
+          } else NULL,
+          quality_thresholds = if (!is.null(config$quality_thresholds)) {
+            list(
+              velocity = list(
+                max_cm_hr = config$quality_thresholds$max_velocity_cm_hr,
+                min_cm_hr = config$quality_thresholds$min_velocity_cm_hr
+              ),
+              temperature = if (!is.null(config$quality_thresholds$temperature_range)) {
+                list(
+                  min_degC = config$quality_thresholds$temperature_range[1],
+                  max_degC = config$quality_thresholds$temperature_range[2]
+                )
+              } else NULL
+            )
+          } else NULL
+        )
+
+        # Remove NULL entries
+        yaml_content <- remove_nulls(yaml_content)
+
+        # Write to YAML
+        yaml::write_yaml(yaml_content, file)
+
+        notify_success(
+          session = session,
+          title = "Export Complete",
+          text = "Wood properties exported successfully"
+        )
+      }
+    )
+
+    # Helper function to remove NULL entries recursively
+    remove_nulls <- function(x) {
+      if (is.list(x)) {
+        x <- x[!sapply(x, is.null)]
+        lapply(x, remove_nulls)
+      } else {
+        x
+      }
+    }
 
     # Return reactive configurations
     return(list(

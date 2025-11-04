@@ -232,13 +232,21 @@ validate_probe_tree_config <- function(probe_config, wood_properties) {
     inner_sensor_mm <- probe_config$yaml_data$probe$inner_sensor  # mm from tip
     outer_sensor_mm <- probe_config$yaml_data$probe$outer_sensor  # mm from tip
 
+    # Spacer thickness (external spacer between handle and bark)
+    spacer_thickness_mm <- if (!is.null(probe_config$yaml_data$probe$spacer_thickness)) {
+      probe_config$yaml_data$probe$spacer_thickness
+    } else {
+      0
+    }
+
     # Convert to cm for visualization
     probe_diameter_cm <- probe_diameter_mm / 10
     probe_length_cm <- probe_length_mm / 10
+    spacer_thickness_cm <- spacer_thickness_mm / 10
 
-    # Sensor depths from bark surface (probe length - distance from tip)
-    outer_sensor_depth <- (probe_length_mm - outer_sensor_mm) / 10  # cm
-    inner_sensor_depth <- (probe_length_mm - inner_sensor_mm) / 10  # cm
+    # Sensor depths from bark surface (probe length - distance from tip - spacer)
+    outer_sensor_depth <- (probe_length_mm - outer_sensor_mm - spacer_thickness_mm) / 10  # cm
+    inner_sensor_depth <- (probe_length_mm - inner_sensor_mm - spacer_thickness_mm) / 10  # cm
 
   } else {
     # Handle list structure from manual mode
@@ -268,13 +276,21 @@ validate_probe_tree_config <- function(probe_config, wood_properties) {
       probe_config$yaml_data$probe$outer_sensor
     } else 22.5
 
+    # Spacer thickness (external spacer between handle and bark)
+    spacer_thickness_mm <- if (!is.null(probe_config$yaml_data$probe$spacer_thickness)) {
+      probe_config$yaml_data$probe$spacer_thickness
+    } else {
+      0
+    }
+
     # Convert to cm for visualisation
     probe_diameter_cm <- probe_diameter_mm / 10
     probe_length_cm <- probe_length_mm / 10
+    spacer_thickness_cm <- spacer_thickness_mm / 10
 
-    # Sensor depths from bark surface (probe length - distance from tip)
-    outer_sensor_depth <- (probe_length_mm - outer_sensor_mm) / 10  # cm
-    inner_sensor_depth <- (probe_length_mm - inner_sensor_mm) / 10  # cm
+    # Sensor depths from bark surface (probe length - distance from tip - spacer)
+    outer_sensor_depth <- (probe_length_mm - outer_sensor_mm - spacer_thickness_mm) / 10  # cm
+    inner_sensor_depth <- (probe_length_mm - inner_sensor_mm - spacer_thickness_mm) / 10  # cm
   }
 
   # Extract tree properties from R6 object
@@ -311,9 +327,28 @@ validate_probe_tree_config <- function(probe_config, wood_properties) {
   cambium_depth <- bark_depth
   sapwood_boundary <- cambium_depth + sapwood_depth
 
-  # Check if sensors are in sapwood
-  outer_in_sapwood <- outer_sensor_depth <= sapwood_boundary
-  inner_in_sapwood <- inner_sensor_depth <= sapwood_boundary
+  # Determine which tissue layer each sensor is in
+  # Outer sensor
+  if (outer_sensor_depth <= bark_depth) {
+    outer_tissue <- "bark"
+  } else if (outer_sensor_depth <= sapwood_boundary) {
+    outer_tissue <- "sapwood"
+  } else {
+    outer_tissue <- "heartwood"
+  }
+
+  # Inner sensor
+  if (inner_sensor_depth <= bark_depth) {
+    inner_tissue <- "bark"
+  } else if (inner_sensor_depth <= sapwood_boundary) {
+    inner_tissue <- "sapwood"
+  } else {
+    inner_tissue <- "heartwood"
+  }
+
+  # Legacy boolean flags for backward compatibility
+  outer_in_sapwood <- outer_tissue == "sapwood"
+  inner_in_sapwood <- inner_tissue == "sapwood"
 
   # Calculate maximum probe spacing for plot margins
   max_spacing <- max(upstream_dist, downstream_dist)
@@ -326,13 +361,16 @@ validate_probe_tree_config <- function(probe_config, wood_properties) {
     sapwood_boundary = sapwood_boundary,
     probe_length_cm = probe_length_cm,
     probe_diameter_cm = probe_diameter_cm,
+    spacer_thickness_cm = spacer_thickness_cm,
     upstream_dist = upstream_dist,
     downstream_dist = downstream_dist,
     max_spacing = max_spacing,
     outer_sensor_depth = outer_sensor_depth,
     inner_sensor_depth = inner_sensor_depth,
     outer_in_sapwood = outer_in_sapwood,
-    inner_in_sapwood = inner_in_sapwood
+    inner_in_sapwood = inner_in_sapwood,
+    outer_tissue = outer_tissue,
+    inner_tissue = inner_tissue
   ))
 }
 
@@ -355,11 +393,38 @@ plot_probe_vertical <- function(validation) {
   )
 
   # Define probe positions (downstream, heater, upstream)
+  # If there's a spacer, probe starts through the spacer and insertion depth is reduced
+  probe_x_start <- -validation$spacer_thickness_cm  # Extends through spacer
+  probe_x_end <- validation$probe_length_cm - validation$spacer_thickness_cm  # Reduced insertion depth
+
   probe_data <- data.frame(
     probe = c("Downstream", "Heater", "Upstream"),
     y_pos = c(validation$downstream_dist, 0, -validation$upstream_dist),
-    x_start = 0,
-    x_end = validation$probe_length_cm,
+    x_start = probe_x_start,
+    x_end = probe_x_end,
+    handle_color = c("blue", "red", "blue"),
+    stringsAsFactors = FALSE
+  )
+
+  # Define probe handles (rectangles positioned outside bark)
+  handle_width <- 0.8  # cm (wider to fit text)
+  handle_height <- 0.4  # cm
+
+  # Calculate handle position based on spacer thickness
+  # If spacer = 0: handles flush with bark (center at -handle_width/2)
+  # If spacer > 0: spacer goes from 0 to -spacer_thickness, handles beyond that
+  if (validation$spacer_thickness_cm > 0) {
+    handle_offset <- -(validation$spacer_thickness_cm + handle_width/2)
+  } else {
+    handle_offset <- -handle_width/2
+  }
+
+  probe_handles <- data.frame(
+    probe = c("Downstream", "Heater", "Upstream"),
+    x = rep(handle_offset, 3),
+    y = c(validation$downstream_dist, 0, -validation$upstream_dist),
+    color = c("blue", "red", "blue"),
+    text_color = c("white", "black", "white"),
     stringsAsFactors = FALSE
   )
 
@@ -371,9 +436,17 @@ plot_probe_vertical <- function(validation) {
       rep(validation$downstream_dist, 2),  # Downstream sensors
       rep(-validation$upstream_dist, 2)     # Upstream sensors
     ),
-    in_sapwood = rep(c(validation$outer_in_sapwood, validation$inner_in_sapwood), 2),
+    tissue = rep(c(validation$outer_tissue, validation$inner_tissue), 2),
     stringsAsFactors = FALSE
   )
+
+  # Assign colors based on tissue type (green for sapwood, red for bark or heartwood)
+  sensors$fill_color <- ifelse(sensors$tissue == "sapwood", "green3", "red")
+
+  # Calculate x-axis limits
+  x_max <- validation$probe_length_cm + 2
+  # x_min should include handle position with a small margin
+  x_min <- handle_offset - handle_width/2 - 0.2  # 0.2 cm margin
 
   # Create plot
   p <- ggplot() +
@@ -389,7 +462,64 @@ plot_probe_vertical <- function(validation) {
     scale_fill_manual(
       values = c("Bark" = "#8B4513", "Sapwood" = "#DEB887", "Heartwood" = "#A0522D"),
       name = "Tissue Layer"
-    ) +
+    )
+
+  # Add spacer boxes if spacer thickness > 0
+  if (validation$spacer_thickness_cm > 0) {
+    spacer_width <- validation$spacer_thickness_cm
+    # Downstream spacer
+    p <- p + annotate("rect",
+                      xmin = -spacer_width,
+                      xmax = 0,
+                      ymin = validation$downstream_dist - handle_height/2,
+                      ymax = validation$downstream_dist + handle_height/2,
+                      fill = "grey70", color = "black", linewidth = 0.3)
+    # Heater spacer
+    p <- p + annotate("rect",
+                      xmin = -spacer_width,
+                      xmax = 0,
+                      ymin = 0 - handle_height/2,
+                      ymax = 0 + handle_height/2,
+                      fill = "grey70", color = "black", linewidth = 0.3)
+    # Upstream spacer
+    p <- p + annotate("rect",
+                      xmin = -spacer_width,
+                      xmax = 0,
+                      ymin = -validation$upstream_dist - handle_height/2,
+                      ymax = -validation$upstream_dist + handle_height/2,
+                      fill = "grey70", color = "black", linewidth = 0.3)
+  }
+
+  # Draw probe handles as rectangles (using annotate to avoid fill scale conflict)
+  p <- p +
+    annotate("rect",
+             xmin = handle_offset - handle_width/2,
+             xmax = handle_offset + handle_width/2,
+             ymin = validation$downstream_dist - handle_height/2,
+             ymax = validation$downstream_dist + handle_height/2,
+             fill = "blue", color = "black", linewidth = 0.5) +
+    annotate("rect",
+             xmin = handle_offset - handle_width/2,
+             xmax = handle_offset + handle_width/2,
+             ymin = 0 - handle_height/2,
+             ymax = 0 + handle_height/2,
+             fill = "red", color = "black", linewidth = 0.5) +
+    annotate("rect",
+             xmin = handle_offset - handle_width/2,
+             xmax = handle_offset + handle_width/2,
+             ymin = -validation$upstream_dist - handle_height/2,
+             ymax = -validation$upstream_dist + handle_height/2,
+             fill = "blue", color = "black", linewidth = 0.5) +
+    # Add text labels on handles
+    annotate("text",
+             x = handle_offset, y = validation$downstream_dist,
+             label = "Downstream", color = "white", size = 3.2, fontface = "bold") +
+    annotate("text",
+             x = handle_offset, y = 0,
+             label = "Heater", color = "black", size = 3.2, fontface = "bold") +
+    annotate("text",
+             x = handle_offset, y = -validation$upstream_dist,
+             label = "Upstream", color = "white", size = 3.2, fontface = "bold") +
     # Draw probes as thick lines
     geom_segment(
       data = probe_data,
@@ -401,13 +531,7 @@ plot_probe_vertical <- function(validation) {
       data = sensors,
       aes(x = x, y = y),
       size = 4, shape = 21, color = "black",
-      fill = ifelse(sensors$in_sapwood, "green3", "red")
-    ) +
-    # Probe labels
-    geom_text(
-      data = probe_data,
-      aes(x = -0.15, y = y_pos, label = probe),
-      hjust = 1, size = 3.5
+      fill = sensors$fill_color
     ) +
     # Sapwood boundary line
     geom_vline(
@@ -427,7 +551,7 @@ plot_probe_vertical <- function(validation) {
       y = "Axial position (cm)"
     ) +
     theme_minimal() +
-    coord_fixed(ratio = 1) +
+    coord_fixed(ratio = 1, xlim = c(x_min, x_max)) +
     theme(
       legend.position = "bottom",
       plot.title = element_text(hjust = 0.5, face = "bold")
@@ -438,17 +562,24 @@ plot_probe_vertical <- function(validation) {
 
 #' Plot Probe Configuration - Radial Cross-Section
 #'
-#' Creates a circular cross-section showing tissue layers and probe positions
+#' Creates a 75-degree segment cross-section showing tissue layers and probe positions
 #'
 #' @param validation List from validate_probe_tree_config()
 #' @return ggplot2 object
 #' @keywords internal
 plot_probe_radial <- function(validation) {
 
-  # Create concentric circles for tissue layers
-  theta <- seq(0, 2 * pi, length.out = 100)
+  # Create 60-degree segment (centered on probe insertion from right)
+  # Center the segment on 0 degrees (probe from right side)
+  segment_degrees <- 60
+  segment_radians <- segment_degrees * pi / 180
+  start_angle <- -segment_radians / 2
+  end_angle <- segment_radians / 2
 
-  # Bark outer circle (tree radius)
+  # Create angles for the arc
+  theta <- seq(start_angle, end_angle, length.out = 100)
+
+  # Bark outer arc (tree radius)
   bark_outer <- data.frame(
     x = validation$radius * cos(theta),
     y = validation$radius * sin(theta),
@@ -457,7 +588,7 @@ plot_probe_radial <- function(validation) {
 
   # Cambium (inner bark boundary)
   cambium_radius <- validation$radius - validation$bark_depth
-  cambium_circle <- data.frame(
+  cambium_arc <- data.frame(
     x = cambium_radius * cos(theta),
     y = cambium_radius * sin(theta),
     layer = "cambium"
@@ -465,16 +596,37 @@ plot_probe_radial <- function(validation) {
 
   # Sapwood/heartwood boundary
   heartwood_radius <- cambium_radius - validation$sapwood_depth
-  heartwood_circle <- data.frame(
+  heartwood_arc <- data.frame(
     x = heartwood_radius * cos(theta),
     y = heartwood_radius * sin(theta),
     layer = "heartwood_boundary"
   )
 
   # Probe position (assuming probe inserted horizontally from right)
-  # Sensors are at different depths from bark surface
-  probe_start_x <- validation$radius
-  probe_end_x <- validation$radius - validation$probe_length_cm
+  # If there's a spacer, probe insertion depth is reduced
+  probe_insertion_depth <- validation$probe_length_cm - validation$spacer_thickness_cm
+  probe_start_x <- validation$radius  # Probe starts at bark surface
+  probe_end_x <- validation$radius - probe_insertion_depth  # Reduced by spacer
+
+  # Handle dimensions and position (blue box outside bark)
+  handle_width <- 0.8  # cm, same as vertical view
+  handle_height <- 0.3  # cm half-height for radial view
+
+  # Calculate handle position based on spacer thickness
+  if (validation$spacer_thickness_cm > 0) {
+    # Handle beyond spacer
+    handle_start_x <- validation$radius + validation$spacer_thickness_cm
+    handle_end_x <- handle_start_x + handle_width
+    # Spacer between bark and handle
+    spacer_start_x <- validation$radius
+    spacer_end_x <- validation$radius + validation$spacer_thickness_cm
+  } else {
+    # Handle flush with bark
+    handle_start_x <- validation$radius
+    handle_end_x <- validation$radius + handle_width
+    spacer_start_x <- NULL
+    spacer_end_x <- NULL
+  }
 
   sensor_positions <- data.frame(
     sensor = c("Outer", "Inner"),
@@ -483,27 +635,48 @@ plot_probe_radial <- function(validation) {
       validation$radius - validation$inner_sensor_depth
     ),
     y = 0,
-    in_sapwood = c(validation$outer_in_sapwood, validation$inner_in_sapwood),
+    tissue = c(validation$outer_tissue, validation$inner_tissue),
     stringsAsFactors = FALSE
   )
 
-  # Create sapwood ring data
-  sapwood_ring <- data.frame(
-    x = c(cambium_radius * cos(theta), rev(heartwood_radius * cos(theta))),
-    y = c(cambium_radius * sin(theta), rev(heartwood_radius * sin(theta)))
+  # Assign colors based on tissue type (green for sapwood, red for bark or heartwood)
+  sensor_positions$fill_color <- ifelse(sensor_positions$tissue == "sapwood", "green3", "red")
+
+  # Create heartwood segment (wedge from center)
+  heartwood_segment <- data.frame(
+    x = c(0, heartwood_radius * cos(theta), 0),
+    y = c(0, heartwood_radius * sin(theta), 0)
   )
 
-  # Create bark ring data
+  # Create sapwood ring segment
+  sapwood_ring <- data.frame(
+    x = c(
+      heartwood_radius * cos(theta),
+      rev(cambium_radius * cos(theta))
+    ),
+    y = c(
+      heartwood_radius * sin(theta),
+      rev(cambium_radius * sin(theta))
+    )
+  )
+
+  # Create bark ring segment
   bark_ring <- data.frame(
-    x = c(validation$radius * cos(theta), rev(cambium_radius * cos(theta))),
-    y = c(validation$radius * sin(theta), rev(cambium_radius * sin(theta)))
+    x = c(
+      cambium_radius * cos(theta),
+      rev(validation$radius * cos(theta))
+    ),
+    y = c(
+      cambium_radius * sin(theta),
+      rev(validation$radius * sin(theta))
+    )
   )
 
   # Create plot
   p <- ggplot() +
-    # Heartwood (innermost circle)
+    # Heartwood (innermost segment)
     geom_polygon(
-      data = heartwood_circle,
+      data = heartwood_segment,
       aes(x = x, y = y),
       fill = "#A0522D", alpha = 0.6
     ) +
@@ -519,23 +692,34 @@ plot_probe_radial <- function(validation) {
       aes(x = x, y = y),
       fill = "#8B4513", alpha = 0.6
     ) +
-    # Boundary circles
+    # Boundary arcs
     geom_path(
       data = bark_outer,
       aes(x = x, y = y),
       linetype = "solid", color = "black", linewidth = 0.8
     ) +
     geom_path(
-      data = cambium_circle,
+      data = cambium_arc,
       aes(x = x, y = y),
       linetype = "solid", color = "black", linewidth = 0.5
     ) +
     geom_path(
-      data = heartwood_circle,
+      data = heartwood_arc,
       aes(x = x, y = y),
       linetype = "dashed", color = "red", linewidth = 0.8
     ) +
-    # Probe line
+    # Radial closing lines (to complete the segment)
+    geom_segment(
+      aes(x = 0, xend = validation$radius * cos(start_angle),
+          y = 0, yend = validation$radius * sin(start_angle)),
+      linewidth = 0.8, color = "black"
+    ) +
+    geom_segment(
+      aes(x = 0, xend = validation$radius * cos(end_angle),
+          y = 0, yend = validation$radius * sin(end_angle)),
+      linewidth = 0.8, color = "black"
+    ) +
+    # Probe line (gray line showing probe insertion)
     geom_segment(
       aes(x = probe_start_x, xend = probe_end_x, y = 0, yend = 0),
       linewidth = 1.5, color = "gray30"
@@ -545,21 +729,21 @@ plot_probe_radial <- function(validation) {
       data = sensor_positions,
       aes(x = x, y = y),
       size = 5, shape = 21, color = "black",
-      fill = ifelse(sensor_positions$in_sapwood, "green3", "red")
+      fill = sensor_positions$fill_color
     ) +
-    # Labels
-    annotate("text", x = 0, y = 0, label = "Heartwood", size = 4, fontface = "bold") +
+    # Labels positioned for 60-degree segment
+    annotate("text", x = heartwood_radius * 0.5, y = 0, label = "Heartwood", size = 4, fontface = "bold", color = "black") +
     annotate(
       "text",
       x = (cambium_radius + heartwood_radius) / 2,
-      y = validation$radius * 0.5,
-      label = "Sapwood", size = 4, fontface = "bold", color = "white"
+      y = ((cambium_radius + heartwood_radius) / 2) * sin(segment_radians / 4),
+      label = "Sapwood", size = 4, fontface = "bold", color = "black"
     ) +
     annotate(
       "text",
-      x = validation$radius * 0.9,
-      y = validation$radius * 0.5,
-      label = "Bark", size = 4, fontface = "bold", color = "white"
+      x = (validation$radius + cambium_radius) / 2,
+      y = ((validation$radius + cambium_radius) / 2) * sin(segment_radians / 4),
+      label = "Bark", size = 4, fontface = "bold", color = "black"
     ) +
     # Sensor labels
     geom_text(
@@ -570,15 +754,36 @@ plot_probe_radial <- function(validation) {
     labs(
       title = "Radial Cross-Section",
       x = "Distance (cm)",
-      y = "Distance (cm)"
+      y = NULL
     ) +
     theme_minimal() +
     coord_fixed(ratio = 1) +
     theme(
       legend.position = "none",
       plot.title = element_text(hjust = 0.5, face = "bold"),
-      panel.grid = element_blank()
+      panel.grid = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      axis.title.y = element_blank()
     )
+
+  # Add probe handle (blue box outside bark)
+  p <- p + annotate("rect",
+                    xmin = handle_start_x,
+                    xmax = handle_end_x,
+                    ymin = -handle_height,
+                    ymax = handle_height,
+                    fill = "blue", color = "black", linewidth = 0.5)
+
+  # Add spacer box if spacer thickness > 0 (grey box between bark and handle)
+  if (validation$spacer_thickness_cm > 0) {
+    p <- p + annotate("rect",
+                      xmin = spacer_start_x,
+                      xmax = spacer_end_x,
+                      ymin = -handle_height,
+                      ymax = handle_height,
+                      fill = "grey70", color = "black", linewidth = 0.3)
+  }
 
   return(p)
 }

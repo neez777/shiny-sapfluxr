@@ -186,12 +186,12 @@ plotTimeseriesServer <- function(id, vh_results) {
       methods <- available_methods()
       req(length(methods) > 0)
 
-      # Default all checked
+      # Default only first method checked (to avoid long loading times with large datasets)
       checkboxGroupInput(
         session$ns("methods"),
         NULL,
         choices = setNames(methods, methods),
-        selected = methods
+        selected = methods[1]
       )
     })
 

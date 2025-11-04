@@ -50,7 +50,11 @@ if (requireNamespace("progressr", quietly = TRUE)) {
 }
 
 # UI ----
-ui <- dashboardPage(
+ui <- tagList(
+  tags$head(
+    tags$title("sapfluxr Dashboard")  # This sets the browser tab title
+  ),
+  dashboardPage(
   skin = "blue",
 
   ## Header ----
@@ -58,8 +62,8 @@ ui <- dashboardPage(
     title = tags$a(
       href = "https://github.com/neez777/sapfluxr",
       target = "_blank",
-      tags$img(src = "sapfluxR.png", height = "40px", style = "margin-top: -10px; margin-right: 10px;"),
-      "Sap Flow Analyser"
+      tags$img(src = "sapfluxr.png", height = "40px", style = "margin-top: -5px; margin-right: 5px;"),
+      "sapfluxr Dashboard"
     ),
     titleWidth = 300
   ),
@@ -119,7 +123,7 @@ ui <- dashboardPage(
     # Load custom CSS and favicon
     tags$head(
       tags$link(rel = "stylesheet", type = "text/css", href = "custom.css"),
-      tags$link(rel = "icon", type = "image/png", href = "sapfluxR.png"),
+      tags$link(rel = "icon", type = "image/png", href = "sapfluxr.png"),
 
       # JavaScript to auto-close Shiny notifications (blue toasts) after 5 seconds
       tags$script(HTML("
@@ -241,6 +245,7 @@ ui <- dashboardPage(
       )
     )
   )
+)
 )
 
 # Server ----

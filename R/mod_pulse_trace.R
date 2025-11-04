@@ -307,7 +307,10 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
                        pulse_data$deltaT_uo, pulse_data$deltaT_ui, na.rm = TRUE)
 
       # Add calculation windows as shaded regions
-      if ("baseline" %in% input$show_windows) {
+      # Check if show_windows input exists before using it
+      show_windows <- if (!is.null(input$show_windows)) input$show_windows else character(0)
+
+      if ("baseline" %in% show_windows) {
         # Baseline window (pre-pulse, now from -pre_pulse_period to 0)
         p <- p %>%
           add_trace(
@@ -323,7 +326,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
           )
       }
 
-      if ("HRM" %in% input$show_windows) {
+      if ("HRM" %in% show_windows) {
         # HRM window - get actual window times from results
         # Get the sensor position being displayed
         position <- if (show_outer) "outer" else "inner"

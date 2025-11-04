@@ -185,10 +185,6 @@ clockDriftServer <- function(id, heat_pulse_data) {
           )
         }
 
-        # Create observed time vectors: first pulse (no drift) + end time (with drift)
-        observed_device <- c(first_pulse, device_time_end)
-        observed_actual <- c(first_pulse, actual_time_end)
-
         # Show loading message
         notify_progress(
           title = "Applying Clock Drift Correction...",
@@ -198,23 +194,14 @@ clockDriftServer <- function(id, heat_pulse_data) {
         # Get original data
         data <- heat_pulse_data()
 
-        # Apply correction to measurements
-        data$measurements <- sapfluxr::fix_clock_drift(
-          data = data$measurements,
+        # Apply correction to entire heat_pulse_data object
+        # fix_clock_drift now handles heat_pulse_data objects directly
+        data <- sapfluxr::fix_clock_drift(
+          data = data,
           device_time_col = "datetime",
-          observed_device_time = observed_device,
-          observed_actual_time = observed_actual
+          observed_device_time = device_time_end,
+          observed_actual_time = actual_time_end
         )
-
-        # Apply correction to diagnostics if present
-        if (!is.null(data$diagnostics) && nrow(data$diagnostics) > 0) {
-          data$diagnostics <- sapfluxr::fix_clock_drift(
-            data = data$diagnostics,
-            device_time_col = "datetime",
-            observed_device_time = observed_device,
-            observed_actual_time = observed_actual
-          )
-        }
 
         # Store corrected data
         corrected_data(data)

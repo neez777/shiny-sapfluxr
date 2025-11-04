@@ -16,4 +16,5 @@ Reactive containing corrected data (or NULL if no correction applied)
 }
 \description{
 Shiny module for correcting clock drift in heat pulse data
+Assumes first pulse time is correct (synced at start)
 }
