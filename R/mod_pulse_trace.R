@@ -359,18 +359,22 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
         # Get temperature values at window boundaries for both sensors
         if (show_outer) {
           # Find temperatures at window start
-          do_temp_start <- pulse_data$deltaT_do[which.min(abs(pulse_data$time_sec - hrm_start))]
-          uo_temp_start <- pulse_data$deltaT_uo[which.min(abs(pulse_data$time_sec - hrm_start))]
+          start_idx <- which.min(abs(pulse_data$time_sec - hrm_start))
+          do_temp_start <- if (length(start_idx) > 0) pulse_data$deltaT_do[start_idx] else NA
+          uo_temp_start <- if (length(start_idx) > 0) pulse_data$deltaT_uo[start_idx] else NA
           # Find temperatures at window end
-          do_temp_end <- pulse_data$deltaT_do[which.min(abs(pulse_data$time_sec - hrm_end))]
-          uo_temp_end <- pulse_data$deltaT_uo[which.min(abs(pulse_data$time_sec - hrm_end))]
+          end_idx <- which.min(abs(pulse_data$time_sec - hrm_end))
+          do_temp_end <- if (length(end_idx) > 0) pulse_data$deltaT_do[end_idx] else NA
+          uo_temp_end <- if (length(end_idx) > 0) pulse_data$deltaT_uo[end_idx] else NA
         } else {
           # Find temperatures at window start
-          di_temp_start <- pulse_data$deltaT_di[which.min(abs(pulse_data$time_sec - hrm_start))]
-          ui_temp_start <- pulse_data$deltaT_ui[which.min(abs(pulse_data$time_sec - hrm_start))]
+          start_idx <- which.min(abs(pulse_data$time_sec - hrm_start))
+          di_temp_start <- if (length(start_idx) > 0) pulse_data$deltaT_di[start_idx] else NA
+          ui_temp_start <- if (length(start_idx) > 0) pulse_data$deltaT_ui[start_idx] else NA
           # Find temperatures at window end
-          di_temp_end <- pulse_data$deltaT_di[which.min(abs(pulse_data$time_sec - hrm_end))]
-          ui_temp_end <- pulse_data$deltaT_ui[which.min(abs(pulse_data$time_sec - hrm_end))]
+          end_idx <- which.min(abs(pulse_data$time_sec - hrm_end))
+          di_temp_end <- if (length(end_idx) > 0) pulse_data$deltaT_di[end_idx] else NA
+          ui_temp_end <- if (length(end_idx) > 0) pulse_data$deltaT_ui[end_idx] else NA
         }
 
         p <- p %>%
@@ -386,67 +390,81 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
             hoverinfo = "name"
           )
 
-        # Add vertical lines and points at window boundaries
+        # Add vertical lines and points at window boundaries (only if valid temperature data exists)
         if (show_outer) {
-          p <- p %>%
-            add_segments(
-              x = hrm_start, xend = hrm_start,
-              y = 0, yend = max(do_temp_start, uo_temp_start, na.rm = TRUE),
-              line = list(color = "#1f77b4", width = 1.5, dash = "dot"),
-              name = "HRM window start",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = c(hrm_start, hrm_start),
-              y = c(do_temp_start, uo_temp_start),
-              marker = list(size = 6, color = "#1f77b4"),
-              name = "HRM start points",
-              showlegend = FALSE
-            ) %>%
-            add_segments(
-              x = hrm_end, xend = hrm_end,
-              y = 0, yend = max(do_temp_end, uo_temp_end, na.rm = TRUE),
-              line = list(color = "#1f77b4", width = 1.5, dash = "dot"),
-              name = "HRM window end",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = c(hrm_end, hrm_end),
-              y = c(do_temp_end, uo_temp_end),
-              marker = list(size = 6, color = "#1f77b4"),
-              name = "HRM end points",
-              showlegend = FALSE
-            )
+          # Check if we have valid temperature data
+          if (!is.na(do_temp_start) && !is.na(uo_temp_start) &&
+              !is.na(do_temp_end) && !is.na(uo_temp_end)) {
+            max_start <- max(do_temp_start, uo_temp_start, na.rm = TRUE)
+            max_end <- max(do_temp_end, uo_temp_end, na.rm = TRUE)
+
+            p <- p %>%
+              add_segments(
+                x = hrm_start, xend = hrm_start,
+                y = 0, yend = max_start,
+                line = list(color = "#1f77b4", width = 1.5, dash = "dot"),
+                name = "HRM window start",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = c(hrm_start, hrm_start),
+                y = c(do_temp_start, uo_temp_start),
+                marker = list(size = 6, color = "#1f77b4"),
+                name = "HRM start points",
+                showlegend = FALSE
+              ) %>%
+              add_segments(
+                x = hrm_end, xend = hrm_end,
+                y = 0, yend = max_end,
+                line = list(color = "#1f77b4", width = 1.5, dash = "dot"),
+                name = "HRM window end",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = c(hrm_end, hrm_end),
+                y = c(do_temp_end, uo_temp_end),
+                marker = list(size = 6, color = "#1f77b4"),
+                name = "HRM end points",
+                showlegend = FALSE
+              )
+          }
         } else {
-          p <- p %>%
-            add_segments(
-              x = hrm_start, xend = hrm_start,
-              y = 0, yend = max(di_temp_start, ui_temp_start, na.rm = TRUE),
-              line = list(color = "#1f77b4", width = 1.5, dash = "dot"),
-              name = "HRM window start",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = c(hrm_start, hrm_start),
-              y = c(di_temp_start, ui_temp_start),
-              marker = list(size = 6, color = "#1f77b4"),
-              name = "HRM start points",
-              showlegend = FALSE
-            ) %>%
-            add_segments(
-              x = hrm_end, xend = hrm_end,
-              y = 0, yend = max(di_temp_end, ui_temp_end, na.rm = TRUE),
-              line = list(color = "#1f77b4", width = 1.5, dash = "dot"),
-              name = "HRM window end",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = c(hrm_end, hrm_end),
-              y = c(di_temp_end, ui_temp_end),
-              marker = list(size = 6, color = "#1f77b4"),
-              name = "HRM end points",
-              showlegend = FALSE
-            )
+          # Check if we have valid temperature data
+          if (!is.na(di_temp_start) && !is.na(ui_temp_start) &&
+              !is.na(di_temp_end) && !is.na(ui_temp_end)) {
+            max_start <- max(di_temp_start, ui_temp_start, na.rm = TRUE)
+            max_end <- max(di_temp_end, ui_temp_end, na.rm = TRUE)
+
+            p <- p %>%
+              add_segments(
+                x = hrm_start, xend = hrm_start,
+                y = 0, yend = max_start,
+                line = list(color = "#1f77b4", width = 1.5, dash = "dot"),
+                name = "HRM window start",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = c(hrm_start, hrm_start),
+                y = c(di_temp_start, ui_temp_start),
+                marker = list(size = 6, color = "#1f77b4"),
+                name = "HRM start points",
+                showlegend = FALSE
+              ) %>%
+              add_segments(
+                x = hrm_end, xend = hrm_end,
+                y = 0, yend = max_end,
+                line = list(color = "#1f77b4", width = 1.5, dash = "dot"),
+                name = "HRM window end",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = c(hrm_end, hrm_end),
+                y = c(di_temp_end, ui_temp_end),
+                marker = list(size = 6, color = "#1f77b4"),
+                name = "HRM end points",
+                showlegend = FALSE
+              )
+          }
         }
       }
 

@@ -209,30 +209,85 @@ plotTimeseriesServer <- function(id, vh_results) {
       flags <- available_flags()
       req(length(flags) > 0)
 
-      # Create friendly labels for flags
-      flag_labels <- c(
-        "OK" = "OK (No issues)",
-        "DATA_OUTLIER" = "Outliers",
-        "DATA_SUSPECT" = "Suspect",
-        "DATA_MISSING" = "Missing",
-        "DATA_ILLOGICAL" = "Illogical",
-        "CALC_FAILED" = "Calc Failed",
-        "CALC_INFINITE" = "Calc Infinite",
-        "CALC_EXTREME" = "Calc Extreme"
+      # Create friendly labels and descriptions for flags
+      flag_info <- list(
+        "OK" = list(
+          label = "OK (No issues)",
+          desc = "Data passed all quality checks with no issues detected"
+        ),
+        "DATA_OUTLIER" = list(
+          label = "Outliers",
+          desc = "Statistical outlier detected by rolling mean (deviates >3 SD from local mean) or rate of change (>4 cm/hr change between consecutive measurements)"
+        ),
+        "DATA_SUSPECT" = list(
+          label = "Suspect",
+          desc = "Negative flow detected or sensor shows values significantly different from other sensors at the same timestamp (cross-sensor anomaly)"
+        ),
+        "DATA_MISSING" = list(
+          label = "Missing",
+          desc = "No pulse recorded at expected timestamp, indicating hardware/logging gap"
+        ),
+        "DATA_ILLOGICAL" = list(
+          label = "Illogical",
+          desc = "Exceeds maximum velocity threshold (absolute max or species-specific max)"
+        ),
+        "CALC_FAILED" = list(
+          label = "Calc Failed",
+          desc = "Calculation returned NA (e.g., Tmax couldn't find temperature peak)"
+        ),
+        "CALC_INFINITE" = list(
+          label = "Calc Infinite",
+          desc = "Calculation returned Inf (division by zero or mathematical error)"
+        ),
+        "CALC_EXTREME" = list(
+          label = "Calc Extreme",
+          desc = "Result outside physically realistic range (|Vh| > 200 or Vh < -50 cm/hr)"
+        )
       )
 
-      # Only show flags that exist in data
-      choices <- flags
-      names(choices) <- sapply(flags, function(f) {
-        if (f %in% names(flag_labels)) flag_labels[[f]] else f
+      # Create checkbox inputs with tooltips
+      checkbox_list <- lapply(flags, function(flag) {
+        info <- flag_info[[flag]]
+        label_text <- if (!is.null(info)) info$label else flag
+        desc_text <- if (!is.null(info)) info$desc else ""
+
+        div(
+          style = "margin-bottom: 5px;",
+          checkboxInput(
+            session$ns(paste0("qflag_", flag)),
+            HTML(paste0(
+              label_text,
+              if (desc_text != "") {
+                paste0(' <span style="color: #999; cursor: help;" title="', desc_text,
+                       '"><i class="fa fa-circle-question"></i></span>')
+              } else {
+                ""
+              }
+            )),
+            value = TRUE
+          )
+        )
       })
 
-      # Default: show all flags
-      checkboxGroupInput(
-        session$ns("quality_flags"),
-        NULL,
-        choices = choices,
-        selected = flags
+      # Combine checkboxes and observe changes
+      tagList(
+        checkbox_list,
+        # Hidden reactive to aggregate selections
+        tags$script(HTML(sprintf("
+          $(document).ready(function() {
+            $('input[id^=\"%s\"]').on('change', function() {
+              var selected = [];
+              $('input[id^=\"%s\"]:checked').each(function() {
+                var flag = $(this).attr('id').replace('%s', '').replace('qflag_', '');
+                selected.push(flag);
+              });
+              Shiny.setInputValue('%s', selected);
+            });
+            // Trigger initial value
+            $('input[id^=\"%s\"]').first().trigger('change');
+          });
+        ", session$ns("qflag_"), session$ns("qflag_"), session$ns(""),
+           session$ns("quality_flags"), session$ns("qflag_"))))
       )
     })
 
@@ -627,36 +682,90 @@ plotTimeseriesServer <- function(id, vh_results) {
 
       # Add Peclet number if enabled
       if (input$show_peclet) {
+        # Get Peclet data from full results (not filtered by method selection)
+        # This allows Peclet to be displayed even when HRM velocity trace is hidden
+        req(vh_results())
+        full_data <- vh_results()
+
         # Check if peclet_number column exists
-        if ("peclet_number" %in% names(data)) {
-          # Filter to just HRM methods that have Peclet numbers
-          peclet_data <- data %>%
+        if ("peclet_number" %in% names(full_data)) {
+          # Filter Peclet data by sensor position and quality flags (but not by method)
+          peclet_data <- full_data %>%
             filter(!is.na(peclet_number))
 
+          # Filter by sensor position to match displayed data
+          if (!is.null(input$sensor_position) && length(input$sensor_position) > 0) {
+            peclet_data <- peclet_data %>%
+              filter(sensor_position %in% input$sensor_position)
+          }
+
+          # Filter by quality flags to match displayed data
+          if (!is.null(input$quality_flags) && length(input$quality_flags) > 0) {
+            if ("quality_flag" %in% names(peclet_data)) {
+              peclet_data <- peclet_data %>%
+                filter(quality_flag %in% input$quality_flags)
+            }
+          }
+
           if (nrow(peclet_data) > 0) {
-            # Add Peclet number trace on secondary y-axis
-            p <- p %>%
-              add_trace(
-                data = peclet_data,
-                x = ~datetime,
-                y = ~peclet_number,
-                type = "scatter",
-                mode = "lines",
-                name = "Peclet Number",
-                line = list(
-                  color = "#666666",
-                  width = 1.5,
-                  dash = "dot"
-                ),
-                yaxis = "y2",
-                hovertemplate = paste0(
-                  "<b>Peclet Number</b><br>",
-                  "Time: %{x}<br>",
-                  "Pe: %{y:.3f}<br>",
-                  "<extra></extra>"
+            # Separate by sensor position if both are selected
+            if (length(input$sensor_position) > 1 && "sensor_position" %in% names(peclet_data)) {
+              # Add separate traces for inner and outer
+              for (pos in unique(peclet_data$sensor_position)) {
+                pos_peclet <- peclet_data %>% filter(sensor_position == !!pos)
+
+                trace_name <- paste0("Peclet Number (", pos, ")")
+                line_dash <- if (pos == "inner") "dot" else "dashdot"
+
+                p <- p %>%
+                  add_trace(
+                    data = pos_peclet,
+                    x = ~datetime,
+                    y = ~peclet_number,
+                    type = "scatter",
+                    mode = "lines",
+                    name = trace_name,
+                    line = list(
+                      color = "#666666",
+                      width = 1.5,
+                      dash = line_dash
+                    ),
+                    yaxis = "y2",
+                    hovertemplate = paste0(
+                      "<b>", trace_name, "</b><br>",
+                      "Time: %{x}<br>",
+                      "Pe: %{y:.3f}<br>",
+                      "<extra></extra>"
+                    )
+                  )
+              }
+            } else {
+              # Single sensor position - single trace
+              p <- p %>%
+                add_trace(
+                  data = peclet_data,
+                  x = ~datetime,
+                  y = ~peclet_number,
+                  type = "scatter",
+                  mode = "lines",
+                  name = "Peclet Number",
+                  line = list(
+                    color = "#666666",
+                    width = 1.5,
+                    dash = "dot"
+                  ),
+                  yaxis = "y2",
+                  hovertemplate = paste0(
+                    "<b>Peclet Number</b><br>",
+                    "Time: %{x}<br>",
+                    "Pe: %{y:.3f}<br>",
+                    "<extra></extra>"
+                  )
                 )
-              ) %>%
-              # Add horizontal line at Pe = 1.0
+            }
+
+            # Add horizontal line at Pe = 1.0
+            p <- p %>%
               add_trace(
                 x = range(peclet_data$datetime, na.rm = TRUE),
                 y = c(1, 1),
@@ -707,9 +816,13 @@ plotTimeseriesServer <- function(id, vh_results) {
       }
 
       # Apply layout - conditionally add yaxis2 if Peclet is enabled
-      if (input$show_peclet && "peclet_number" %in% names(data)) {
-        peclet_data <- data %>% filter(!is.na(peclet_number))
-        if (nrow(peclet_data) > 0) {
+      if (input$show_peclet) {
+        # Check full dataset for Peclet numbers (not just filtered data)
+        req(vh_results())
+        full_data <- vh_results()
+        has_peclet <- "peclet_number" %in% names(full_data) && any(!is.na(full_data$peclet_number))
+
+        if (has_peclet) {
           # Layout with secondary y-axis for Peclet
           p <- p %>%
             layout(
@@ -734,7 +847,7 @@ plotTimeseriesServer <- function(id, vh_results) {
               legend = list(
                 orientation = "h",
                 x = 0,
-                y = -0.25,
+                y = -0.7,
                 xanchor = "left",
                 yanchor = "top"
               ),
@@ -760,7 +873,7 @@ plotTimeseriesServer <- function(id, vh_results) {
               legend = list(
                 orientation = "h",
                 x = 0,
-                y = -0.25,
+                y = -0.7,
                 xanchor = "left",
                 yanchor = "top"
               ),

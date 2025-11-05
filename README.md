@@ -1,4 +1,4 @@
-# Shiny Sap Flow Analyser
+# Shiny Sap Flow Analyser  <img src="www/sapfluxr.png" align="right" width=139 height=139 alt="" />
 
 <!-- badges: start -->
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)

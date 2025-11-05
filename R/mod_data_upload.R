@@ -44,6 +44,9 @@ dataUploadServer <- function(id) {
     observeEvent(input$file, {
       req(input$file)
 
+      # Clear previous data immediately when new file is selected
+      heat_pulse_data(NULL)
+
       tryCatch({
         # Debug: print file info
         cat("\n=== DEBUG: File Upload ===\n")

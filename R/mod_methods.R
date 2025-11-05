@@ -74,9 +74,155 @@ methodsUI <- function(id) {
         )
       ),
 
-      # Calculate Button & Status
+      # Quality Check Configuration
       column(
         width = 6,
+        box(
+          width = NULL,
+          title = "Quality Check Settings",
+          status = "warning",
+          solidHeader = TRUE,
+          collapsible = TRUE,
+
+          p("Configure quality control checks applied after calculation:"),
+
+          # Missing Pulses & Gaps
+          div(
+            style = "background-color: #f9f9f9; padding: 10px; margin-bottom: 10px; border-radius: 3px;",
+            h5("Missing Pulses & Gaps", style = "margin-top: 0;"),
+            fluidRow(
+              column(
+                width = 6,
+                checkboxInput(
+                  ns("qc_detect_missing_pulses"),
+                  "Detect missing pulses",
+                  value = TRUE
+                ),
+                checkboxInput(
+                  ns("qc_add_rows_for_missing"),
+                  "Add rows for missing data",
+                  value = TRUE
+                )
+              ),
+              column(
+                width = 6,
+                numericInput(
+                  ns("qc_max_gap_to_fill_hours"),
+                  "Max gap to fill (hours):",
+                  value = 1,
+                  min = 1,
+                  max = 168,
+                  step = 1
+                )
+              )
+            )
+          ),
+
+          # Illogical Values
+          div(
+            style = "background-color: #f9f9f9; padding: 10px; margin-bottom: 10px; border-radius: 3px;",
+            h5("Illogical Values", style = "margin-top: 0;"),
+            fluidRow(
+              column(
+                width = 6,
+                checkboxInput(
+                  ns("qc_check_illogical"),
+                  "Check illogical values",
+                  value = TRUE
+                ),
+                checkboxInput(
+                  ns("qc_flag_negative"),
+                  "Flag negative flows",
+                  value = TRUE
+                )
+              ),
+              column(
+                width = 6,
+                numericInput(
+                  ns("qc_hard_max_vh"),
+                  "Absolute max velocity (cm/hr):",
+                  value = 500,
+                  min = 50,
+                  max = 1000,
+                  step = 50
+                )
+              )
+            )
+          ),
+
+          # Statistical Outliers
+          div(
+            style = "background-color: #f9f9f9; padding: 10px; margin-bottom: 10px; border-radius: 3px;",
+            h5("Statistical Outliers", style = "margin-top: 0;"),
+            fluidRow(
+              column(
+                width = 6,
+                checkboxInput(
+                  ns("qc_detect_outliers"),
+                  "Detect outliers (rolling mean)",
+                  value = TRUE
+                ),
+                checkboxInput(
+                  ns("qc_detect_rate_of_change"),
+                  "Detect rate of change outliers",
+                  value = TRUE
+                ),
+                checkboxInput(
+                  ns("qc_check_cross_sensor"),
+                  HTML('Check cross-sensor anomalies <span style="color: #999; cursor: help;" title="Detects if one thermistor sensor is behaving differently from others at the same timestamp. At each time point, sensors showing values significantly different from the median across all sensors (>3x MAD) are flagged as SUSPECT."><i class="fa fa-circle-question"></i></span>'),
+                  value = TRUE
+                )
+              ),
+              column(
+                width = 6,
+                numericInput(
+                  ns("qc_rolling_window"),
+                  "Rolling window half-width:",
+                  value = 5,
+                  min = 2,
+                  max = 20,
+                  step = 1
+                ),
+                numericInput(
+                  ns("qc_rolling_threshold"),
+                  "Rolling outlier threshold (MAD):",
+                  value = 3,
+                  min = 1,
+                  max = 10,
+                  step = 0.5
+                ),
+                numericInput(
+                  ns("qc_max_change_cm_hr"),
+                  "Max velocity change (cm/hr):",
+                  value = 4,
+                  min = 0.1,
+                  max = 50,
+                  step = 0.5
+                ),
+                numericInput(
+                  ns("qc_cross_sensor_threshold"),
+                  "Cross-sensor threshold (MAD):",
+                  value = 3,
+                  min = 1,
+                  max = 10,
+                  step = 0.5
+                )
+              )
+            )
+          ),
+
+          p(class = "help-text", style = "margin-top: 10px; font-size: 0.9em; color: #666;",
+            icon("info-circle"),
+            " These settings control outlier detection sensitivity and data validation. ",
+            "Lower thresholds are more strict, higher are more lenient.")
+        )
+      )
+    ),
+
+    fluidRow(
+      # Calculate Button & Status
+      column(
+        width = 12,
         box(
           width = NULL,
           title = "Run Calculations",
@@ -180,6 +326,9 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
       req(heat_pulse_data())
       req(length(input$methods) > 0)
 
+      # Clear previous results immediately
+      vh_results(NULL)
+
       # Validate sDMA requirements
       if (input$apply_sdma && !"HRM" %in% input$methods) {
         shinyWidgets::sendSweetAlert(
@@ -272,17 +421,33 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
                   finalize_results(results_temp)
                 } else {
                   # User chose to skip - proceed with quality control on original results
-                  # Apply quality control
-                  qc_results <- tryCatch({
-                    sapfluxr::flag_vh_quality(
-                      results,
-                      verbose = FALSE,
-                      return_full_report = FALSE
-                    )
-                  }, error = function(e) {
-                    # If flag_vh_quality fails, just return original results
-                    message("Quality control failed: ", e$message)
-                    results
+                  # Apply quality control with progress feedback
+                  qc_results <- NULL
+                  shiny::withProgress(message = "Applying Quality Checks", value = 0.5, {
+                    qc_results <- tryCatch({
+                      sapfluxr::flag_vh_quality(
+                        results,
+                        detect_missing_pulses = input$qc_detect_missing_pulses,
+                        check_illogical = input$qc_check_illogical,
+                        hard_max_vh = input$qc_hard_max_vh,
+                        flag_negative = input$qc_flag_negative,
+                        detect_outliers = input$qc_detect_outliers,
+                        rolling_window = input$qc_rolling_window,
+                        rolling_threshold = input$qc_rolling_threshold,
+                        detect_rate_of_change = input$qc_detect_rate_of_change,
+                        max_change_cm_hr = input$qc_max_change_cm_hr,
+                        check_cross_sensor = input$qc_check_cross_sensor,
+                        cross_sensor_threshold = input$qc_cross_sensor_threshold,
+                        add_rows_for_missing = input$qc_add_rows_for_missing,
+                        max_gap_to_fill_hours = input$qc_max_gap_to_fill_hours,
+                        verbose = FALSE,
+                        return_full_report = FALSE
+                      )
+                    }, error = function(e) {
+                      # If flag_vh_quality fails, just return original results
+                      message("Quality control failed: ", e$message)
+                      results
+                    })
                   })
 
                   # Store results
@@ -327,16 +492,32 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
 
         # Define quality control and finalization function
         finalize_results <- function(final_results) {
-          # Apply quality control
-          final_results <- tryCatch({
-            sapfluxr::flag_vh_quality(
-              final_results,
-              verbose = FALSE,
-              return_full_report = FALSE  # Just get data frame, not full report
-            )
-          }, error = function(e) {
-            message("Quality control failed: ", e$message)
-            final_results
+          # Apply quality control with user-configured parameters
+          # Show progress notification
+          shiny::withProgress(message = "Applying Quality Checks", value = 0.5, {
+            final_results <- tryCatch({
+              sapfluxr::flag_vh_quality(
+                final_results,
+                detect_missing_pulses = input$qc_detect_missing_pulses,
+                check_illogical = input$qc_check_illogical,
+                hard_max_vh = input$qc_hard_max_vh,
+                flag_negative = input$qc_flag_negative,
+                detect_outliers = input$qc_detect_outliers,
+                rolling_window = input$qc_rolling_window,
+                rolling_threshold = input$qc_rolling_threshold,
+                detect_rate_of_change = input$qc_detect_rate_of_change,
+                max_change_cm_hr = input$qc_max_change_cm_hr,
+                check_cross_sensor = input$qc_check_cross_sensor,
+                cross_sensor_threshold = input$qc_cross_sensor_threshold,
+                add_rows_for_missing = input$qc_add_rows_for_missing,
+                max_gap_to_fill_hours = input$qc_max_gap_to_fill_hours,
+                verbose = FALSE,
+                return_full_report = FALSE  # Just get data frame, not full report
+              )
+            }, error = function(e) {
+              message("Quality control failed: ", e$message)
+              final_results
+            })
           })
 
           # Store results
