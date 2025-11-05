@@ -137,17 +137,17 @@ shiny-sapfluxr/
 
 ## Development
 
-This app is under active development. See the main [sapfluxr CLAUDE.md](../sapfluxr/CLAUDE.md) for development guidelines.
+This app is under active development.
 
 ### Current Status
 - ✅ Project structure
-- 🚧 Data upload module
-- 🚧 Clock drift correction
-- ⬜ Configuration interface
-- ⬜ Method selection
-- ⬜ Calculation engine
-- ⬜ Time series plotting
-- ⬜ Pulse trace viewer
+- ✅ Data upload module
+- ✅ Clock drift correction
+- ✅ Configuration interface
+- ✅ Method selection
+- ✅ Calculation engine
+- 🚧 Time series plotting
+- 🚧 Pulse trace viewer
 - ⬜ Export functionality
 
 ## License

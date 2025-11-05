@@ -847,7 +847,7 @@ plotTimeseriesServer <- function(id, vh_results) {
               legend = list(
                 orientation = "h",
                 x = 0,
-                y = -0.7,
+                y = -0.45,
                 xanchor = "left",
                 yanchor = "top"
               ),
@@ -873,7 +873,7 @@ plotTimeseriesServer <- function(id, vh_results) {
               legend = list(
                 orientation = "h",
                 x = 0,
-                y = -0.7,
+                y = -0.45,
                 xanchor = "left",
                 yanchor = "top"
               ),
@@ -900,7 +900,7 @@ plotTimeseriesServer <- function(id, vh_results) {
             legend = list(
               orientation = "h",
               x = 0,
-              y = -0.25,
+              y = -0.45,
               xanchor = "left",
               yanchor = "top"
             ),
@@ -1145,14 +1145,15 @@ plotTimeseriesServer <- function(id, vh_results) {
         cat("Adjusted curve:", curve_num, "point:", point_num, "\n")
 
         # Try to extract pulse_id from the clicked point
-        # We need to figure out which row in filtered_data this corresponds to
-        # For now, use the x value (datetime) to find the pulse
+        # Use the x value (datetime) to find the pulse
         clicked_datetime <- click_data$x
 
         cat("Clicked datetime:", clicked_datetime, "\n")
 
-        # Find pulse_id for this datetime
-        matching_row <- data %>%
+        # Search in FULL vh_results, not filtered_data
+        # This allows clicks on quality markers and Peclet traces to work
+        full_data <- vh_results()
+        matching_row <- full_data %>%
           filter(abs(as.numeric(difftime(datetime, clicked_datetime, units = "secs"))) < 1) %>%
           slice(1)
 
@@ -1170,7 +1171,7 @@ plotTimeseriesServer <- function(id, vh_results) {
             timer = 2000
           )
         } else {
-          cat("No matching pulse found\n")
+          cat("No matching pulse found in vh_results for datetime:", clicked_datetime, "\n")
         }
       }
     })
