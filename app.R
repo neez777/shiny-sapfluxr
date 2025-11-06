@@ -98,10 +98,10 @@ ui <- tagList(
 
         # Bottom content: GitHub logos
         div(style = "padding: 15px; text-align: center;",
-            tags$a(href = "https://github.com/yourusername/project1", target = "_blank",
+            tags$a(href = "https://github.com/neez777/sapfluxr", target = "_blank",
                    tags$img(src = "sapfluxr.png", height = "90px", style = "margin: 5px;")),
-            tags$a(href = "https://github.com/yourusername/project2", target = "_blank",
-                   tags$img(src = "sapfluxr.png", height = "90px", style = "margin: 5px;"))
+            tags$a(href = "https://github.com/neez777/shiny-sapfluxr", target = "_blank",
+                   tags$img(src = "shiny_sapfluxr.png", height = "90px", style = "margin: 5px;"))
         )
     )
   ),
