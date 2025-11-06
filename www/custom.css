@@ -134,3 +134,29 @@
   justify-content: center;
   align-items: center;
 }
+
+#fixed-logo-footer {
+  /* CRITICAL: Fixes it to the viewport */
+  position: fixed !important;
+
+  /* Positions it to the bottom-left corner of the sidebar area */
+  bottom: 0 !important;
+  left: 0 !important;
+
+  /* Matches the width of your sidebar */
+  width: 180px !important;
+  height: auto;
+
+  /* Match the sidebar's dark background */
+  background-color: transparent !important;
+
+  /* Ensure it is on top of all other elements */
+  z-index: 1000 !important;
+
+}
+
+/* Ensure the main sidebar scrolling content doesn't cover the logos */
+/* We reduce the height of the scrollable sidebar to account for the fixed footer */
+.main-sidebar {
+    padding-bottom: 120px; /* Adjust this value (e.g., 120px) to be slightly more than the logo footer's height */
+}

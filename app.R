@@ -54,6 +54,16 @@ ui <- tagList(
   tags$head(
     tags$title("sapfluxr Dashboard")  # This sets the browser tab title
   ),
+  tags$footer(
+    id = "fixed-logo-footer",
+    tags$div(
+      style = "padding: 5px; text-align: center;",
+      tags$a(href = "https://github.com/neez777/sapfluxr", target = "_blank",
+             tags$img(src = "sapfluxr.png", height = "60px", style = "margin: 5px;")),
+      tags$a(href = "https://github.com/neez777/shiny-sapfluxr", target = "_blank",
+             tags$img(src = "shiny_sapfluxr.png", height = "60px", style = "margin: 5px;"))
+    )
+  ),
   dashboardPage(
   skin = "blue",
 
@@ -71,38 +81,28 @@ ui <- tagList(
   ## Sidebar ----
   dashboardSidebar(
     width = 250,
-    div(style = "height: 100%; display: flex; flex-direction: column; justify-content: space-between;",
+    tags$div(
+      class = "sidebar-content-wrapper", # Class for the scrollable part (you can remove this class if you like)
 
-        # Top content: menu and app info
-        div(
-          sidebarMenu(
-            id = "sidebar",
-            menuItem("1. Data Upload", tabName = "upload", icon = icon("upload")),
-            menuItem("2. Configuration", tabName = "config", icon = icon("cog")),
-            menuItem("3. Calculations", tabName = "methods", icon = icon("calculator")),
-            menuItem("4. Visualise", tabName = "visualise", icon = icon("chart-line")),
-            menuItem("5. Export", tabName = "export", icon = icon("download"))
-          ),
+      sidebarMenu(
+        id = "sidebar",
+        menuItem("1. Data Upload", tabName = "upload", icon = icon("upload")),
+        menuItem("2. Configuration", tabName = "config", icon = icon("cog")),
+        menuItem("3. Calculations", tabName = "methods", icon = icon("calculator")),
+        menuItem("4. Visualise", tabName = "visualise", icon = icon("chart-line")),
+        menuItem("5. Export", tabName = "export", icon = icon("download"))
+      ),
+      hr(),
+      div(style = "padding: 0 15px 15px 15px; font-size: 0.8em; color: #666;",
+          p(strong("About")),
+          p("Interactive interface for processing heat pulse velocity data from ICT SFM1x sensors."),
+          p("Built on ", code("sapfluxr"), " package."),
           hr(),
-          div(style = "padding: 15px; font-size: 0.8em; color: #666;",
-              p(strong("About")),
-              p("Interactive interface for processing heat pulse velocity data from ICT SFM1x sensors."),
-              p("Built on ", code("sapfluxr"), " package."),
-              hr(),
-              p(strong("Version:"), " 0.1.0"),
-              p(a("Report Issues",
-                  href = "https://github.com/neez777/sapfluxr/issues",
-                  target = "_blank"))
-          )
-        ),
-
-        # Bottom content: GitHub logos
-        div(style = "padding: 15px; text-align: center;",
-            tags$a(href = "https://github.com/neez777/sapfluxr", target = "_blank",
-                   tags$img(src = "sapfluxr.png", height = "90px", style = "margin: 5px;")),
-            tags$a(href = "https://github.com/neez777/shiny-sapfluxr", target = "_blank",
-                   tags$img(src = "shiny_sapfluxr.png", height = "90px", style = "margin: 5px;"))
-        )
+          p(strong("Version:"), " 0.1.0"),
+          p(a("Report Issues",
+              href = "https://github.com/neez777/sapfluxr/issues",
+              target = "_blank"))
+      )
     )
   ),
 
