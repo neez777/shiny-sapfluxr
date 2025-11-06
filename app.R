@@ -61,56 +61,48 @@ ui <- tagList(
   dashboardHeader(
     title = tags$a(
       href = "https://github.com/neez777/sapfluxr",
-      target = "_blank",
-      tags$img(src = "sapfluxr.png", height = "40px", style = "margin-top: -5px; margin-right: 5px;"),
+      # target = "_blank",
+      # tags$img(src = "sapfluxr.png", height = "40px", style = "margin-top: -5px; margin-right: 5px;"),
       "sapfluxr Dashboard"
     ),
-    titleWidth = 300
+    titleWidth = 250
   ),
 
   ## Sidebar ----
   dashboardSidebar(
-    width = 300,
-    sidebarMenu(
-      id = "sidebar",
+    width = 250,
+    div(style = "height: 100%; display: flex; flex-direction: column; justify-content: space-between;",
 
-      # Step 1: Data Upload
-      menuItem("1. Data Upload",
-               tabName = "upload",
-               icon = icon("upload")),
+        # Top content: menu and app info
+        div(
+          sidebarMenu(
+            id = "sidebar",
+            menuItem("1. Data Upload", tabName = "upload", icon = icon("upload")),
+            menuItem("2. Configuration", tabName = "config", icon = icon("cog")),
+            menuItem("3. Calculations", tabName = "methods", icon = icon("calculator")),
+            menuItem("4. Visualise", tabName = "visualise", icon = icon("chart-line")),
+            menuItem("5. Export", tabName = "export", icon = icon("download"))
+          ),
+          hr(),
+          div(style = "padding: 15px; font-size: 0.8em; color: #666;",
+              p(strong("About")),
+              p("Interactive interface for processing heat pulse velocity data from ICT SFM1x sensors."),
+              p("Built on ", code("sapfluxr"), " package."),
+              hr(),
+              p(strong("Version:"), " 0.1.0"),
+              p(a("Report Issues",
+                  href = "https://github.com/neez777/sapfluxr/issues",
+                  target = "_blank"))
+          )
+        ),
 
-      # Step 2: Configuration
-      menuItem("2. Configuration",
-               tabName = "config",
-               icon = icon("cog")),
-
-      # Step 3: Calculations
-      menuItem("3. Calculations",
-               tabName = "methods",
-               icon = icon("calculator")),
-
-      # Step 4: Visualise
-      menuItem("4. Visualise",
-               tabName = "visualise",
-               icon = icon("chart-line")),
-
-      # Step 5: Export
-      menuItem("5. Export",
-               tabName = "export",
-               icon = icon("download"))
-    ),
-
-    # App info in sidebar
-    hr(),
-    div(style = "padding: 15px; font-size: 0.8em; color: #666;",
-        p(strong("About")),
-        p("Interactive interface for processing heat pulse velocity data from ICT SFM1x sensors."),
-        p("Built on ", code("sapfluxr"), " package."),
-        hr(),
-        p(strong("Version:"), " 0.1.0"),
-        p(a("Report Issues",
-            href = "https://github.com/neez777/sapfluxr/issues",
-            target = "_blank"))
+        # Bottom content: GitHub logos
+        div(style = "padding: 15px; text-align: center;",
+            tags$a(href = "https://github.com/yourusername/project1", target = "_blank",
+                   tags$img(src = "sapfluxr.png", height = "90px", style = "margin: 5px;")),
+            tags$a(href = "https://github.com/yourusername/project2", target = "_blank",
+                   tags$img(src = "sapfluxr.png", height = "90px", style = "margin: 5px;"))
+        )
     )
   ),
 
