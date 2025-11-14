@@ -17,12 +17,14 @@ methodsUI <- function(id) {
     fluidRow(
       # Method Selection
       column(
-        width = 6,
+        width = 5,
         box(
           width = NULL,
           title = "Select Calculation Methods",
           status = "primary",
           solidHeader = TRUE,
+          collapsible = TRUE,
+          collapsed = FALSE,
 
           p("Select one or more heat pulse velocity calculation methods:"),
 
@@ -38,51 +40,36 @@ methodsUI <- function(id) {
               "Tmax (Kluitenberg) - Time-to-peak method" = "Tmax_Klu"
             ),
             selected = c("HRM", "MHR")
-          ),
+          )
 
-          hr(),
+          # ==================================================================
+          # sDMA POST-PROCESSING - REMOVED
+          #
+          # Post-Processing Options UI has been temporarily removed.
+          # sDMA functionality will be re-implemented in a later workflow stage
+          # (after wound correction, before flux density calculation).
+          #
+          # Complete implementation preserved in: R/04j_sdma_methods.R
+          # See: SDMA_EXTRACTION_STATUS.md for extraction status
+          # ==================================================================
 
-          h5("Post-Processing Options"),
-          checkboxInput(
-            ns("apply_sdma"),
-            "Apply sDMA (Selectable Dual Method Approach)",
-            value = FALSE
-          ),
-
-          conditionalPanel(
-            condition = sprintf("input['%s']", ns("apply_sdma")),
-            p(class = "help-text",
-              icon("info-circle"),
-              " sDMA requires HRM and at least one other method. It automatically switches between HRM (low flows) and your selected secondary methods (high flows) based on Péclet number."),
-
-            checkboxGroupInput(
-              ns("sdma_secondary"),
-              "Secondary Methods for sDMA:",
-              choices = c(
-                "MHR" = "MHR",
-                "HRMXa" = "HRMXa",
-                "HRMXb" = "HRMXb",
-                "Tmax (Cohen)" = "Tmax_Coh",
-                "Tmax (Kluitenberg)" = "Tmax_Klu"
-              ),
-              selected = "MHR"
-            )
-          ),
-
-          # Warning if HRM not selected but sDMA is
-          uiOutput(ns("sdma_warning"))
-        )
+          # REMOVED: hr(), h5("Post-Processing Options")
+          # REMOVED: checkboxInput apply_sdma
+          # REMOVED: conditionalPanel with sdma_secondary
+          # REMOVED: uiOutput sdma_warning
+#        )
       ),
 
       # Quality Check Configuration
-      column(
-        width = 6,
+ #     column(
+ #       width = 6,
         box(
           width = NULL,
           title = "Quality Check Settings",
           status = "warning",
           solidHeader = TRUE,
           collapsible = TRUE,
+          collapsed = TRUE,
 
           p("Configure quality control checks applied after calculation:"),
 
@@ -92,23 +79,23 @@ methodsUI <- function(id) {
             h5("Missing Pulses & Gaps", style = "margin-top: 0;"),
             fluidRow(
               column(
-                width = 6,
+                width = 5,
                 checkboxInput(
                   ns("qc_detect_missing_pulses"),
-                  "Detect missing pulses",
+                  HTML('Detect missing pulses <span style="color: #999; cursor: help;" title="Identifies gaps in the pulse sequence where expected pulses are missing from the dataset. Missing pulses can indicate logger errors, power outages, or data transmission issues."><i class="fa fa-circle-question"></i></span>'),
                   value = TRUE
                 ),
                 checkboxInput(
                   ns("qc_add_rows_for_missing"),
-                  "Add rows for missing data",
+                  HTML('Add rows for missing data <span style="color: #999; cursor: help;" title="Inserts placeholder rows with NA values for detected missing pulses to maintain time sequence continuity. This ensures consistent time intervals in plots and analyses."><i class="fa fa-circle-question"></i></span>'),
                   value = TRUE
                 )
               ),
               column(
-                width = 6,
+                width = 5,
                 numericInput(
                   ns("qc_max_gap_to_fill_hours"),
-                  "Max gap to fill (hours):",
+                  HTML('Max gap to fill (hours): <span style="color: #999; cursor: help;" title="Only fills gaps shorter than this duration. Longer gaps are left empty to avoid interpolating across major data outages like power failures or maintenance periods."><i class="fa fa-circle-question"></i></span>'),
                   value = 1,
                   min = 1,
                   max = 168,
@@ -124,23 +111,23 @@ methodsUI <- function(id) {
             h5("Illogical Values", style = "margin-top: 0;"),
             fluidRow(
               column(
-                width = 6,
+                width = 5,
                 checkboxInput(
                   ns("qc_check_illogical"),
-                  "Check illogical values",
+                  HTML('Check illogical values <span style="color: #999; cursor: help;" title="Flags physically impossible values like infinite velocities, extremely high flows that exceed maximum possible rates for the species and method, or calculations that failed due to invalid temperature ratios."><i class="fa fa-circle-question"></i></span>'),
                   value = TRUE
                 ),
                 checkboxInput(
                   ns("qc_flag_negative"),
-                  "Flag negative flows",
+                  HTML('Flag negative flows <span style="color: #999; cursor: help;" title="Marks negative velocity values as suspect. Negative flows may indicate genuine reverse flow (e.g., stem water refilling at night) or measurement errors from probe misalignment or thermal asymmetries."><i class="fa fa-circle-question"></i></span>'),
                   value = TRUE
                 )
               ),
               column(
-                width = 6,
+                width = 5,
                 numericInput(
                   ns("qc_hard_max_vh"),
-                  "Absolute max velocity (cm/hr):",
+                  HTML('Absolute max velocity (cm/hr): <span style="color: #999; cursor: help;" title="Hard upper limit for biologically plausible sap velocities. Any velocity exceeding this value is automatically flagged as an error. Typical values: 100-200 cm/hr for diffuse-porous, 200-400 cm/hr for ring-porous species."><i class="fa fa-circle-question"></i></span>'),
                   value = 500,
                   min = 50,
                   max = 1000,
@@ -156,28 +143,28 @@ methodsUI <- function(id) {
             h5("Statistical Outliers", style = "margin-top: 0;"),
             fluidRow(
               column(
-                width = 6,
+                width = 5,
                 checkboxInput(
                   ns("qc_detect_outliers"),
-                  "Detect outliers (rolling mean)",
+                  HTML('Detect outliers (rolling mean) <span style="color: #999; cursor: help;" title="Uses a rolling window to calculate local mean and standard deviation, then flags values that deviate too far from the local trend. Effective for catching isolated spikes or anomalies that don\'t fit the surrounding pattern."><i class="fa fa-circle-question"></i></span>'),
                   value = TRUE
                 ),
                 checkboxInput(
                   ns("qc_detect_rate_of_change"),
-                  "Detect rate of change outliers",
+                  HTML('Detect rate of change outliers <span style="color: #999; cursor: help;" title="Flags sudden jumps between consecutive measurements that exceed biologically plausible rates of change. Trees cannot instantly increase or decrease sap flow beyond certain physiological limits."><i class="fa fa-circle-question"></i></span>'),
                   value = TRUE
                 ),
                 checkboxInput(
                   ns("qc_check_cross_sensor"),
-                  HTML('Check cross-sensor anomalies <span style="color: #999; cursor: help;" title="Detects if one thermistor sensor is behaving differently from others at the same timestamp. At each time point, sensors showing values significantly different from the median across all sensors (>3x MAD) are flagged as SUSPECT."><i class="fa fa-circle-question"></i></span>'),
-                  value = TRUE
+                  HTML('Check cross-sensor anomalies <span style="color: #999; cursor: help;" title="Detects if one thermistor sensor is behaving differently from others at the same timestamp. At each time point, sensors showing values significantly different from the median across all sensors (>3x SD) are flagged as SUSPECT."><i class="fa fa-circle-question"></i></span>'),
+                  value = FALSE
                 )
               ),
               column(
-                width = 6,
+                width = 5,
                 numericInput(
                   ns("qc_rolling_window"),
-                  "Rolling window half-width:",
+                  HTML('Rolling window half-width: <span style="color: #999; cursor: help;" title="Number of observations before and after the current point used to calculate local statistics. Larger windows produce smoother, less sensitive detection. Example: value of 5 uses 11 total points (5 before + current + 5 after)."><i class="fa fa-circle-question"></i></span>'),
                   value = 5,
                   min = 2,
                   max = 20,
@@ -185,7 +172,7 @@ methodsUI <- function(id) {
                 ),
                 numericInput(
                   ns("qc_rolling_threshold"),
-                  "Rolling outlier threshold (MAD):",
+                  HTML('Rolling outlier threshold (SD): <span style="color: #999; cursor: help;" title="How many standard deviations from the rolling mean before flagging as an outlier. Higher values are more lenient (fewer flags), lower values are stricter. Typical range: 2-4 SD."><i class="fa fa-circle-question"></i></span>'),
                   value = 3,
                   min = 1,
                   max = 10,
@@ -193,7 +180,7 @@ methodsUI <- function(id) {
                 ),
                 numericInput(
                   ns("qc_max_change_cm_hr"),
-                  "Max velocity change (cm/hr):",
+                  HTML('Max velocity change (cm/hr): <span style="color: #999; cursor: help;" title="Maximum allowed velocity change between consecutive measurements. Larger jumps are flagged as suspect. Should reflect realistic biological rates of change for your species and measurement interval."><i class="fa fa-circle-question"></i></span>'),
                   value = 4,
                   min = 0.1,
                   max = 50,
@@ -201,7 +188,7 @@ methodsUI <- function(id) {
                 ),
                 numericInput(
                   ns("qc_cross_sensor_threshold"),
-                  "Cross-sensor threshold (MAD):",
+                  HTML('Cross-sensor threshold (SD): <span style="color: #999; cursor: help;" title="How many standard deviations from the median sensor value before flagging as anomalous. Higher values are more lenient. If one sensor consistently reads very differently from the others, it may indicate a faulty probe."><i class="fa fa-circle-question"></i></span>'),
                   value = 3,
                   min = 1,
                   max = 10,
@@ -216,13 +203,12 @@ methodsUI <- function(id) {
             " These settings control outlier detection sensitivity and data validation. ",
             "Lower thresholds are more strict, higher are more lenient.")
         )
-      )
-    ),
+      ),
 
-    fluidRow(
+#    fluidRow(
       # Calculate Button & Status
       column(
-        width = 12,
+        width = 7,
         box(
           width = NULL,
           title = "Run Calculations",
@@ -245,8 +231,7 @@ methodsUI <- function(id) {
 
           uiOutput(ns("results_summary"))
         )
-      )
-    ),
+      ),
 
     # Results Table
     fluidRow(
@@ -262,6 +247,7 @@ methodsUI <- function(id) {
       )
     )
   )
+)
 }
 
 # Server ----
@@ -271,37 +257,12 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
     # Reactive to store results
     vh_results <- reactiveVal(NULL)
 
-    # Auto-select matching sDMA methods when apply_sdma is checked
-    observeEvent(input$apply_sdma, {
-      if (input$apply_sdma) {
-        # Get currently selected main methods (excluding HRM)
-        selected_methods <- setdiff(input$methods, "HRM")
-
-        # Only select methods that are available in sDMA secondary options
-        # Available: MHR, HRMXa, HRMXb, Tmax_Coh, Tmax_Klu
-        sdma_methods <- intersect(selected_methods,
-                                  c("MHR", "HRMXa", "HRMXb", "Tmax_Coh", "Tmax_Klu"))
-
-        # Update the sDMA secondary methods selection
-        if (length(sdma_methods) > 0) {
-          updateCheckboxGroupInput(session, "sdma_secondary", selected = sdma_methods)
-        }
-      }
-    })
-
-    # Check if HRM is selected when sDMA is enabled
-    output$sdma_warning <- renderUI({
-      if (input$apply_sdma && !"HRM" %in% input$methods) {
-        div(
-          style = "padding: 10px; background-color: #FFF3CD; border-left: 4px solid #FF9800; margin-top: 10px;",
-          p(
-            icon("exclamation-triangle"),
-            strong(" Warning:"),
-            " sDMA requires HRM to be selected. Please check HRM above."
-          )
-        )
-      }
-    })
+    # ==================================================================
+    # sDMA SERVER LOGIC - REMOVED
+    # ==================================================================
+    # REMOVED: observeEvent(input$apply_sdma, ...) - auto-select sDMA methods
+    # REMOVED: output$sdma_warning - HRM requirement warning
+    # See: R/04j_sdma_methods.R for preserved implementation
 
     # Calculation status display
     output$calculation_status <- renderUI({
@@ -329,17 +290,10 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
       # Clear previous results immediately
       vh_results(NULL)
 
-      # Validate sDMA requirements
-      if (input$apply_sdma && !"HRM" %in% input$methods) {
-        shinyWidgets::sendSweetAlert(
-          session = session,
-          title = "sDMA Validation Error",
-          text = "sDMA requires HRM to be selected. Please check HRM in the methods above.",
-          type = "warning",
-          timer = 3000
-        )
-        return()
-      }
+      # ==================================================================
+      # sDMA VALIDATION - REMOVED
+      # ==================================================================
+      # REMOVED: sDMA validation check for HRM requirement
 
       tryCatch({
         # Get data and configs
@@ -372,181 +326,58 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
           })
         })
 
-        # Check if sDMA should be applied
-        should_prompt_sdma <- FALSE
-        if (input$apply_sdma) {
-          # Check Peclet numbers before running sDMA
-          hrm_data <- results[results$method == "HRM", ]
-          max_peclet <- max(hrm_data$peclet_number, na.rm = TRUE)
+        # ==================================================================
+        # sDMA PROCESSING - REMOVED
+        # ==================================================================
+        # REMOVED: All sDMA application logic including:
+        # - Peclet number checking
+        # - sDMA confirmation dialogs
+        # - apply_sdma_processing() calls
+        # - Method switching logic
+        #
+        # sDMA will be re-implemented in a later workflow stage after
+        # wound correction. See R/04j_sdma_methods.R for preserved code.
+        # ==================================================================
 
-          # If all Peclet numbers are <= 1, prompt user
-          if (!is.na(max_peclet) && max_peclet <= 1.0) {
-            should_prompt_sdma <- TRUE
-
-            # Show confirmation dialog
-            shinyWidgets::confirmSweetAlert(
-              session = session,
-              inputId = "confirm_sdma",
-              title = "sDMA Not Required",
-              text = paste0(
-                "All Peclet numbers are ≤ 1.0 (maximum: ", round(max_peclet, 3), ").\n\n",
-                "This means HRM is valid for all measurements and sDMA would never ",
-                "switch to the secondary method. The results would be identical to HRM.\n\n",
-                "Do you still want to calculate sDMA?"
-              ),
-              type = "warning",
-              btn_labels = c("Skip sDMA", "Calculate Anyway"),
-              btn_colors = c("#3085d6", "#d33")
+        # Apply quality control with user-configured parameters
+        shiny::withProgress(message = "Applying Quality Checks", value = 0.5, {
+          results <- tryCatch({
+            sapfluxr::flag_vh_quality(
+              results,
+              detect_missing_pulses = input$qc_detect_missing_pulses,
+              check_illogical = input$qc_check_illogical,
+              hard_max_vh = input$qc_hard_max_vh,
+              flag_negative = input$qc_flag_negative,
+              detect_outliers = input$qc_detect_outliers,
+              rolling_window = input$qc_rolling_window,
+              rolling_threshold = input$qc_rolling_threshold,
+              detect_rate_of_change = input$qc_detect_rate_of_change,
+              max_change_cm_hr = input$qc_max_change_cm_hr,
+              check_cross_sensor = input$qc_check_cross_sensor,
+              cross_sensor_threshold = input$qc_cross_sensor_threshold,
+              add_rows_for_missing = input$qc_add_rows_for_missing,
+              max_gap_to_fill_hours = input$qc_max_gap_to_fill_hours,
+              verbose = FALSE,
+              return_full_report = FALSE
             )
-
-            # Wait for user response
-            observeEvent(input$confirm_sdma, {
-              tryCatch({
-                if (input$confirm_sdma) {
-                  # User chose to calculate anyway
-                  results_temp <- NULL
-                  shiny::withProgress(message = "Applying sDMA Processing", value = 0, {
-                    progressr::handlers(progressr::handler_shiny(enable = TRUE))
-                    results_temp <- progressr::with_progress({
-                      sapfluxr::apply_sdma_processing(
-                        vh_results = results,
-                        secondary_method = input$sdma_secondary,
-                        skip_low_peclet = FALSE,  # User confirmed
-                        show_progress = TRUE
-                      )
-                    })
-                  })
-
-                  # Finalize with sDMA results
-                  finalize_results(results_temp)
-                } else {
-                  # User chose to skip - proceed with quality control on original results
-                  # Apply quality control with progress feedback
-                  qc_results <- NULL
-                  shiny::withProgress(message = "Applying Quality Checks", value = 0.5, {
-                    qc_results <- tryCatch({
-                      sapfluxr::flag_vh_quality(
-                        results,
-                        detect_missing_pulses = input$qc_detect_missing_pulses,
-                        check_illogical = input$qc_check_illogical,
-                        hard_max_vh = input$qc_hard_max_vh,
-                        flag_negative = input$qc_flag_negative,
-                        detect_outliers = input$qc_detect_outliers,
-                        rolling_window = input$qc_rolling_window,
-                        rolling_threshold = input$qc_rolling_threshold,
-                        detect_rate_of_change = input$qc_detect_rate_of_change,
-                        max_change_cm_hr = input$qc_max_change_cm_hr,
-                        check_cross_sensor = input$qc_check_cross_sensor,
-                        cross_sensor_threshold = input$qc_cross_sensor_threshold,
-                        add_rows_for_missing = input$qc_add_rows_for_missing,
-                        max_gap_to_fill_hours = input$qc_max_gap_to_fill_hours,
-                        verbose = FALSE,
-                        return_full_report = FALSE
-                      )
-                    }, error = function(e) {
-                      # If flag_vh_quality fails, just return original results
-                      message("Quality control failed: ", e$message)
-                      results
-                    })
-                  })
-
-                  # Store results
-                  vh_results(qc_results)
-
-                  # Show success
-                  shinyWidgets::sendSweetAlert(
-                    session = session,
-                    title = "Success!",
-                    text = paste(format(nrow(qc_results), big.mark = ","),
-                                "velocity measurements calculated (sDMA skipped)"),
-                    type = "success",
-                    timer = 3000
-                  )
-                }
-              }, error = function(e) {
-                # Show error
-                notify_error(
-                  session = session,
-                  title = "Processing Error",
-                  text = paste("Error during processing:", e$message)
-                )
-              })
-            }, once = TRUE)
-
-            return()  # Exit early to wait for confirmation
-          } else {
-            # Peclet numbers > 1 exist, proceed normally
-            shiny::withProgress(message = "Applying sDMA Processing", value = 0, {
-              progressr::handlers(progressr::handler_shiny(enable = TRUE))
-              results <- progressr::with_progress({
-                sapfluxr::apply_sdma_processing(
-                  vh_results = results,
-                  secondary_method = input$sdma_secondary,
-                  skip_low_peclet = FALSE,  # Auto-skip not needed
-                  show_progress = TRUE
-                )
-              })
-            })
-          }
-        }
-
-        # Define quality control and finalization function
-        finalize_results <- function(final_results) {
-          # Apply quality control with user-configured parameters
-          # Show progress notification
-          shiny::withProgress(message = "Applying Quality Checks", value = 0.5, {
-            final_results <- tryCatch({
-              sapfluxr::flag_vh_quality(
-                final_results,
-                detect_missing_pulses = input$qc_detect_missing_pulses,
-                check_illogical = input$qc_check_illogical,
-                hard_max_vh = input$qc_hard_max_vh,
-                flag_negative = input$qc_flag_negative,
-                detect_outliers = input$qc_detect_outliers,
-                rolling_window = input$qc_rolling_window,
-                rolling_threshold = input$qc_rolling_threshold,
-                detect_rate_of_change = input$qc_detect_rate_of_change,
-                max_change_cm_hr = input$qc_max_change_cm_hr,
-                check_cross_sensor = input$qc_check_cross_sensor,
-                cross_sensor_threshold = input$qc_cross_sensor_threshold,
-                add_rows_for_missing = input$qc_add_rows_for_missing,
-                max_gap_to_fill_hours = input$qc_max_gap_to_fill_hours,
-                verbose = FALSE,
-                return_full_report = FALSE  # Just get data frame, not full report
-              )
-            }, error = function(e) {
-              message("Quality control failed: ", e$message)
-              final_results
-            })
+          }, error = function(e) {
+            message("Quality control failed: ", e$message)
+            results
           })
+        })
 
-          # Store results
-          vh_results(final_results)
+        # Store results
+        vh_results(results)
 
-          # Show success with auto-close using shinyWidgets
-          shinyWidgets::sendSweetAlert(
-            session = session,
-            title = "Success!",
-            text = paste(format(nrow(final_results), big.mark = ","),
-                        "velocity measurements calculated"),
-            type = "success",
-            timer = 3000  # Auto-close after 3 seconds
-          )
-        }
-
-        # If sDMA prompt is needed, handle it asynchronously
-        if (should_prompt_sdma) {
-          # Handler for confirm dialog is set up above
-          # Results will be finalized in the observe() block
-        } else if (input$apply_sdma) {
-          # Peclet numbers > 1 exist, proceed with sDMA normally
-          # (this code was already in the else block above)
-          # Then finalize
-          finalize_results(results)
-        } else {
-          # No sDMA requested, proceed directly to finalization
-          finalize_results(results)
-        }
+        # Show success with auto-close
+        shinyWidgets::sendSweetAlert(
+          session = session,
+          title = "Success!",
+          text = paste(format(nrow(results), big.mark = ","),
+                      "velocity measurements calculated"),
+          type = "success",
+          timer = 3000
+        )
 
       }, error = function(e) {
         # Show error

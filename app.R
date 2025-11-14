@@ -25,6 +25,7 @@ source("R/mod_data_upload.R")
 source("R/mod_clock_drift.R")
 source("R/mod_config.R")
 source("R/mod_methods.R")
+source("R/mod_corrections.R")
 source("R/mod_plot_timeseries.R")
 source("R/mod_pulse_trace.R")
 source("R/utils.R")
@@ -89,8 +90,9 @@ ui <- tagList(
         menuItem("1. Data Upload", tabName = "upload", icon = icon("upload")),
         menuItem("2. Configuration", tabName = "config", icon = icon("cog")),
         menuItem("3. Calculations", tabName = "methods", icon = icon("calculator")),
-        menuItem("4. Visualise", tabName = "visualise", icon = icon("chart-line")),
-        menuItem("5. Export", tabName = "export", icon = icon("download"))
+        menuItem("4. Visualise (Raw HPV)", tabName = "visualise_raw", icon = icon("chart-line")),
+        menuItem("5. Corrections", tabName = "corrections", icon = icon("adjust")),
+        menuItem("6. Visualise (Corrected)", tabName = "visualise_corrected", icon = icon("chart-area"))
       ),
       hr(),
       div(style = "padding: 0 15px 15px 15px; font-size: 0.8em; color: #666;",
@@ -161,24 +163,30 @@ ui <- tagList(
 
         fluidRow(
           box(
-            width = 12,
+            width = 7,
             title = "Upload Heat Pulse Data",
             status = "primary",
             solidHeader = TRUE,
 
             dataUploadUI("data_upload"),
+          ),
+          # hr(),
+          box(
+            width = 5,
+            title = "Clock Drift Correction (Optional)",
+            status = "warning",
+            solidHeader = TRUE,
+            collapsible = TRUE,
 
-            hr(),
-
-            h4("Clock Drift Correction (Optional)"),
-            clockDriftUI("clock_drift")
-          )
+            clockDriftUI("clock_drift"),
+          ),
         ),
 
         fluidRow(
           box(
             width = 12,
             title = "Data Summary",
+            solidHeader = TRUE,
             status = "info",
 
             verbatimTextOutput("data_summary")
@@ -201,39 +209,38 @@ ui <- tagList(
         methodsUI("methods")
       ),
 
-      # Tab 4: Visualise ----
+      # Tab 4: Visualise Raw ----
       tabItem(
-        tabName = "visualise",
-        h2("Interactive Visualisation"),
+        tabName = "visualise_raw",
+        h2("Interactive Visualisation - Raw (Uncorrected) HPV"),
+        p(class = "text-muted", "View raw heat pulse velocity calculations to identify outliers, missing data, and quality issues before applying corrections."),
 
-        plotTimeseriesUI("plot_timeseries"),
+        plotTimeseriesUI("plot_timeseries_raw"),
 
         hr(),
 
-        pulseTraceUI("pulse_trace")
+        pulseTraceUI("pulse_trace_raw")
       ),
 
-      # Tab 5: Export ----
+      # Tab 5: Corrections ----
       tabItem(
-        tabName = "export",
-        h2("Export Results"),
+        tabName = "corrections",
+        h2("Spacing Correction & Thermal Diffusivity Calibration"),
 
-        fluidRow(
-          box(
-            width = 12,
-            title = "Download Options",
-            status = "primary",
-            solidHeader = TRUE,
+        correctionsUI("corrections")
+      ),
 
-            p("Export functionality will be implemented next."),
-            p("Export formats:"),
-            tags$ul(
-              tags$li(strong("Plots:"), " PNG, PDF, TIF (publication quality), HTML (interactive)"),
-              tags$li(strong("Data:"), " Results as CSV"),
-              tags$li(strong("Configuration:"), " Save as YAML")
-            )
-          )
-        )
+      # Tab 6: Visualise Corrected ----
+      tabItem(
+        tabName = "visualise_corrected",
+        h2("Interactive Visualisation - Corrected HPV"),
+        p(class = "text-muted", "View corrected heat pulse velocity data after applying spacing corrections and/or wound corrections."),
+
+        plotTimeseriesUI("plot_timeseries_corrected"),
+
+        hr(),
+
+        pulseTraceUI("pulse_trace_corrected")
       )
     )
   )
@@ -299,11 +306,29 @@ server <- function(input, output, session) {
     rv$vh_results <- vh_results()
   })
 
-  # Module: Plot Time Series (returns selected pulse ID from clicks)
-  selected_pulse_id <- plotTimeseriesServer("plot_timeseries", vh_results)
+  # Module: Visualise Raw (Tab 4) - Always shows uncorrected data
+  selected_pulse_id_raw <- plotTimeseriesServer("plot_timeseries_raw", vh_results)
+  pulseTraceServer("pulse_trace_raw", reactive(rv$corrected_data), selected_pulse_id_raw, vh_results)
 
-  # Module: Pulse Trace Viewer
-  pulseTraceServer("pulse_trace", reactive(rv$corrected_data), selected_pulse_id, vh_results)
+  # Module: Corrections (Tab 5) - Spacing Correction & k Estimation
+  # Store calculation methods for Phase 3 recalculation
+  observe({
+    req(vh_results())
+    rv$calc_methods <- unique(vh_results()$method)
+  })
+
+  corrected_vh <- correctionsServer(
+    "corrections",
+    vh_results = vh_results,
+    heat_pulse_data = reactive(rv$corrected_data),
+    probe_config = configs$probe_config,
+    wood_properties = configs$wood_properties,
+    calc_methods = reactive(rv$calc_methods)
+  )
+
+  # Module: Visualise Corrected (Tab 6) - Shows corrected data
+  selected_pulse_id_corrected <- plotTimeseriesServer("plot_timeseries_corrected", corrected_vh)
+  pulseTraceServer("pulse_trace_corrected", reactive(rv$corrected_data), selected_pulse_id_corrected, corrected_vh)
 
   # Data Summary Output
   output$data_summary <- renderPrint({
@@ -350,13 +375,30 @@ server <- function(input, output, session) {
 
     # Show summary if available
     if (!is.null(data$validation$summary)) {
-      cat("\nData Completeness:\n")
-      cat("  Overall:", round(data$validation$summary$overall_completeness * 100, 1), "%\n")
+      cat("\n=== Data Quality Summary ===\n")
+
+      # Show pulse completeness if available (accounts for missing pulses)
+      if (!is.null(data$validation$summary$pulse_completeness)) {
+        cat("Pulse Completeness:", round(data$validation$summary$pulse_completeness * 100, 2), "%\n")
+        cat("  Actual pulses:", data$validation$summary$n_actual_pulses, "\n")
+        cat("  Expected pulses:", data$validation$summary$n_expected_pulses, "\n")
+        cat("  Missing pulses:", data$validation$summary$n_missing_pulses, "\n")
+        if (data$validation$summary$n_missing_pulses > 0) {
+          cat("  ** ", data$validation$summary$n_missing_pulses, " gap(s) detected in pulse sequence **\n")
+        }
+      } else {
+        cat("Overall Completeness:", round(data$validation$summary$overall_completeness * 100, 2), "%\n")
+      }
+
       if (!is.null(data$validation$summary$data_completeness)) {
+        cat("\nSensor Completeness:\n")
         for (sensor in names(data$validation$summary$data_completeness)) {
-          cat("  ", sensor, ":", round(data$validation$summary$data_completeness[sensor] * 100, 1), "%\n")
+          cat("  ", toupper(sensor), ":", round(data$validation$summary$data_completeness[sensor] * 100, 2), "%\n")
         }
       }
+
+      cat("\nTotal Records:", format(data$validation$summary$n_measurements, big.mark = ","), "\n")
+      cat("============================\n")
     }
 
     # Preview measurements (as data.frame to avoid tibble formatting)

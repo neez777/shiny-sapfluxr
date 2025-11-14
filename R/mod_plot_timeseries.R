@@ -21,6 +21,8 @@ plotTimeseriesUI <- function(id) {
           title = "Plot Controls",
           status = "primary",
           solidHeader = TRUE,
+          collapsible = TRUE,
+          collapsed = FALSE,
 
           h5("Methods to Display"),
           uiOutput(ns("method_checkboxes")),
@@ -86,6 +88,12 @@ plotTimeseriesUI <- function(id) {
           ),
 
           checkboxInput(
+            ns("show_interpolated"),
+            "Highlight interpolated points",
+            value = TRUE
+          ),
+
+          checkboxInput(
             ns("show_peclet"),
             "Show Peclet number (right axis)",
             value = FALSE
@@ -100,6 +108,132 @@ plotTimeseriesUI <- function(id) {
             class = "btn-default",
             style = "width: 100%;"
           )
+        ),
+
+        box(
+          width = NULL,
+          title = "Data Cleaning & Filtering",
+          status = "warning",
+          solidHeader = TRUE,
+          collapsible = TRUE,
+          collapsed = FALSE,
+
+          h5("Interpolation Settings"),
+
+          selectInput(
+            ns("interp_method"),
+            "Interpolation method:",
+            choices = c(
+              "Linear" = "linear",
+              "Moving Average" = "moving_average"
+            ),
+            selected = "linear"
+          ),
+
+          conditionalPanel(
+            condition = "input.interp_method == 'linear'",
+            ns = ns,
+            p(style = "font-size: 0.9em; color: #666; margin-bottom: 10px;",
+              "Creates a straight line between valid points. For single missing points, this is the simple average of before/after values.")
+          ),
+
+          conditionalPanel(
+            condition = "input.interp_method == 'moving_average'",
+            ns = ns,
+            p(style = "font-size: 0.9em; color: #666; margin-bottom: 10px;",
+              "Uses weighted average of surrounding valid points. Window size is automatically determined based on gap size. Good for noisy data.")
+          ),
+
+          numericInput(
+            ns("max_gap_hours"),
+            "Max gap to fill (hours):",
+            value = 1,
+            min = 0.5,
+            max = 24,
+            step = 0.5
+          ),
+
+          conditionalPanel(
+            condition = "input.max_gap_hours > 3",
+            ns = ns,
+            div(
+              style = "color: #ff9800; margin-bottom: 10px; padding: 5px; background-color: #fff3e0; border-radius: 3px;",
+              icon("exclamation-triangle"),
+              " Warning: Gaps > 3 hours are not recommended"
+            )
+          ),
+
+          hr(),
+
+          h5("Quality Flags to Interpolate"),
+          checkboxGroupInput(
+            ns("flags_to_interpolate"),
+            NULL,
+            choices = c(
+              "Missing data" = "DATA_MISSING",
+              "Statistical outliers" = "DATA_OUTLIER",
+              "Illogical values" = "DATA_ILLOGICAL"
+            ),
+            selected = c("DATA_MISSING", "DATA_OUTLIER", "DATA_ILLOGICAL")
+          ),
+
+          hr(),
+
+          h5("Filter by Method/Sensor (optional)"),
+          p(class = "help-text", style = "font-size: 0.85em; color: #666;",
+            "Leave all unchecked to apply to all methods/sensors"),
+
+          uiOutput(ns("methods_to_clean_checkboxes")),
+
+          checkboxGroupInput(
+            ns("sensors_to_clean"),
+            "Sensors:",
+            choices = c("Inner" = "inner", "Outer" = "outer"),
+            selected = c()
+          ),
+
+          hr()
+
+          # ==================================================================
+          # sDMA HANDLING - REMOVED
+          # ==================================================================
+          # REMOVED: h5("sDMA Handling")
+          # REMOVED: radioButtons handle_multi_method
+          #
+          # sDMA will be re-implemented in a later workflow stage.
+          # See R/04j_sdma_methods.R for preserved implementation.
+          # ==================================================================
+
+          ,hr(),
+
+          actionButton(
+            ns("preview_cleaning"),
+            "Preview Changes",
+            icon = icon("search"),
+            class = "btn-info",
+            style = "width: 100%; margin-bottom: 5px;"
+          ),
+
+          actionButton(
+            ns("apply_cleaning"),
+            "Apply Cleaning",
+            icon = icon("broom"),
+            class = "btn-warning",
+            style = "width: 100%; margin-bottom: 10px;"
+          ),
+
+          conditionalPanel(
+            condition = "output.cleaning_applied",
+            ns = ns,
+            hr(),
+            checkboxInput(
+              ns("show_original"),
+              HTML('Show original data <span style="font-size: 0.85em; color: #666;">(before cleaning)</span>'),
+              value = FALSE
+            )
+          ),
+
+          uiOutput(ns("cleaning_summary_ui"))
         ),
 
         box(
@@ -300,16 +434,59 @@ plotTimeseriesServer <- function(id, vh_results) {
       "DATA_ILLOGICAL" = "#8b0000",  # Dark red
       "CALC_FAILED" = "#9467bd",     # Purple
       "CALC_INFINITE" = "#e377c2",   # Pink
-      "CALC_EXTREME" = "#bcbd22"     # Yellow-green
+      "CALC_EXTREME" = "#bcbd22",    # Yellow-green
+      "INTERPOLATED" = "#2ca02c",    # Green (for interpolated points)
+      "LARGE_GAP" = "#666666"        # Dark gray
     )
+
+    # === Data Cleaning Logic ===
+
+    # Reactive to store cleaned data
+    cleaned_data <- reactiveVal(NULL)
+    cleaning_preview <- reactiveVal(NULL)
+
+    # Track if cleaning has been applied
+    cleaning_applied <- reactive({
+      !is.null(cleaned_data())
+    })
+
+    # Output for conditional panel
+    output$cleaning_applied <- reactive({
+      cleaning_applied()
+    })
+    outputOptions(output, "cleaning_applied", suspendWhenHidden = FALSE)
+
+    # Dynamic method checkboxes for cleaning filter
+    output$methods_to_clean_checkboxes <- renderUI({
+      methods <- available_methods()
+      req(length(methods) > 0)
+
+      checkboxGroupInput(
+        session$ns("methods_to_clean"),
+        "Methods:",
+        choices = setNames(methods, methods),
+        selected = c()  # Empty = apply to all
+      )
+    })
+
+    # Choose data source: cleaned or original
+    data_for_plot <- reactive({
+      if (cleaning_applied() && !isTRUE(input$show_original)) {
+        # Use cleaned data
+        cleaned_data()
+      } else {
+        # Use original data
+        vh_results()
+      }
+    })
 
     # Filtered data based on selections
     filtered_data <- reactive({
-      req(vh_results())
+      req(data_for_plot())
       req(input$methods)
       req(input$sensor_position)
 
-      data <- vh_results()
+      data <- data_for_plot()
 
       # Filter by method
       data <- data %>%
@@ -444,19 +621,15 @@ plotTimeseriesServer <- function(id, vh_results) {
         cat("\n=== METHOD COLOURS DEBUG ===\n")
         cat("Methods to color:", paste(methods, collapse = ", "), "\n")
 
-        # Define base colour palette
+        # Define base colour palette (matching pulse trace window colors)
         base_colours <- c(
-          "HRM" = "#1f77b4",      # Blue
-          "MHR" = "#ff7f0e",      # Orange
-          "HRMXa" = "#2ca02c",    # Green
-          "HRMXb" = "#d62728",    # Red
+          "HRM" = "#1f77b4",      # Blue (matches HRM window)
+          "MHR" = "#ff7f0e",      # Orange (matches MHR window)
+          "HRMXa" = "#4169E1",    # Royal blue (matches HRMXa window)
+          "HRMXb" = "#d62728",    # Red (matches HRMXb)
           "Tmax_Coh" = "#9467bd", # Purple
-          "Tmax_Klu" = "#8c564b", # Brown
-          "sDMA:HRM" = "#e377c2", # Pink
-          "sDMA:MHR" = "#7f7f7f", # Gray
-          "sDMA:Tmax_Coh" = "#bcbd22", # Yellow-green
-          "sDMA:Tmax_Klu" = "#17becf",  # Cyan
-          "sDMA:HRMXa" = "#17a589"  # Teal
+          "Tmax_Klu" = "#8c564b"  # Brown
+          # sDMA color definitions removed - see R/04j_sdma_methods.R
         )
 
         # Generate colors for all methods
@@ -484,6 +657,209 @@ plotTimeseriesServer <- function(id, vh_results) {
         print(e)
         return(c("HRM" = "#1f77b4"))  # Return at least one color
       })
+    })
+
+    # Preview cleaning changes
+    observeEvent(input$preview_cleaning, {
+      req(vh_results())
+
+      # Filter data if method/sensor selections made
+      data_to_clean <- vh_results()
+
+      if (length(input$methods_to_clean) > 0) {
+        data_to_clean <- data_to_clean %>%
+          filter(method %in% input$methods_to_clean)
+      }
+
+      if (length(input$sensors_to_clean) > 0) {
+        data_to_clean <- data_to_clean %>%
+          filter(sensor_position %in% input$sensors_to_clean)
+      }
+
+      # Preview changes
+      tryCatch({
+        preview <- sapfluxr::preview_interpolation_changes(
+          data_to_clean,
+          flags_to_interpolate = input$flags_to_interpolate,
+          max_gap_hours = input$max_gap_hours,
+          group_by_method = TRUE,
+          group_by_sensor = TRUE
+        )
+
+        cleaning_preview(preview)
+
+        # Show preview summary
+        shinyWidgets::sendSweetAlert(
+          session = session,
+          title = "Interpolation Preview",
+          text = HTML(sprintf("
+            <p><strong>Summary:</strong></p>
+            <ul>
+              <li>Total rows: %s</li>
+              <li>Will interpolate: %s values</li>
+              <li>Large gaps (not filled): %s values</li>
+            </ul>
+            <p style='margin-top: 10px;'>Review the Cleaning Summary below for details.</p>
+          ",
+          format(preview$n_total, big.mark = ","),
+          format(preview$n_interpolated, big.mark = ","),
+          format(preview$n_large_gaps, big.mark = ",")
+          )),
+          type = "info",
+          html = TRUE
+        )
+
+      }, error = function(e) {
+        shinyWidgets::sendSweetAlert(
+          session = session,
+          title = "Preview Error",
+          text = paste("Error previewing changes:", e$message),
+          type = "error"
+        )
+      })
+    })
+
+    # Apply cleaning
+    observeEvent(input$apply_cleaning, {
+      req(vh_results())
+
+      # Show loading message
+      shinyWidgets::sendSweetAlert(
+        session = session,
+        title = "Applying Cleaning...",
+        text = "Please wait while data is being cleaned and interpolated.",
+        type = "info",
+        showConfirmButton = FALSE
+      )
+
+      tryCatch({
+        # IMPORTANT: Filter data BEFORE interpolation to improve performance
+        # Only process the methods and sensors the user has selected
+        data_to_clean <- vh_results()
+
+        # Filter by selected methods (if any specified)
+        if (!is.null(input$methods_to_clean) && length(input$methods_to_clean) > 0) {
+          data_to_clean <- data_to_clean %>%
+            filter(method %in% input$methods_to_clean)
+        }
+
+        # Filter by selected sensors (if any specified)
+        if (!is.null(input$sensors_to_clean) && length(input$sensors_to_clean) > 0) {
+          data_to_clean <- data_to_clean %>%
+            filter(sensor_position %in% input$sensors_to_clean)
+        }
+
+        cat("\n=== CLEANING DATA ===\n")
+        cat("Full dataset:", nrow(vh_results()), "rows\n")
+        cat("Filtered for cleaning:", nrow(data_to_clean), "rows\n")
+
+        # Apply interpolation to filtered subset
+        cleaned <- sapfluxr::filter_and_interpolate_vh(
+          vh_flagged = data_to_clean,
+          flags_to_interpolate = input$flags_to_interpolate,
+          interpolation_method = input$interp_method,
+          max_gap_hours = input$max_gap_hours,
+          keep_original_values = TRUE,
+          keep_interpolated_flag = TRUE,
+          group_by_method = TRUE,
+          group_by_sensor = TRUE,
+          handle_multi_method = input$handle_multi_method,
+          verbose = FALSE
+        )
+
+        # Store cleaned data
+        cleaned_data(cleaned)
+
+        # Close loading message
+        shinyWidgets::closeSweetAlert(session = session)
+
+        # Show success message
+        n_interpolated <- sum(cleaned$is_interpolated, na.rm = TRUE)
+        shinyWidgets::sendSweetAlert(
+          session = session,
+          title = "Cleaning Applied!",
+          text = sprintf("Successfully interpolated %s values. Use the toggle below to compare before/after.",
+                        format(n_interpolated, big.mark = ",")),
+          type = "success",
+          timer = 3000
+        )
+
+      }, error = function(e) {
+        shinyWidgets::sendSweetAlert(
+          session = session,
+          title = "Cleaning Error",
+          text = paste("Error applying cleaning:", e$message),
+          type = "error"
+        )
+      })
+    })
+
+    # Cleaning summary output
+    output$cleaning_summary_ui <- renderUI({
+      preview <- cleaning_preview()
+      if (is.null(preview)) return(NULL)
+
+      div(
+        style = "margin-top: 15px; padding: 10px; background-color: #f9f9f9; border-radius: 3px;",
+        h5("Preview Summary", style = "margin-top: 0;"),
+
+        if (nrow(preview$summary_table) > 0) {
+          tagList(
+            tags$table(
+              style = "width: 100%; font-size: 0.9em;",
+              tags$thead(
+                tags$tr(
+                  tags$th("Flag Type"),
+                  tags$th("Count"),
+                  tags$th("Interpolate")
+                )
+              ),
+              tags$tbody(
+                lapply(seq_len(nrow(preview$summary_table)), function(i) {
+                  row <- preview$summary_table[i, ]
+                  tags$tr(
+                    tags$td(row$flag_type),
+                    tags$td(row$original_count),
+                    tags$td(row$will_interpolate)
+                  )
+                })
+              )
+            )
+          )
+        },
+
+        if (nrow(preview$gap_report) > 0) {
+          tagList(
+            tags$hr(),
+            p(strong(sprintf("Gaps Detected: %d", nrow(preview$gap_report)))),
+            tags$table(
+              style = "width: 100%; font-size: 0.85em;",
+              tags$thead(
+                tags$tr(
+                  tags$th("Group"),
+                  tags$th("Duration"),
+                  tags$th("Action")
+                )
+              ),
+              tags$tbody(
+                lapply(seq_len(min(5, nrow(preview$gap_report))), function(i) {
+                  gap <- preview$gap_report[i, ]
+                  tags$tr(
+                    tags$td(gap$group, style = "font-size: 0.8em;"),
+                    tags$td(sprintf("%.1f hr", gap$duration_hours)),
+                    tags$td(gap$action,
+                            style = paste0("color: ", if(gap$action == "INTERPOLATE") "#2ca02c" else "#ff7f0e"))
+                  )
+                })
+              )
+            ),
+            if (nrow(preview$gap_report) > 5) {
+              p(style = "font-size: 0.8em; color: #666; margin-top: 5px;",
+                sprintf("... and %d more gap(s)", nrow(preview$gap_report) - 5))
+            }
+          )
+        }
+      )
     })
 
     # Quality flag markers data
@@ -543,13 +919,15 @@ plotTimeseriesServer <- function(id, vh_results) {
           )
           cat("  Using color:", method_color, "\n")
 
+          # sDMA special handling removed - see R/04j_sdma_methods.R
+          marker_color <- method_color
+
         # Separate by sensor position if both selected
         if (length(input$sensor_position) > 1) {
           for (pos in unique(method_data$sensor_position)) {
             pos_data <- method_data %>% filter(sensor_position == !!pos)
 
             trace_name <- paste0(method, " (", pos, ")")
-            line_dash <- if (pos == "inner") "solid" else "dash"
 
             p <- p %>%
               add_trace(
@@ -561,10 +939,9 @@ plotTimeseriesServer <- function(id, vh_results) {
                 name = trace_name,
                 line = list(
                   color = method_color,
-                  dash = line_dash,
                   width = 2
                 ),
-                marker = list(size = 4),
+                marker = list(size = 4, color = marker_color),
                 hovertemplate = paste0(
                   "<b>", trace_name, "</b><br>",
                   "Time: %{x}<br>",
@@ -587,7 +964,7 @@ plotTimeseriesServer <- function(id, vh_results) {
                 color = method_color,
                 width = 2
               ),
-              marker = list(size = 4),
+              marker = list(size = 4, color = marker_color),
               hovertemplate = paste0(
                 "<b>", method, "</b><br>",
                 "Time: %{x}<br>",
@@ -619,8 +996,8 @@ plotTimeseriesServer <- function(id, vh_results) {
             flag_shapes <- c(
               "DATA_OUTLIER" = "x",
               "DATA_SUSPECT" = "diamond",
-              "DATA_MISSING" = "square",
-              "DATA_ILLOGICAL" = "triangle-up",
+              "DATA_MISSING" = "triangle-up",  # Red triangles on x-axis
+              "DATA_ILLOGICAL" = "square",
               "CALC_FAILED" = "circle-open",
               "CALC_INFINITE" = "star",
               "CALC_EXTREME" = "triangle-down"
@@ -654,28 +1031,142 @@ plotTimeseriesServer <- function(id, vh_results) {
                 flag
               )
 
+              # For DATA_MISSING, show as red triangles on x-axis (y=0)
+              if (flag == "DATA_MISSING") {
+                p <- p %>%
+                  add_trace(
+                    data = flag_data,
+                    x = ~datetime,
+                    y = 0,  # Place on x-axis
+                    type = "scatter",
+                    mode = "markers",
+                    name = flag_label,
+                    marker = list(
+                      symbol = "triangle-up",
+                      size = 10,
+                      color = "#d62728",  # Red
+                      line = list(width = 1, color = "white")
+                    ),
+                    hovertemplate = paste0(
+                      "<b>", flag_label, "</b><br>",
+                      "Time: %{x}<br>",
+                      "Data was missing at this timestamp<br>",
+                      "<extra></extra>"
+                    )
+                  )
+              } else {
+                # Other flags: show at actual Vh value
+                p <- p %>%
+                  add_trace(
+                    data = flag_data,
+                    x = ~datetime,
+                    y = ~Vh_cm_hr,
+                    type = "scatter",
+                    mode = "markers",
+                    name = flag_label,
+                    marker = list(
+                      symbol = flag_shape,
+                      size = 8,
+                      color = flag_color,
+                      line = list(width = 1, color = "white")
+                    ),
+                    hovertemplate = paste0(
+                      "<b>", flag_label, "</b><br>",
+                      "Time: %{x}<br>",
+                      "Vh: %{y:.2f} cm/hr<br>",
+                      "<extra></extra>"
+                  )
+                )
+              }
+            }
+          }
+        }
+      }
+
+      # Add interpolated points markers if enabled
+      if (input$show_interpolated) {
+        cat("\n=== INTERPOLATED POINTS DEBUG ===\n")
+        cat("Show interpolated checkbox:", input$show_interpolated, "\n")
+        cat("is_interpolated column exists:", "is_interpolated" %in% names(data), "\n")
+
+        # Check if cleaned data has is_interpolated column
+        if ("is_interpolated" %in% names(data)) {
+          n_interpolated <- sum(data$is_interpolated, na.rm = TRUE)
+          cat("Number of interpolated points in data:", n_interpolated, "\n")
+
+          if (n_interpolated > 0) {
+            # Get interpolated points
+            interpolated_points <- data %>%
+              filter(is_interpolated == TRUE)
+
+          if (nrow(interpolated_points) > 0) {
+            cat("Adding", nrow(interpolated_points), "hollow circle markers\n")
+            # Group by method to apply method-specific colors
+            for (method in unique(interpolated_points$method)) {
+              method_interp <- interpolated_points %>% filter(method == !!method)
+
+              # Get method color
+              method_color <- if (method %in% names(colours)) {
+                colours[[method]]
+              } else {
+                "#2ca02c"  # Default green
+              }
+
               p <- p %>%
                 add_trace(
-                  data = flag_data,
+                  data = method_interp,
                   x = ~datetime,
                   y = ~Vh_cm_hr,
                   type = "scatter",
                   mode = "markers",
-                  name = flag_label,
+                  name = paste0(method, " (Interpolated)"),
                   marker = list(
-                    symbol = flag_shape,
+                    symbol = "circle-open",  # Hollow circles
                     size = 8,
-                    color = flag_color,
-                    line = list(width = 1, color = "white")
+                    color = method_color,
+                    line = list(width = 2, color = method_color)
                   ),
                   hovertemplate = paste0(
-                    "<b>", flag_label, "</b><br>",
+                    "<b>Interpolated - ", method, "</b><br>",
                     "Time: %{x}<br>",
                     "Vh: %{y:.2f} cm/hr<br>",
                     "<extra></extra>"
                   )
                 )
             }
+          }
+        }
+        } else {
+          cat("No interpolated points found or column missing\n")
+        }
+
+        # Also show markers for originally missing data that was then interpolated
+        if ("quality_flag_original" %in% names(data) && "is_interpolated" %in% names(data)) {
+          originally_missing <- data %>%
+            filter(quality_flag_original == "DATA_MISSING" & is_interpolated == TRUE)
+
+          if (nrow(originally_missing) > 0) {
+            p <- p %>%
+              add_trace(
+                data = originally_missing,
+                x = ~datetime,
+                y = 0,  # On x-axis
+                type = "scatter",
+                mode = "markers",
+                name = "Originally Missing (now interpolated)",
+                marker = list(
+                  symbol = "triangle-up",
+                  size = 8,
+                  color = "#d62728",  # Red
+                  line = list(width = 1, color = "white")
+                ),
+                hovertemplate = paste0(
+                  "<b>Originally Missing</b><br>",
+                  "Time: %{x}<br>",
+                  "Was missing, now interpolated<br>",
+                  "<extra></extra>"
+                )
+              )
           }
         }
       }
@@ -786,7 +1277,7 @@ plotTimeseriesServer <- function(id, vh_results) {
       }
 
       # Layout with range slider
-      # Build xaxis config - include range if date/time inputs are set
+      # Build xaxis config
       xaxis_config <- list(
         title = "Date/Time",
         showgrid = TRUE,
@@ -806,13 +1297,12 @@ plotTimeseriesServer <- function(id, vh_results) {
         )
       )
 
-      # If user has set a custom time range, apply it to the plot
-      if (!is.null(input$start_datetime) && !is.null(input$end_datetime)) {
-        xaxis_config$range <- c(
-          format(input$start_datetime, "%Y-%m-%d %H:%M:%S"),
-          format(input$end_datetime, "%Y-%m-%d %H:%M:%S")
-        )
-        cat("Applying time range to plot:", xaxis_config$range[1], "to", xaxis_config$range[2], "\n")
+      # If we have a stored range (from user zoom/pan), preserve it
+      # This maintains zoom level when changing methods/sensors
+      stored_range <- current_xrange()
+      if (!is.null(stored_range) && length(stored_range) == 2) {
+        xaxis_config$range <- stored_range
+        cat("Preserving zoom range:", stored_range[1], "to", stored_range[2], "\n")
       }
 
       # Apply layout - conditionally add yaxis2 if Peclet is enabled
@@ -962,6 +1452,16 @@ plotTimeseriesServer <- function(id, vh_results) {
         # Print all values for debugging
         for (name in names(relayout_data)) {
           cat("  ", name, "=", relayout_data[[name]], "\n")
+        }
+
+        # Filter out non-relevant relayout events (autosize, etc.)
+        # Only respond to actual range changes from user interaction
+        is_relevant <- any(c("xaxis.range", "xaxis.range[0]", "xaxis.autorange",
+                             "yaxis.range", "yaxis.range[0]", "yaxis.autorange") %in% names(relayout_data))
+
+        if (!is_relevant) {
+          cat("Ignoring non-relevant relayout event\n")
+          return()
         }
 
         # Check if this is a range update

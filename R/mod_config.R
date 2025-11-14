@@ -32,6 +32,8 @@ configUI <- function(id) {
           title = "Probe Configuration",
           status = "primary",
           solidHeader = TRUE,
+          collapsible = TRUE,
+          collapsed = FALSE,
 
           # Mode selector
           radioButtons(
@@ -84,6 +86,8 @@ configUI <- function(id) {
           title = "Wood Properties",
           status = "primary",
           solidHeader = TRUE,
+          collapsible = TRUE,
+          collapsed = FALSE,
 
           # Mode selector
           radioButtons(

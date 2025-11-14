@@ -167,6 +167,15 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
         )
       }
 
+      # Show loading indicator while processing large dataset
+      waiter <- waiter::Waiter$new(
+        id = session$ns("pulse_trace_plot"),
+        html = waiter::spin_fading_circles(),
+        color = waiter::transparent(0.5)
+      )
+      waiter$show()
+      on.exit(waiter$hide(), add = TRUE)
+
       req(heat_pulse_data())
       data <- heat_pulse_data()
 
@@ -234,6 +243,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
       show_outer <- input$sensor_position == "outer"
 
       # Add traces based on sensor position
+      # Consistent colour scheme: Downstream = Red, Upstream = Blue
       if (show_outer) {
         # Downstream outer
         p <- p %>%
@@ -244,8 +254,8 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
             type = "scatter",
             mode = "lines+markers",
             name = "Downstream Outer",
-            line = list(color = "#d62728", width = 2),
-            marker = list(size = 4)
+            line = list(color = "#d62728", width = 2),  # Red
+            marker = list(size = 4, color = "#d62728")
           )
 
         # Upstream outer
@@ -257,8 +267,8 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
             type = "scatter",
             mode = "lines+markers",
             name = "Upstream Outer",
-            line = list(color = "#2ca02c", width = 2),
-            marker = list(size = 4)
+            line = list(color = "#1f77b4", width = 2),  # Blue
+            marker = list(size = 4, color = "#1f77b4")
           )
       } else {
         # Downstream inner
@@ -270,8 +280,8 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
             type = "scatter",
             mode = "lines+markers",
             name = "Downstream Inner",
-            line = list(color = "#ff7f0e", width = 2),
-            marker = list(size = 4)
+            line = list(color = "#d62728", width = 2),  # Red
+            marker = list(size = 4, color = "#d62728")
           )
 
         # Upstream inner
@@ -283,8 +293,8 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
             type = "scatter",
             mode = "lines+markers",
             name = "Upstream Inner",
-            line = list(color = "#1f77b4", width = 2),
-            marker = list(size = 4)
+            line = list(color = "#1f77b4", width = 2),  # Blue
+            marker = list(size = 4, color = "#1f77b4")
           )
       }
 
@@ -468,7 +478,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
         }
       }
 
-      if ("HRMXa" %in% input$show_windows) {
+      if ("HRMXa" %in% show_windows) {
         # HRMXa window - get actual window times from results
         # Get the sensor position being displayed
         position <- if (show_outer) "outer" else "inner"
@@ -500,15 +510,23 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
 
         # Get temperature values at window boundaries for both sensors
         if (show_outer) {
-          do_temp_start <- pulse_data$deltaT_do[which.min(abs(pulse_data$time_sec - hrm_start))]
-          uo_temp_start <- pulse_data$deltaT_uo[which.min(abs(pulse_data$time_sec - hrm_start))]
-          do_temp_end <- pulse_data$deltaT_do[which.min(abs(pulse_data$time_sec - hrm_end))]
-          uo_temp_end <- pulse_data$deltaT_uo[which.min(abs(pulse_data$time_sec - hrm_end))]
+          # Find temperatures at window start
+          start_idx <- which.min(abs(pulse_data$time_sec - hrm_start))
+          do_temp_start <- if (length(start_idx) > 0) pulse_data$deltaT_do[start_idx] else NA
+          uo_temp_start <- if (length(start_idx) > 0) pulse_data$deltaT_uo[start_idx] else NA
+          # Find temperatures at window end
+          end_idx <- which.min(abs(pulse_data$time_sec - hrm_end))
+          do_temp_end <- if (length(end_idx) > 0) pulse_data$deltaT_do[end_idx] else NA
+          uo_temp_end <- if (length(end_idx) > 0) pulse_data$deltaT_uo[end_idx] else NA
         } else {
-          di_temp_start <- pulse_data$deltaT_di[which.min(abs(pulse_data$time_sec - hrm_start))]
-          ui_temp_start <- pulse_data$deltaT_ui[which.min(abs(pulse_data$time_sec - hrm_start))]
-          di_temp_end <- pulse_data$deltaT_di[which.min(abs(pulse_data$time_sec - hrm_end))]
-          ui_temp_end <- pulse_data$deltaT_ui[which.min(abs(pulse_data$time_sec - hrm_end))]
+          # Find temperatures at window start
+          start_idx <- which.min(abs(pulse_data$time_sec - hrm_start))
+          di_temp_start <- if (length(start_idx) > 0) pulse_data$deltaT_di[start_idx] else NA
+          ui_temp_start <- if (length(start_idx) > 0) pulse_data$deltaT_ui[start_idx] else NA
+          # Find temperatures at window end
+          end_idx <- which.min(abs(pulse_data$time_sec - hrm_end))
+          di_temp_end <- if (length(end_idx) > 0) pulse_data$deltaT_di[end_idx] else NA
+          ui_temp_end <- if (length(end_idx) > 0) pulse_data$deltaT_ui[end_idx] else NA
         }
 
         # Add shaded window (royal blue)
@@ -525,67 +543,81 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
             hoverinfo = "name"
           )
 
-        # Add vertical lines and points at window boundaries
+        # Add vertical lines and points at window boundaries (only if valid temperature data exists)
         if (show_outer) {
-          p <- p %>%
-            add_segments(
-              x = hrm_start, xend = hrm_start,
-              y = 0, yend = max(do_temp_start, uo_temp_start, na.rm = TRUE),
-              line = list(color = "#0000CD", width = 1.5, dash = "dot"),
-              name = "HRMXa window start",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = c(hrm_start, hrm_start),
-              y = c(do_temp_start, uo_temp_start),
-              marker = list(size = 6, color = "#0000CD"),
-              name = "HRMXa start points",
-              showlegend = FALSE
-            ) %>%
-            add_segments(
-              x = hrm_end, xend = hrm_end,
-              y = 0, yend = max(do_temp_end, uo_temp_end, na.rm = TRUE),
-              line = list(color = "#0000CD", width = 1.5, dash = "dot"),
-              name = "HRMXa window end",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = c(hrm_end, hrm_end),
-              y = c(do_temp_end, uo_temp_end),
-              marker = list(size = 6, color = "#0000CD"),
-              name = "HRMXa end points",
-              showlegend = FALSE
-            )
+          # Check if we have valid temperature data
+          if (!is.na(do_temp_start) && !is.na(uo_temp_start) &&
+              !is.na(do_temp_end) && !is.na(uo_temp_end)) {
+            max_start <- max(do_temp_start, uo_temp_start, na.rm = TRUE)
+            max_end <- max(do_temp_end, uo_temp_end, na.rm = TRUE)
+
+            p <- p %>%
+              add_segments(
+                x = hrm_start, xend = hrm_start,
+                y = 0, yend = max_start,
+                line = list(color = "#0000CD", width = 1.5, dash = "dot"),
+                name = "HRMXa window start",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = c(hrm_start, hrm_start),
+                y = c(do_temp_start, uo_temp_start),
+                marker = list(size = 6, color = "#0000CD"),
+                name = "HRMXa start points",
+                showlegend = FALSE
+              ) %>%
+              add_segments(
+                x = hrm_end, xend = hrm_end,
+                y = 0, yend = max_end,
+                line = list(color = "#0000CD", width = 1.5, dash = "dot"),
+                name = "HRMXa window end",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = c(hrm_end, hrm_end),
+                y = c(do_temp_end, uo_temp_end),
+                marker = list(size = 6, color = "#0000CD"),
+                name = "HRMXa end points",
+                showlegend = FALSE
+              )
+          }
         } else {
-          p <- p %>%
-            add_segments(
-              x = hrm_start, xend = hrm_start,
-              y = 0, yend = max(di_temp_start, ui_temp_start, na.rm = TRUE),
-              line = list(color = "#0000CD", width = 1.5, dash = "dot"),
-              name = "HRMXa window start",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = c(hrm_start, hrm_start),
-              y = c(di_temp_start, ui_temp_start),
-              marker = list(size = 6, color = "#0000CD"),
-              name = "HRMXa start points",
-              showlegend = FALSE
-            ) %>%
-            add_segments(
-              x = hrm_end, xend = hrm_end,
-              y = 0, yend = max(di_temp_end, ui_temp_end, na.rm = TRUE),
-              line = list(color = "#0000CD", width = 1.5, dash = "dot"),
-              name = "HRMXa window end",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = c(hrm_end, hrm_end),
-              y = c(di_temp_end, ui_temp_end),
-              marker = list(size = 6, color = "#0000CD"),
-              name = "HRMXa end points",
-              showlegend = FALSE
-            )
+          # Check if we have valid temperature data
+          if (!is.na(di_temp_start) && !is.na(ui_temp_start) &&
+              !is.na(di_temp_end) && !is.na(ui_temp_end)) {
+            max_start <- max(di_temp_start, ui_temp_start, na.rm = TRUE)
+            max_end <- max(di_temp_end, ui_temp_end, na.rm = TRUE)
+
+            p <- p %>%
+              add_segments(
+                x = hrm_start, xend = hrm_start,
+                y = 0, yend = max_start,
+                line = list(color = "#0000CD", width = 1.5, dash = "dot"),
+                name = "HRMXa window start",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = c(hrm_start, hrm_start),
+                y = c(di_temp_start, ui_temp_start),
+                marker = list(size = 6, color = "#0000CD"),
+                name = "HRMXa start points",
+                showlegend = FALSE
+              ) %>%
+              add_segments(
+                x = hrm_end, xend = hrm_end,
+                y = 0, yend = max_end,
+                line = list(color = "#0000CD", width = 1.5, dash = "dot"),
+                name = "HRMXa window end",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = c(hrm_end, hrm_end),
+                y = c(di_temp_end, ui_temp_end),
+                marker = list(size = 6, color = "#0000CD"),
+                name = "HRMXa end points",
+                showlegend = FALSE
+              )
+          }
         }
       }
 
@@ -629,15 +661,29 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
 
         # Get temperature values at window boundaries
         if (show_outer) {
-          do_temp_start <- pulse_data$deltaT_do[which.min(abs(pulse_data$time_sec - downstream_start))]
-          do_temp_end <- pulse_data$deltaT_do[which.min(abs(pulse_data$time_sec - downstream_end))]
-          uo_temp_start <- pulse_data$deltaT_uo[which.min(abs(pulse_data$time_sec - upstream_start))]
-          uo_temp_end <- pulse_data$deltaT_uo[which.min(abs(pulse_data$time_sec - upstream_end))]
+          # Find temperatures at downstream window boundaries
+          ds_start_idx <- which.min(abs(pulse_data$time_sec - downstream_start))
+          do_temp_start <- if (length(ds_start_idx) > 0) pulse_data$deltaT_do[ds_start_idx] else NA
+          ds_end_idx <- which.min(abs(pulse_data$time_sec - downstream_end))
+          do_temp_end <- if (length(ds_end_idx) > 0) pulse_data$deltaT_do[ds_end_idx] else NA
+
+          # Find temperatures at upstream window boundaries
+          us_start_idx <- which.min(abs(pulse_data$time_sec - upstream_start))
+          uo_temp_start <- if (length(us_start_idx) > 0) pulse_data$deltaT_uo[us_start_idx] else NA
+          us_end_idx <- which.min(abs(pulse_data$time_sec - upstream_end))
+          uo_temp_end <- if (length(us_end_idx) > 0) pulse_data$deltaT_uo[us_end_idx] else NA
         } else {
-          di_temp_start <- pulse_data$deltaT_di[which.min(abs(pulse_data$time_sec - downstream_start))]
-          di_temp_end <- pulse_data$deltaT_di[which.min(abs(pulse_data$time_sec - downstream_end))]
-          ui_temp_start <- pulse_data$deltaT_ui[which.min(abs(pulse_data$time_sec - upstream_start))]
-          ui_temp_end <- pulse_data$deltaT_ui[which.min(abs(pulse_data$time_sec - upstream_end))]
+          # Find temperatures at downstream window boundaries
+          ds_start_idx <- which.min(abs(pulse_data$time_sec - downstream_start))
+          di_temp_start <- if (length(ds_start_idx) > 0) pulse_data$deltaT_di[ds_start_idx] else NA
+          ds_end_idx <- which.min(abs(pulse_data$time_sec - downstream_end))
+          di_temp_end <- if (length(ds_end_idx) > 0) pulse_data$deltaT_di[ds_end_idx] else NA
+
+          # Find temperatures at upstream window boundaries
+          us_start_idx <- which.min(abs(pulse_data$time_sec - upstream_start))
+          ui_temp_start <- if (length(us_start_idx) > 0) pulse_data$deltaT_ui[us_start_idx] else NA
+          us_end_idx <- which.min(abs(pulse_data$time_sec - upstream_end))
+          ui_temp_end <- if (length(us_end_idx) > 0) pulse_data$deltaT_ui[us_end_idx] else NA
         }
 
         # Add downstream window (light red/pink)
@@ -668,117 +714,125 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
             hoverinfo = "name"
           )
 
-        # Add vertical lines and points for downstream window (use DOWNSTREAM sensor only)
+        # Add vertical lines and points for downstream window (only if valid temperature data exists)
         if (show_outer) {
-          p <- p %>%
-            add_segments(
-              x = downstream_start, xend = downstream_start,
-              y = 0, yend = do_temp_start,
-              line = list(color = "#DC143C", width = 1.5, dash = "dot"),
-              name = "HRMXb downstream start",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = downstream_start, y = do_temp_start,
-              marker = list(size = 6, color = "#DC143C"),
-              name = "HRMXb downstream start point",
-              showlegend = FALSE
-            ) %>%
-            add_segments(
-              x = downstream_end, xend = downstream_end,
-              y = 0, yend = do_temp_end,
-              line = list(color = "#DC143C", width = 1.5, dash = "dot"),
-              name = "HRMXb downstream end",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = downstream_end, y = do_temp_end,
-              marker = list(size = 6, color = "#DC143C"),
-              name = "HRMXb downstream end point",
-              showlegend = FALSE
-            ) %>%
-            # Add vertical lines and points for upstream window (use UPSTREAM sensor only)
-            add_segments(
-              x = upstream_start, xend = upstream_start,
-              y = 0, yend = uo_temp_start,
-              line = list(color = "#228B22", width = 1.5, dash = "dot"),
-              name = "HRMXb upstream start",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = upstream_start, y = uo_temp_start,
-              marker = list(size = 6, color = "#228B22"),
-              name = "HRMXb upstream start point",
-              showlegend = FALSE
-            ) %>%
-            add_segments(
-              x = upstream_end, xend = upstream_end,
-              y = 0, yend = uo_temp_end,
-              line = list(color = "#228B22", width = 1.5, dash = "dot"),
-              name = "HRMXb upstream end",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = upstream_end, y = uo_temp_end,
-              marker = list(size = 6, color = "#228B22"),
-              name = "HRMXb upstream end point",
-              showlegend = FALSE
-            )
+          # Check if we have valid temperature data
+          if (!is.na(do_temp_start) && !is.na(do_temp_end) &&
+              !is.na(uo_temp_start) && !is.na(uo_temp_end)) {
+            p <- p %>%
+              add_segments(
+                x = downstream_start, xend = downstream_start,
+                y = 0, yend = do_temp_start,
+                line = list(color = "#DC143C", width = 1.5, dash = "dot"),
+                name = "HRMXb downstream start",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = downstream_start, y = do_temp_start,
+                marker = list(size = 6, color = "#DC143C"),
+                name = "HRMXb downstream start point",
+                showlegend = FALSE
+              ) %>%
+              add_segments(
+                x = downstream_end, xend = downstream_end,
+                y = 0, yend = do_temp_end,
+                line = list(color = "#DC143C", width = 1.5, dash = "dot"),
+                name = "HRMXb downstream end",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = downstream_end, y = do_temp_end,
+                marker = list(size = 6, color = "#DC143C"),
+                name = "HRMXb downstream end point",
+                showlegend = FALSE
+              ) %>%
+              # Add vertical lines and points for upstream window (use UPSTREAM sensor only)
+              add_segments(
+                x = upstream_start, xend = upstream_start,
+                y = 0, yend = uo_temp_start,
+                line = list(color = "#228B22", width = 1.5, dash = "dot"),
+                name = "HRMXb upstream start",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = upstream_start, y = uo_temp_start,
+                marker = list(size = 6, color = "#228B22"),
+                name = "HRMXb upstream start point",
+                showlegend = FALSE
+              ) %>%
+              add_segments(
+                x = upstream_end, xend = upstream_end,
+                y = 0, yend = uo_temp_end,
+                line = list(color = "#228B22", width = 1.5, dash = "dot"),
+                name = "HRMXb upstream end",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = upstream_end, y = uo_temp_end,
+                marker = list(size = 6, color = "#228B22"),
+                name = "HRMXb upstream end point",
+                showlegend = FALSE
+              )
+          }
         } else {
-          p <- p %>%
-            add_segments(
-              x = downstream_start, xend = downstream_start,
-              y = 0, yend = di_temp_start,
-              line = list(color = "#DC143C", width = 1.5, dash = "dot"),
-              name = "HRMXb downstream start",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = downstream_start, y = di_temp_start,
-              marker = list(size = 6, color = "#DC143C"),
-              name = "HRMXb downstream start point",
-              showlegend = FALSE
-            ) %>%
-            add_segments(
-              x = downstream_end, xend = downstream_end,
-              y = 0, yend = di_temp_end,
-              line = list(color = "#DC143C", width = 1.5, dash = "dot"),
-              name = "HRMXb downstream end",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = downstream_end, y = di_temp_end,
-              marker = list(size = 6, color = "#DC143C"),
-              name = "HRMXb downstream end point",
-              showlegend = FALSE
-            ) %>%
-            # Add vertical lines and points for upstream window (use UPSTREAM sensor only)
-            add_segments(
-              x = upstream_start, xend = upstream_start,
-              y = 0, yend = ui_temp_start,
-              line = list(color = "#228B22", width = 1.5, dash = "dot"),
-              name = "HRMXb upstream start",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = upstream_start, y = ui_temp_start,
-              marker = list(size = 6, color = "#228B22"),
-              name = "HRMXb upstream start point",
-              showlegend = FALSE
-            ) %>%
-            add_segments(
-              x = upstream_end, xend = upstream_end,
-              y = 0, yend = ui_temp_end,
-              line = list(color = "#228B22", width = 1.5, dash = "dot"),
-              name = "HRMXb upstream end",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = upstream_end, y = ui_temp_end,
-              marker = list(size = 6, color = "#228B22"),
-              name = "HRMXb upstream end point",
-              showlegend = FALSE
-            )
+          # Check if we have valid temperature data
+          if (!is.na(di_temp_start) && !is.na(di_temp_end) &&
+              !is.na(ui_temp_start) && !is.na(ui_temp_end)) {
+            p <- p %>%
+              add_segments(
+                x = downstream_start, xend = downstream_start,
+                y = 0, yend = di_temp_start,
+                line = list(color = "#DC143C", width = 1.5, dash = "dot"),
+                name = "HRMXb downstream start",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = downstream_start, y = di_temp_start,
+                marker = list(size = 6, color = "#DC143C"),
+                name = "HRMXb downstream start point",
+                showlegend = FALSE
+              ) %>%
+              add_segments(
+                x = downstream_end, xend = downstream_end,
+                y = 0, yend = di_temp_end,
+                line = list(color = "#DC143C", width = 1.5, dash = "dot"),
+                name = "HRMXb downstream end",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = downstream_end, y = di_temp_end,
+                marker = list(size = 6, color = "#DC143C"),
+                name = "HRMXb downstream end point",
+                showlegend = FALSE
+              ) %>%
+              # Add vertical lines and points for upstream window (use UPSTREAM sensor only)
+              add_segments(
+                x = upstream_start, xend = upstream_start,
+                y = 0, yend = ui_temp_start,
+                line = list(color = "#228B22", width = 1.5, dash = "dot"),
+                name = "HRMXb upstream start",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = upstream_start, y = ui_temp_start,
+                marker = list(size = 6, color = "#228B22"),
+                name = "HRMXb upstream start point",
+                showlegend = FALSE
+              ) %>%
+              add_segments(
+                x = upstream_end, xend = upstream_end,
+                y = 0, yend = ui_temp_end,
+                line = list(color = "#228B22", width = 1.5, dash = "dot"),
+                name = "HRMXb upstream end",
+                showlegend = FALSE
+              ) %>%
+              add_markers(
+                x = upstream_end, y = ui_temp_end,
+                marker = list(size = 6, color = "#228B22"),
+                name = "HRMXb upstream end point",
+                showlegend = FALSE
+              )
+          }
         }
       }
 
@@ -788,103 +842,119 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
         if (show_outer) {
           do_peak_idx <- which.max(pulse_data$deltaT_do)
           uo_peak_idx <- which.max(pulse_data$deltaT_uo)
-          do_peak_time <- pulse_data$time_sec[do_peak_idx]
-          uo_peak_time <- pulse_data$time_sec[uo_peak_idx]
-          do_peak_temp <- pulse_data$deltaT_do[do_peak_idx]
-          uo_peak_temp <- pulse_data$deltaT_uo[uo_peak_idx]
 
-          # Times are already relative to pulse injection
-          # Add shaded window
-          p <- p %>%
-            add_trace(
-              x = c(uo_peak_time, do_peak_time, do_peak_time, uo_peak_time, uo_peak_time),
-              y = c(min_deltaT, min_deltaT, max_deltaT, max_deltaT, min_deltaT),
-              type = "scatter",
-              mode = "none",
-              fill = "toself",
-              fillcolor = "rgba(255, 127, 14, 0.15)",
-              name = sprintf("MHR Peaks (%.0f-%.0fs after pulse)", uo_peak_time, do_peak_time),
-              showlegend = TRUE,
-              hoverinfo = "name"
-            ) %>%
-            # Add vertical line at downstream peak with point
-            add_segments(
-              x = do_peak_time, xend = do_peak_time,
-              y = 0, yend = do_peak_temp,
-              line = list(color = "#FF8C00", width = 2, dash = "dot"),
-              name = "DO peak",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = do_peak_time, y = do_peak_temp,
-              marker = list(size = 8, color = "#FF8C00"),
-              name = "DO peak point",
-              showlegend = FALSE
-            ) %>%
-            # Add vertical line at upstream peak with point
-            add_segments(
-              x = uo_peak_time, xend = uo_peak_time,
-              y = 0, yend = uo_peak_temp,
-              line = list(color = "#FF8C00", width = 2, dash = "dot"),
-              name = "UO peak",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = uo_peak_time, y = uo_peak_temp,
-              marker = list(size = 8, color = "#FF8C00"),
-              name = "UO peak point",
-              showlegend = FALSE
-            )
+          # Check if we have valid peak data
+          if (length(do_peak_idx) > 0 && length(uo_peak_idx) > 0) {
+            do_peak_time <- pulse_data$time_sec[do_peak_idx]
+            uo_peak_time <- pulse_data$time_sec[uo_peak_idx]
+            do_peak_temp <- pulse_data$deltaT_do[do_peak_idx]
+            uo_peak_temp <- pulse_data$deltaT_uo[uo_peak_idx]
+
+            # Check if peak temperatures are valid (not NA)
+            if (!is.na(do_peak_temp) && !is.na(uo_peak_temp) &&
+                !is.na(do_peak_time) && !is.na(uo_peak_time)) {
+              # Times are already relative to pulse injection
+              # Add shaded window
+              p <- p %>%
+                add_trace(
+                  x = c(uo_peak_time, do_peak_time, do_peak_time, uo_peak_time, uo_peak_time),
+                  y = c(min_deltaT, min_deltaT, max_deltaT, max_deltaT, min_deltaT),
+                  type = "scatter",
+                  mode = "none",
+                  fill = "toself",
+                  fillcolor = "rgba(255, 127, 14, 0.15)",
+                  name = sprintf("MHR Peaks (%.0f-%.0fs after pulse)", uo_peak_time, do_peak_time),
+                  showlegend = TRUE,
+                  hoverinfo = "name"
+                ) %>%
+                # Add vertical line at downstream peak with point
+                add_segments(
+                  x = do_peak_time, xend = do_peak_time,
+                  y = 0, yend = do_peak_temp,
+                  line = list(color = "#FF8C00", width = 2, dash = "dot"),
+                  name = "DO peak",
+                  showlegend = FALSE
+                ) %>%
+                add_markers(
+                  x = do_peak_time, y = do_peak_temp,
+                  marker = list(size = 8, color = "#FF8C00"),
+                  name = "DO peak point",
+                  showlegend = FALSE
+                ) %>%
+                # Add vertical line at upstream peak with point
+                add_segments(
+                  x = uo_peak_time, xend = uo_peak_time,
+                  y = 0, yend = uo_peak_temp,
+                  line = list(color = "#FF8C00", width = 2, dash = "dot"),
+                  name = "UO peak",
+                  showlegend = FALSE
+                ) %>%
+                add_markers(
+                  x = uo_peak_time, y = uo_peak_temp,
+                  marker = list(size = 8, color = "#FF8C00"),
+                  name = "UO peak point",
+                  showlegend = FALSE
+                )
+            }
+          }
         } else {
           di_peak_idx <- which.max(pulse_data$deltaT_di)
           ui_peak_idx <- which.max(pulse_data$deltaT_ui)
-          di_peak_time <- pulse_data$time_sec[di_peak_idx]
-          ui_peak_time <- pulse_data$time_sec[ui_peak_idx]
-          di_peak_temp <- pulse_data$deltaT_di[di_peak_idx]
-          ui_peak_temp <- pulse_data$deltaT_ui[ui_peak_idx]
 
-          # Times are already relative to pulse injection
-          # Add shaded window
-          p <- p %>%
-            add_trace(
-              x = c(ui_peak_time, di_peak_time, di_peak_time, ui_peak_time, ui_peak_time),
-              y = c(min_deltaT, min_deltaT, max_deltaT, max_deltaT, min_deltaT),
-              type = "scatter",
-              mode = "none",
-              fill = "toself",
-              fillcolor = "rgba(255, 127, 14, 0.15)",
-              name = sprintf("MHR Peaks (%.0f-%.0fs after pulse)", ui_peak_time, di_peak_time),
-              showlegend = TRUE,
-              hoverinfo = "name"
-            ) %>%
-            # Add vertical line at downstream peak with point
-            add_segments(
-              x = di_peak_time, xend = di_peak_time,
-              y = 0, yend = di_peak_temp,
-              line = list(color = "#FF8C00", width = 2, dash = "dot"),
-              name = "DI peak",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = di_peak_time, y = di_peak_temp,
-              marker = list(size = 8, color = "#FF8C00"),
-              name = "DI peak point",
-              showlegend = FALSE
-            ) %>%
-            # Add vertical line at upstream peak with point
-            add_segments(
-              x = ui_peak_time, xend = ui_peak_time,
-              y = 0, yend = ui_peak_temp,
-              line = list(color = "#FF8C00", width = 2, dash = "dot"),
-              name = "UI peak",
-              showlegend = FALSE
-            ) %>%
-            add_markers(
-              x = ui_peak_time, y = ui_peak_temp,
-              marker = list(size = 8, color = "#FF8C00"),
-              name = "UI peak point",
-              showlegend = FALSE
-            )
+          # Check if we have valid peak data
+          if (length(di_peak_idx) > 0 && length(ui_peak_idx) > 0) {
+            di_peak_time <- pulse_data$time_sec[di_peak_idx]
+            ui_peak_time <- pulse_data$time_sec[ui_peak_idx]
+            di_peak_temp <- pulse_data$deltaT_di[di_peak_idx]
+            ui_peak_temp <- pulse_data$deltaT_ui[ui_peak_idx]
+
+            # Check if peak temperatures are valid (not NA)
+            if (!is.na(di_peak_temp) && !is.na(ui_peak_temp) &&
+                !is.na(di_peak_time) && !is.na(ui_peak_time)) {
+              # Times are already relative to pulse injection
+              # Add shaded window
+              p <- p %>%
+                add_trace(
+                  x = c(ui_peak_time, di_peak_time, di_peak_time, ui_peak_time, ui_peak_time),
+                  y = c(min_deltaT, min_deltaT, max_deltaT, max_deltaT, min_deltaT),
+                  type = "scatter",
+                  mode = "none",
+                  fill = "toself",
+                  fillcolor = "rgba(255, 127, 14, 0.15)",
+                  name = sprintf("MHR Peaks (%.0f-%.0fs after pulse)", ui_peak_time, di_peak_time),
+                  showlegend = TRUE,
+                  hoverinfo = "name"
+                ) %>%
+                # Add vertical line at downstream peak with point
+                add_segments(
+                  x = di_peak_time, xend = di_peak_time,
+                  y = 0, yend = di_peak_temp,
+                  line = list(color = "#FF8C00", width = 2, dash = "dot"),
+                  name = "DI peak",
+                  showlegend = FALSE
+                ) %>%
+                add_markers(
+                  x = di_peak_time, y = di_peak_temp,
+                  marker = list(size = 8, color = "#FF8C00"),
+                  name = "DI peak point",
+                  showlegend = FALSE
+                ) %>%
+                # Add vertical line at upstream peak with point
+                add_segments(
+                  x = ui_peak_time, xend = ui_peak_time,
+                  y = 0, yend = ui_peak_temp,
+                  line = list(color = "#FF8C00", width = 2, dash = "dot"),
+                  name = "UI peak",
+                  showlegend = FALSE
+                ) %>%
+                add_markers(
+                  x = ui_peak_time, y = ui_peak_temp,
+                  marker = list(size = 8, color = "#FF8C00"),
+                  name = "UI peak point",
+                  showlegend = FALSE
+                )
+            }
+          }
         }
       }
 
@@ -893,44 +963,58 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
         # Show vertical lines at downstream peak times with markers
         if (show_outer) {
           do_peak_idx <- which.max(pulse_data$deltaT_do)
-          do_peak_time <- pulse_data$time_sec[do_peak_idx]
-          do_peak_temp <- pulse_data$deltaT_do[do_peak_idx]
 
-          # Time is already relative to pulse injection
-          p <- p %>%
-            add_segments(
-              x = do_peak_time, xend = do_peak_time,
-              y = 0, yend = do_peak_temp,
-              line = list(color = "#d62728", width = 2, dash = "dot"),
-              name = sprintf("Tmax DO (%.0fs after pulse)", do_peak_time),
-              showlegend = TRUE
-            ) %>%
-            add_markers(
-              x = do_peak_time, y = do_peak_temp,
-              marker = list(size = 8, color = "#d62728"),
-              name = "Tmax DO point",
-              showlegend = FALSE
-            )
+          # Check if we have valid peak data
+          if (length(do_peak_idx) > 0) {
+            do_peak_time <- pulse_data$time_sec[do_peak_idx]
+            do_peak_temp <- pulse_data$deltaT_do[do_peak_idx]
+
+            # Check if peak is valid (not NA)
+            if (!is.na(do_peak_temp) && !is.na(do_peak_time)) {
+              # Time is already relative to pulse injection
+              p <- p %>%
+                add_segments(
+                  x = do_peak_time, xend = do_peak_time,
+                  y = 0, yend = do_peak_temp,
+                  line = list(color = "#d62728", width = 2, dash = "dot"),
+                  name = sprintf("Tmax DO (%.0fs after pulse)", do_peak_time),
+                  showlegend = TRUE
+                ) %>%
+                add_markers(
+                  x = do_peak_time, y = do_peak_temp,
+                  marker = list(size = 8, color = "#d62728"),
+                  name = "Tmax DO point",
+                  showlegend = FALSE
+                )
+            }
+          }
         } else {
           di_peak_idx <- which.max(pulse_data$deltaT_di)
-          di_peak_time <- pulse_data$time_sec[di_peak_idx]
-          di_peak_temp <- pulse_data$deltaT_di[di_peak_idx]
 
-          # Time is already relative to pulse injection
-          p <- p %>%
-            add_segments(
-              x = di_peak_time, xend = di_peak_time,
-              y = 0, yend = di_peak_temp,
-              line = list(color = "#ff7f0e", width = 2, dash = "dot"),
-              name = sprintf("Tmax DI (%.0fs after pulse)", di_peak_time),
-              showlegend = TRUE
-            ) %>%
-            add_markers(
-              x = di_peak_time, y = di_peak_temp,
-              marker = list(size = 8, color = "#ff7f0e"),
-              name = "Tmax DI point",
-              showlegend = FALSE
-            )
+          # Check if we have valid peak data
+          if (length(di_peak_idx) > 0) {
+            di_peak_time <- pulse_data$time_sec[di_peak_idx]
+            di_peak_temp <- pulse_data$deltaT_di[di_peak_idx]
+
+            # Check if peak is valid (not NA)
+            if (!is.na(di_peak_temp) && !is.na(di_peak_time)) {
+              # Time is already relative to pulse injection
+              p <- p %>%
+                add_segments(
+                  x = di_peak_time, xend = di_peak_time,
+                  y = 0, yend = di_peak_temp,
+                  line = list(color = "#ff7f0e", width = 2, dash = "dot"),
+                  name = sprintf("Tmax DI (%.0fs after pulse)", di_peak_time),
+                  showlegend = TRUE
+                ) %>%
+                add_markers(
+                  x = di_peak_time, y = di_peak_temp,
+                  marker = list(size = 8, color = "#ff7f0e"),
+                  name = "Tmax DI point",
+                  showlegend = FALSE
+                )
+            }
+          }
         }
       }
 

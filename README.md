@@ -15,9 +15,9 @@ This Shiny application provides an easy-to-use interface for students and resear
 - Correct for clock drift
 - Configure probe and wood properties (YAML or manual entry)
 - Calculate heat pulse velocity using multiple methods
+- Apply spacing correction and thermal diffusivity calibration
 - Visualise results with interactive time series plots
 - Examine individual pulse traces
-- Export publication-quality plots (PNG, PDF, TIF, HTML)
 
 Built on the [sapfluxr](../sapfluxr) R package.
 
@@ -86,6 +86,17 @@ launch_app()
 - **MHR** (Maximum Heat Ratio) - Moderate to high flows
 - *(Future)* HRMXa, HRMXb, Tmax variants, sDMA, CHPM, DRM
 
+### Spacing Correction & Calibration
+- **Phase 1**: Spacing correction using zero-flow periods (Burgess et al. 2001)
+- **Phase 2**: Thermal diffusivity (k) estimation from Tmax
+- **Phase 3**: Reprocessing with estimated k (if needed)
+- Visual diagnostics:
+  - Zero-flow period identification
+  - Before/after correction comparison
+  - Burgess coefficient lookup plots
+  - Temperature trace analysis
+  - Symmetry checks
+
 ### Interactive Visualisation
 - **Time Series Plot**: Interactive plotly chart with:
   - Multiple method comparison
@@ -99,19 +110,14 @@ launch_app()
   - All four thermistor readings (do, di, uo, ui)
   - Pulse diagnostics and metadata
 
-### Export Options
-- **Plots**: PNG, PDF, TIF (publication quality), HTML (interactive)
-- **Data**: Results as CSV, configurations as YAML
-
 ## Workflow
 
 1. **Upload Data** → Load heat pulse data file
-2. **Correct Clock** (optional) → Fix timestamp drift
-3. **Configure** → Select or enter probe/wood properties
-4. **Select Methods** → Choose calculation methods
-5. **Calculate** → Run heat pulse velocity analysis
-6. **Visualise** → Explore interactive time series and pulse traces
-7. **Export** → Download plots and results
+2. **Configure** → Select or enter probe/wood properties (with optional clock drift correction)
+3. **Calculate** → Run heat pulse velocity analysis
+4. **Visualise (Raw HPV)** → View uncorrected data, identify outliers and quality issues
+5. **Corrections** (optional) → Apply spacing correction and estimate thermal diffusivity
+6. **Visualise (Corrected)** → View final corrected data after applying corrections
 
 ## Project Structure
 
@@ -123,11 +129,10 @@ shiny-sapfluxr/
 │   ├── mod_data_upload.R    # Data import module
 │   ├── mod_clock_drift.R    # Clock drift correction
 │   ├── mod_config.R         # Configuration interface
-│   ├── mod_method_select.R  # Method selection
-│   ├── mod_calculate.R      # Calculation engine
+│   ├── mod_methods.R        # Method selection and calculation
+│   ├── mod_corrections.R    # Spacing correction & k estimation
 │   ├── mod_plot_timeseries.R # Time series visualisation
-│   ├── mod_plot_pulse.R     # Pulse trace viewer
-│   ├── mod_export.R         # Export functionality
+│   ├── mod_pulse_trace.R    # Pulse trace viewer
 │   └── utils.R              # Helper functions
 ├── www/                      # Web assets
 │   └── custom.css           # Custom styling
@@ -144,11 +149,11 @@ This app is under active development.
 - ✅ Data upload module
 - ✅ Clock drift correction
 - ✅ Configuration interface
-- ✅ Method selection
-- ✅ Calculation engine
-- 🚧 Time series plotting
-- 🚧 Pulse trace viewer
-- ⬜ Export functionality
+- ✅ Method selection & calculation
+- ✅ Spacing correction & thermal diffusivity calibration
+- ✅ Time series plotting
+- ✅ Pulse trace viewer
+- ⬜ Export functionality (planned for future)
 
 ## License
 

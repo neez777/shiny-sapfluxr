@@ -76,12 +76,21 @@ dataUploadServer <- function(id) {
         shinyWidgets::closeSweetAlert(session = session)
 
         # Debug: check what we got
-        cat("Data read successfully\n")
+        cat("\n=== DEBUG: Data Import Results ===\n")
         cat("Original filename:", input$file$name, "\n")
         cat("Pulse count (n_pulses):", data$metadata$n_pulses, "\n")
         cat("Format:", data$metadata$format, "\n")
         cat("Measurements rows:", nrow(data$measurements), "\n")
-        cat("========================\n\n")
+        cat("Has gap_detection:", !is.null(data$gap_detection), "\n")
+        if (!is.null(data$gap_detection)) {
+          cat("Gap detection summary:\n")
+          cat("  n_actual:", data$gap_detection$summary$n_actual, "\n")
+          cat("  n_missing:", data$gap_detection$summary$n_missing, "\n")
+          cat("  n_filled:", data$gap_detection$summary$n_filled, "\n")
+          cat("  n_expected:", data$gap_detection$summary$n_expected, "\n")
+          cat("  completeness_pct:", data$gap_detection$summary$completeness_pct, "\n")
+        }
+        cat("==================================\n\n")
 
         # Store data
         heat_pulse_data(data)
@@ -218,19 +227,45 @@ dataUploadServer <- function(id) {
            paste("Validation:", status_info$label),
            style = paste0("color: ", status_info$colour, ";")),
 
-        # Show summary if validation passed
-        if (status == "OK" && !is.null(validation$summary)) {
+        # Show summary if validation passed or has warnings (not errors)
+        if ((status == "OK" || status == "WARNING") && !is.null(validation$summary)) {
+          # DEBUG: Print what we received
+          cat("\n=== DEBUG: Validation Summary ===\n")
+          cat("Has pulse_completeness:", !is.null(validation$summary$pulse_completeness), "\n")
+          cat("pulse_completeness value:", validation$summary$pulse_completeness, "\n")
+          cat("n_actual_pulses:", validation$summary$n_actual_pulses, "\n")
+          cat("n_expected_pulses:", validation$summary$n_expected_pulses, "\n")
+          cat("overall_completeness:", validation$summary$overall_completeness, "\n")
+          cat("Names in summary:", paste(names(validation$summary), collapse = ", "), "\n")
+          cat("================================\n\n")
+
           div(
             style = "margin-top: 10px; padding: 10px; background-color: #E8F5E9; border-radius: 3px;",
             p(strong("Data Quality Summary:")),
             tags$ul(
-              tags$li(paste("Overall Completeness:",
-                           round(validation$summary$overall_completeness * 100, 1), "%")),
+              # Show pulse completeness if available (accounts for missing pulses)
+              if (!is.null(validation$summary$pulse_completeness)) {
+                tags$li(paste("Pulse Completeness:",
+                             round(validation$summary$pulse_completeness * 100, 2), "%",
+                             sprintf("(%d of %d expected pulses)",
+                                    validation$summary$n_actual_pulses,
+                                    validation$summary$n_expected_pulses)))
+              } else {
+                tags$li(paste("Overall Completeness:",
+                             round(validation$summary$overall_completeness * 100, 2), "%"))
+              },
+              if (!is.null(validation$summary$n_missing_pulses) && validation$summary$n_missing_pulses > 0) {
+                tags$li(
+                  style = "color: #FF6F00;",
+                  paste("Missing Pulses:", validation$summary$n_missing_pulses,
+                       "gap(s) detected in pulse sequence")
+                )
+              },
               tags$li(paste("Sensor Completeness:")),
               tags$ul(
                 lapply(names(validation$summary$data_completeness), function(sensor) {
                   tags$li(paste(toupper(sensor), ":",
-                               round(validation$summary$data_completeness[sensor] * 100, 1), "%"))
+                               round(validation$summary$data_completeness[sensor] * 100, 2), "%"))
                 })
               ),
               tags$li(paste("Total Records:", format(validation$summary$n_measurements, big.mark = ",")))
