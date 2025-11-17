@@ -30,11 +30,12 @@ plotTimeseriesUI <- function(id) {
           hr(),
 
           h5("Sensor Position"),
+          helpText("Tip: Select only one sensor for faster plot rendering with large datasets"),
           checkboxGroupInput(
             ns("sensor_position"),
             NULL,
             choices = c("Inner" = "inner", "Outer" = "outer"),
-            selected = c("inner", "outer")
+            selected = "outer"  # Default to outer sensor only for performance
           ),
 
           hr(),
@@ -749,26 +750,41 @@ plotTimeseriesServer <- function(id, vh_results) {
             filter(sensor_position %in% input$sensors_to_clean)
         }
 
-        cat("\n=== CLEANING DATA ===\n")
+        cat("\n")
+        cat("=======================================================================\n")
+        cat("CLEANING BUTTON DIAGNOSTIC\n")
+        cat("=======================================================================\n")
         cat("Full dataset:", nrow(vh_results()), "rows\n")
-        cat("Filtered for cleaning:", nrow(data_to_clean), "rows\n")
+        cat("Filtered for cleaning:", nrow(data_to_clean), "rows\n\n")
 
         # Apply interpolation to filtered subset
-        cleaned <- sapfluxr::filter_and_interpolate_vh(
-          vh_flagged = data_to_clean,
-          flags_to_interpolate = input$flags_to_interpolate,
-          interpolation_method = input$interp_method,
-          max_gap_hours = input$max_gap_hours,
-          keep_original_values = TRUE,
-          keep_interpolated_flag = TRUE,
-          group_by_method = TRUE,
-          group_by_sensor = TRUE,
-          handle_multi_method = input$handle_multi_method,
-          verbose = FALSE
-        )
+        cat("Applying interpolation (C++ optimized)...\n")
+        timing_clean <- system.time({
+          cleaned <- sapfluxr::filter_and_interpolate_vh(
+            vh_flagged = data_to_clean,
+            flags_to_interpolate = input$flags_to_interpolate,
+            interpolation_method = input$interp_method,
+            max_gap_hours = input$max_gap_hours,
+            keep_original_values = TRUE,
+            keep_interpolated_flag = TRUE,
+            group_by_method = TRUE,
+            group_by_sensor = TRUE,
+            handle_multi_method = input$handle_multi_method,
+            verbose = FALSE
+          )
+        })
+        cat(sprintf("\nInterpolation time: %.3f seconds\n", timing_clean["elapsed"]))
 
         # Store cleaned data
-        cleaned_data(cleaned)
+        cat("Updating reactive data...\n")
+        timing_reactive <- system.time({
+          cleaned_data(cleaned)
+        })
+        cat(sprintf("Reactive update time: %.3f seconds\n", timing_reactive["elapsed"]))
+
+        total_time <- timing_clean["elapsed"] + timing_reactive["elapsed"]
+        cat(sprintf("\nTOTAL TIME: %.3f seconds\n", total_time))
+        cat("=======================================================================\n\n")
 
         # Close loading message
         shinyWidgets::closeSweetAlert(session = session)
@@ -871,7 +887,7 @@ plotTimeseriesServer <- function(id, vh_results) {
       # Get non-OK quality flags
       markers <- data %>%
         filter(quality_flag != "OK") %>%
-        select(datetime, quality_flag, method, sensor_position, Vh_cm_hr) %>%
+        select(datetime, pulse_id, quality_flag, method, sensor_position, Vh_cm_hr) %>%
         distinct()
 
       markers
@@ -934,6 +950,7 @@ plotTimeseriesServer <- function(id, vh_results) {
                 data = pos_data,
                 x = ~datetime,
                 y = ~Vh_cm_hr,
+                customdata = ~pulse_id,
                 type = "scatter",
                 mode = if (input$show_points) "lines+markers" else "lines",
                 name = trace_name,
@@ -958,6 +975,7 @@ plotTimeseriesServer <- function(id, vh_results) {
               x = ~datetime,
               y = ~Vh_cm_hr,
               type = "scatter",
+              customdata = ~pulse_id,
               mode = if (input$show_points) "lines+markers" else "lines",
               name = method,
               line = list(
@@ -1039,6 +1057,7 @@ plotTimeseriesServer <- function(id, vh_results) {
                     x = ~datetime,
                     y = 0,  # Place on x-axis
                     type = "scatter",
+                    customdata = ~pulse_id,
                     mode = "markers",
                     name = flag_label,
                     marker = list(
@@ -1062,6 +1081,7 @@ plotTimeseriesServer <- function(id, vh_results) {
                     x = ~datetime,
                     y = ~Vh_cm_hr,
                     type = "scatter",
+                    customdata = ~pulse_id,
                     mode = "markers",
                     name = flag_label,
                     marker = list(
@@ -1075,7 +1095,7 @@ plotTimeseriesServer <- function(id, vh_results) {
                       "Time: %{x}<br>",
                       "Vh: %{y:.2f} cm/hr<br>",
                       "<extra></extra>"
-                  )
+                    )
                 )
               }
             }
@@ -1117,6 +1137,7 @@ plotTimeseriesServer <- function(id, vh_results) {
                   data = method_interp,
                   x = ~datetime,
                   y = ~Vh_cm_hr,
+                  customdata = ~pulse_id,
                   type = "scatter",
                   mode = "markers",
                   name = paste0(method, " (Interpolated)"),
@@ -1150,6 +1171,7 @@ plotTimeseriesServer <- function(id, vh_results) {
               add_trace(
                 data = originally_missing,
                 x = ~datetime,
+                customdata = ~pulse_id,
                 y = 0,  # On x-axis
                 type = "scatter",
                 mode = "markers",
@@ -1211,6 +1233,7 @@ plotTimeseriesServer <- function(id, vh_results) {
                 p <- p %>%
                   add_trace(
                     data = pos_peclet,
+                    customdata = ~pulse_id,
                     x = ~datetime,
                     y = ~peclet_number,
                     type = "scatter",
@@ -1234,6 +1257,7 @@ plotTimeseriesServer <- function(id, vh_results) {
               # Single sensor position - single trace
               p <- p %>%
                 add_trace(
+                  customdata = ~pulse_id,
                   data = peclet_data,
                   x = ~datetime,
                   y = ~peclet_number,
@@ -1644,22 +1668,12 @@ plotTimeseriesServer <- function(id, vh_results) {
 
         cat("Adjusted curve:", curve_num, "point:", point_num, "\n")
 
-        # Try to extract pulse_id from the clicked point
-        # Use the x value (datetime) to find the pulse
-        clicked_datetime <- click_data$x
+        # Extract pulse_id directly from customdata (no timezone issues!)
+        # customdata contains pulse_id from the plotted data
+        if (!is.null(click_data$customdata)) {
+          pulse_id <- click_data$customdata
+          cat("✓ Extracted pulse_id from customdata:", pulse_id, "\n")
 
-        cat("Clicked datetime:", clicked_datetime, "\n")
-
-        # Search in FULL vh_results, not filtered_data
-        # This allows clicks on quality markers and Peclet traces to work
-        full_data <- vh_results()
-        matching_row <- full_data %>%
-          filter(abs(as.numeric(difftime(datetime, clicked_datetime, units = "secs"))) < 1) %>%
-          slice(1)
-
-        if (nrow(matching_row) > 0) {
-          pulse_id <- matching_row$pulse_id[1]
-          cat("Found pulse_id:", pulse_id, "\n")
           selected_pulse_id(pulse_id)
 
           # Show notification
@@ -1671,13 +1685,14 @@ plotTimeseriesServer <- function(id, vh_results) {
             timer = 2000
           )
         } else {
-          cat("No matching pulse found in vh_results for datetime:", clicked_datetime, "\n")
+          cat("WARNING: No customdata in click event - pulse_id not available\n")
+          cat("  Make sure add_trace() includes customdata = ~pulse_id\n")
         }
       }
     })
 
+    
     # Return the selected pulse ID reactive
     return(selected_pulse_id)
-
   })
 }

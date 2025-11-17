@@ -301,9 +301,47 @@ server <- function(input, output, session) {
     wood_properties = configs$wood_properties
   )
 
-  # Store results
+  # Store results and pre-compute splits for visualization
   observe({
+    req(vh_results())
+
+    cat("\n")
+    cat("=======================================================================\n")
+    cat("PRE-COMPUTING DATA SPLITS FOR VISUALIZATION\n")
+    cat("=======================================================================\n")
+
     rv$vh_results <- vh_results()
+    vh_data <- vh_results()
+
+    # Pre-split data by method × sensor_position for faster Tab 4 rendering
+    # This happens in the background while user reviews results on Tab 3
+    timing <- system.time({
+      # Create splits
+      splits <- vh_data %>%
+        group_by(method, sensor_position) %>%
+        group_split(.keep = TRUE)
+
+      # Create lookup table for quick access
+      lookup <- vh_data %>%
+        group_by(method, sensor_position) %>%
+        group_keys()
+
+      # Store both
+      rv$vh_splits <- splits
+      rv$vh_lookup <- lookup
+    })
+
+    cat(sprintf("Created %d data splits in %.3f seconds\n", length(splits), timing["elapsed"]))
+    cat("\nSplits breakdown:\n")
+    for (i in seq_along(splits)) {
+      method <- lookup$method[i]
+      sensor <- lookup$sensor_position[i]
+      n_rows <- nrow(splits[[i]])
+      cat(sprintf("  %s × %s: %s rows\n",
+                  method, sensor, format(n_rows, big.mark = ",")))
+    }
+    cat("=======================================================================\n\n")
+    cat("Data ready for visualization! Navigate to Tab 4 when ready.\n\n")
   })
 
   # Module: Visualise Raw (Tab 4) - Always shows uncorrected data

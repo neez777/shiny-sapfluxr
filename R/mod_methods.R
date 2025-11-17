@@ -73,38 +73,6 @@ methodsUI <- function(id) {
 
           p("Configure quality control checks applied after calculation:"),
 
-          # Missing Pulses & Gaps
-          div(
-            style = "background-color: #f9f9f9; padding: 10px; margin-bottom: 10px; border-radius: 3px;",
-            h5("Missing Pulses & Gaps", style = "margin-top: 0;"),
-            fluidRow(
-              column(
-                width = 5,
-                checkboxInput(
-                  ns("qc_detect_missing_pulses"),
-                  HTML('Detect missing pulses <span style="color: #999; cursor: help;" title="Identifies gaps in the pulse sequence where expected pulses are missing from the dataset. Missing pulses can indicate logger errors, power outages, or data transmission issues."><i class="fa fa-circle-question"></i></span>'),
-                  value = TRUE
-                ),
-                checkboxInput(
-                  ns("qc_add_rows_for_missing"),
-                  HTML('Add rows for missing data <span style="color: #999; cursor: help;" title="Inserts placeholder rows with NA values for detected missing pulses to maintain time sequence continuity. This ensures consistent time intervals in plots and analyses."><i class="fa fa-circle-question"></i></span>'),
-                  value = TRUE
-                )
-              ),
-              column(
-                width = 5,
-                numericInput(
-                  ns("qc_max_gap_to_fill_hours"),
-                  HTML('Max gap to fill (hours): <span style="color: #999; cursor: help;" title="Only fills gaps shorter than this duration. Longer gaps are left empty to avoid interpolating across major data outages like power failures or maintenance periods."><i class="fa fa-circle-question"></i></span>'),
-                  value = 1,
-                  min = 1,
-                  max = 168,
-                  step = 1
-                )
-              )
-            )
-          ),
-
           # Illogical Values
           div(
             style = "background-color: #f9f9f9; padding: 10px; margin-bottom: 10px; border-radius: 3px;",
@@ -145,23 +113,26 @@ methodsUI <- function(id) {
               column(
                 width = 5,
                 checkboxInput(
-                  ns("qc_detect_outliers"),
-                  HTML('Detect outliers (rolling mean) <span style="color: #999; cursor: help;" title="Uses a rolling window to calculate local mean and standard deviation, then flags values that deviate too far from the local trend. Effective for catching isolated spikes or anomalies that don\'t fit the surrounding pattern."><i class="fa fa-circle-question"></i></span>'),
-                  value = TRUE
-                ),
-                checkboxInput(
                   ns("qc_detect_rate_of_change"),
                   HTML('Detect rate of change outliers <span style="color: #999; cursor: help;" title="Flags sudden jumps between consecutive measurements that exceed biologically plausible rates of change. Trees cannot instantly increase or decrease sap flow beyond certain physiological limits."><i class="fa fa-circle-question"></i></span>'),
                   value = TRUE
                 ),
                 checkboxInput(
-                  ns("qc_check_cross_sensor"),
-                  HTML('Check cross-sensor anomalies <span style="color: #999; cursor: help;" title="Detects if one thermistor sensor is behaving differently from others at the same timestamp. At each time point, sensors showing values significantly different from the median across all sensors (>3x SD) are flagged as SUSPECT."><i class="fa fa-circle-question"></i></span>'),
-                  value = FALSE
+                  ns("qc_detect_outliers"),
+                  HTML('Detect outliers (rolling mean) <span style="color: #999; cursor: help;" title="Uses a rolling window to calculate local mean and standard deviation, then flags values that deviate too far from the local trend. Effective for catching isolated spikes or anomalies that don\'t fit the surrounding pattern."><i class="fa fa-circle-question"></i></span>'),
+                  value = TRUE
                 )
               ),
               column(
                 width = 5,
+                numericInput(
+                  ns("qc_max_change_cm_hr"),
+                  HTML('Max velocity change (cm/hr): <span style="color: #999; cursor: help;" title="Maximum allowed velocity change between consecutive measurements. Larger jumps are flagged as suspect. Should reflect realistic biological rates of change for your species and measurement interval."><i class="fa fa-circle-question"></i></span>'),
+                  value = 4,
+                  min = 0.1,
+                  max = 50,
+                  step = 0.5
+                ),
                 numericInput(
                   ns("qc_rolling_window"),
                   HTML('Rolling window half-width: <span style="color: #999; cursor: help;" title="Number of observations before and after the current point used to calculate local statistics. Larger windows produce smoother, less sensitive detection. Example: value of 5 uses 11 total points (5 before + current + 5 after)."><i class="fa fa-circle-question"></i></span>'),
@@ -173,22 +144,6 @@ methodsUI <- function(id) {
                 numericInput(
                   ns("qc_rolling_threshold"),
                   HTML('Rolling outlier threshold (SD): <span style="color: #999; cursor: help;" title="How many standard deviations from the rolling mean before flagging as an outlier. Higher values are more lenient (fewer flags), lower values are stricter. Typical range: 2-4 SD."><i class="fa fa-circle-question"></i></span>'),
-                  value = 3,
-                  min = 1,
-                  max = 10,
-                  step = 0.5
-                ),
-                numericInput(
-                  ns("qc_max_change_cm_hr"),
-                  HTML('Max velocity change (cm/hr): <span style="color: #999; cursor: help;" title="Maximum allowed velocity change between consecutive measurements. Larger jumps are flagged as suspect. Should reflect realistic biological rates of change for your species and measurement interval."><i class="fa fa-circle-question"></i></span>'),
-                  value = 4,
-                  min = 0.1,
-                  max = 50,
-                  step = 0.5
-                ),
-                numericInput(
-                  ns("qc_cross_sensor_threshold"),
-                  HTML('Cross-sensor threshold (SD): <span style="color: #999; cursor: help;" title="How many standard deviations from the median sensor value before flagging as anomalous. Higher values are more lenient. If one sensor consistently reads very differently from the others, it may indicate a faulty probe."><i class="fa fa-circle-question"></i></span>'),
                   value = 3,
                   min = 1,
                   max = 10,
