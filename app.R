@@ -17,7 +17,7 @@ library(ggplot2)
 library(waiter)
 
 # Load sapfluxr package
-library(sapfluxr)
+#library(sapfluxr)
 
 # Source modules
 source("R/notify_helper.R")
@@ -28,6 +28,8 @@ source("R/mod_methods.R")
 source("R/mod_corrections.R")
 source("R/mod_plot_timeseries.R")
 source("R/mod_pulse_trace.R")
+source("R/mod_tool_probe.R")
+source("R/mod_tool_wood.R")
 source("R/utils.R")
 
 # Increase file upload size limit
@@ -92,9 +94,14 @@ ui <- tagList(
         menuItem("3. Calculations", tabName = "methods", icon = icon("calculator")),
         menuItem("4. Visualise (Raw HPV)", tabName = "visualise_raw", icon = icon("chart-line")),
         menuItem("5. Corrections", tabName = "corrections", icon = icon("adjust")),
-        menuItem("6. Visualise (Corrected)", tabName = "visualise_corrected", icon = icon("chart-area"))
+        menuItem("6. Visualise (Corrected)", tabName = "visualise_corrected", icon = icon("chart-area")),
+        tags$hr(style = "margin: 10px 0; border-color: #555;"),
+        menuItem("Tools", icon = icon("wrench"),
+          menuSubItem("Probe Configuration", tabName = "tool_probe", icon = icon("ruler")),
+          menuSubItem("Wood Properties", tabName = "tool_wood", icon = icon("tree"))
+        ),
+        tags$hr(style = "margin: 10px 0; border-color: #555;")
       ),
-      hr(),
       div(style = "padding: 0 15px 15px 15px; font-size: 0.8em; color: #666;",
           p(strong("About")),
           p("Interactive interface for processing heat pulse velocity data from ICT SFM1x sensors."),
@@ -162,24 +169,54 @@ ui <- tagList(
         h2("Data Upload"),
 
         fluidRow(
-          box(
+          column(
             width = 7,
-            title = "Upload Heat Pulse Data",
-            status = "primary",
-            solidHeader = TRUE,
+            box(
+              width = NULL,
+              title = "Upload Heat Pulse Data",
+              status = "primary",
+              solidHeader = TRUE,
 
-            dataUploadUI("data_upload"),
+              dataUploadUI("data_upload")
+            ),
+            box(
+              width = NULL,
+              title = "Upload Weather Data (Optional)",
+              status = "info",
+              solidHeader = TRUE,
+              collapsible = TRUE,
+              collapsed = TRUE,
+
+              p(class = "help-text",
+                "Weather data upload functionality will be implemented soon."),
+              p(class = "text-muted",
+                "This will allow you to upload meteorological data (temperature, VPD, solar radiation) ",
+                "for correlation analysis with sap flow measurements.")
+            )
           ),
-          # hr(),
-          box(
+          column(
             width = 5,
-            title = "Clock Drift Correction (Optional)",
-            status = "warning",
-            solidHeader = TRUE,
-            collapsible = TRUE,
+            box(
+              width = NULL,
+              title = "Clock Drift Correction (Optional)",
+              status = "warning",
+              solidHeader = TRUE,
+              collapsible = TRUE,
+              collapsed = TRUE,
 
-            clockDriftUI("clock_drift"),
-          ),
+              clockDriftUI("clock_drift")
+            ),
+            box(
+              width = NULL,
+              title = "Trim Incomplete Days (Optional)",
+              status = "warning",
+              solidHeader = TRUE,
+              collapsible = TRUE,
+              collapsed = TRUE,
+
+              dataTrimUI("clock_drift")
+            )
+          )
         ),
 
         fluidRow(
@@ -241,6 +278,24 @@ ui <- tagList(
         hr(),
 
         pulseTraceUI("pulse_trace_corrected")
+      ),
+
+      # Tool: Probe Configuration ----
+      tabItem(
+        tabName = "tool_probe",
+        h2("Probe Configuration Builder"),
+        p(class = "text-muted", "Create or edit probe configuration YAML files for use in sap flow analysis workflows."),
+
+        toolProbeUI("tool_probe")
+      ),
+
+      # Tool: Wood Properties ----
+      tabItem(
+        tabName = "tool_wood",
+        h2("Wood Properties Builder"),
+        p(class = "text-muted", "Create or edit wood properties YAML files for use in sap flow analysis workflows."),
+
+        toolWoodUI("tool_wood")
       )
     )
   )
@@ -443,6 +498,12 @@ server <- function(input, output, session) {
     cat("\n=== Measurement Preview ===\n")
     print(as.data.frame(head(data$measurements, 10)), row.names = FALSE)
   })
+
+  # Module: Tool - Probe Configuration
+  toolProbeServer("tool_probe")
+
+  # Module: Tool - Wood Properties
+  toolWoodServer("tool_wood")
 
 }
 
