@@ -49,7 +49,6 @@ dataUploadServer <- function(id) {
 
       tryCatch({
         # Debug: print file info
-        cat("\n=== DEBUG: File Upload ===\n")
         cat("Original filename:", input$file$name, "\n")
         cat("Temp file path:", input$file$datapath, "\n")
         cat("File size:", input$file$size, "bytes\n")
@@ -76,7 +75,6 @@ dataUploadServer <- function(id) {
         shinyWidgets::closeSweetAlert(session = session)
 
         # Debug: check what we got
-        cat("\n=== DEBUG: Data Import Results ===\n")
         cat("Original filename:", input$file$name, "\n")
         cat("Pulse count (n_pulses):", data$metadata$n_pulses, "\n")
         cat("Format:", data$metadata$format, "\n")
@@ -146,7 +144,6 @@ dataUploadServer <- function(id) {
       data <- heat_pulse_data()
 
       # Debug: check reactive data
-      cat("\n=== DEBUG: Rendering Upload Status ===\n")
       cat("Pulse count from reactive:", data$metadata$n_pulses, "\n")
       cat("Is NULL?:", is.null(data$metadata$n_pulses), "\n")
       cat("Class:", class(data$metadata$n_pulses), "\n")
@@ -229,11 +226,6 @@ dataUploadServer <- function(id) {
 
         # Show summary if validation passed or has warnings (not errors)
         if ((status == "OK" || status == "WARNING") && !is.null(validation$summary)) {
-          # DEBUG: Print what we received
-          cat("\n=== DEBUG: Validation Summary ===\n")
-          cat("Has pulse_completeness:", !is.null(validation$summary$pulse_completeness), "\n")
-          cat("pulse_completeness value:", validation$summary$pulse_completeness, "\n")
-          cat("n_actual_pulses:", validation$summary$n_actual_pulses, "\n")
           cat("n_expected_pulses:", validation$summary$n_expected_pulses, "\n")
           cat("overall_completeness:", validation$summary$overall_completeness, "\n")
           cat("Names in summary:", paste(names(validation$summary), collapse = ", "), "\n")

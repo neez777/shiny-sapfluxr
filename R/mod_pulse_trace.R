@@ -100,7 +100,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
       cat("  Looking for measurements with pulse_id:", pulse_id, "\n")
 
       pulse_measurements <- data$measurements %>%
-        filter(pulse_id == !!pulse_id)
+        dplyr::filter(pulse_id == !!pulse_id)
 
       if (nrow(pulse_measurements) == 0) {
         cat("ERROR: No measurements found for pulse_id", pulse_id, "\n")
@@ -203,7 +203,6 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
       }
 
       # Use pre-filtered data (FAST! No loading needed)
-      cat("\n=== PULSE TRACE DEBUG ===\n")
       cat("Looking for pulse_id:", pulse_id, "\n")
 
       pulse_data <- selected_pulse_data()
@@ -238,7 +237,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
       if (!"time_sec" %in% names(pulse_data)) {
         cat("time_sec column not found, calculating from row numbers\n")
         pulse_data <- pulse_data %>%
-          mutate(time_sec = row_number() - 1)
+          dplyr::mutate(time_sec = row_number() - 1)
       }
 
       # Calculate pre-pulse baseline (typically first 30 seconds)
@@ -247,7 +246,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
       # Adjust time_sec so heat pulse injection is at time 0
       # Pre-pulse period becomes negative (e.g., -30 to 0)
       pulse_data <- pulse_data %>%
-        mutate(time_sec = time_sec - pre_pulse_period)
+        dplyr::mutate(time_sec = time_sec - pre_pulse_period)
 
       baseline_indices <- pulse_data$time_sec < 0
 
@@ -259,14 +258,13 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
 
       # Calculate temperature deltas (ΔT)
       pulse_data <- pulse_data %>%
-        mutate(
+        dplyr::mutate(
           deltaT_do = do - do_baseline,
           deltaT_di = di - di_baseline,
           deltaT_uo = uo - uo_baseline,
           deltaT_ui = ui - ui_baseline
         )
 
-      cat("Temperature delta ranges - deltaT_do:", range(pulse_data$deltaT_do, na.rm = TRUE), "\n")
       cat("Time range:", range(pulse_data$time_sec, na.rm = TRUE), "\n")
 
       # Create plot with temperature delta traces
@@ -696,7 +694,6 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
           results <- vh_results()
           if (!is.null(results) && nrow(results) > 0) {
             cat("\nHRMXb Window Debug:\n")
-            cat("  Checking for HRMXb-specific columns...\n")
 
             hrmxb_result <- results[results$pulse_id == pulse_id &
                                     results$method == "HRMXb" &
@@ -919,7 +916,6 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
             if ("calc_window_start_sec" %in% names(results) && "calc_window_end_sec" %in% names(results)) {
               cat("  Window columns FOUND in results\n")
             } else {
-              cat("  Window columns MISSING - will calculate from temperature peaks\n")
             }
           }
         }

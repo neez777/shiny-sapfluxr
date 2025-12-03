@@ -491,17 +491,17 @@ plotTimeseriesServer <- function(id, vh_results) {
 
       # Filter by method
       data <- data %>%
-        filter(method %in% input$methods)
+        dplyr::filter(method %in% input$methods)
 
       # Filter by sensor position
       data <- data %>%
-        filter(sensor_position %in% input$sensor_position)
+        dplyr::filter(sensor_position %in% input$sensor_position)
 
       # Filter by quality flags (if quality_flags input exists and has selections)
       if (!is.null(input$quality_flags) && length(input$quality_flags) > 0) {
         if ("quality_flag" %in% names(data)) {
           data <- data %>%
-            filter(quality_flag %in% input$quality_flags)
+            dplyr::filter(quality_flag %in% input$quality_flags)
         }
       }
 
@@ -521,7 +521,7 @@ plotTimeseriesServer <- function(id, vh_results) {
       # Quality flag summary
       flag_summary <- data %>%
         count(quality_flag) %>%
-        arrange(desc(n))
+        dplyr::arrange(desc(n))
 
       tagList(
         p(strong("Displayed Data:")),
@@ -565,7 +565,7 @@ plotTimeseriesServer <- function(id, vh_results) {
       # Calculate flag counts based on filtered data (selected methods/sensors)
       flag_counts <- data %>%
         count(quality_flag) %>%
-        arrange(quality_flag)
+        dplyr::arrange(quality_flag)
 
       total_points <- sum(flag_counts$n)
 
@@ -619,7 +619,6 @@ plotTimeseriesServer <- function(id, vh_results) {
         methods <- available_methods()
         req(length(methods) > 0)
 
-        cat("\n=== METHOD COLOURS DEBUG ===\n")
         cat("Methods to color:", paste(methods, collapse = ", "), "\n")
 
         # Define base colour palette (matching pulse trace window colors)
@@ -669,12 +668,12 @@ plotTimeseriesServer <- function(id, vh_results) {
 
       if (length(input$methods_to_clean) > 0) {
         data_to_clean <- data_to_clean %>%
-          filter(method %in% input$methods_to_clean)
+          dplyr::filter(method %in% input$methods_to_clean)
       }
 
       if (length(input$sensors_to_clean) > 0) {
         data_to_clean <- data_to_clean %>%
-          filter(sensor_position %in% input$sensors_to_clean)
+          dplyr::filter(sensor_position %in% input$sensors_to_clean)
       }
 
       # Preview changes
@@ -741,13 +740,13 @@ plotTimeseriesServer <- function(id, vh_results) {
         # Filter by selected methods (if any specified)
         if (!is.null(input$methods_to_clean) && length(input$methods_to_clean) > 0) {
           data_to_clean <- data_to_clean %>%
-            filter(method %in% input$methods_to_clean)
+            dplyr::filter(method %in% input$methods_to_clean)
         }
 
         # Filter by selected sensors (if any specified)
         if (!is.null(input$sensors_to_clean) && length(input$sensors_to_clean) > 0) {
           data_to_clean <- data_to_clean %>%
-            filter(sensor_position %in% input$sensors_to_clean)
+            dplyr::filter(sensor_position %in% input$sensors_to_clean)
         }
 
         cat("\n")
@@ -886,8 +885,8 @@ plotTimeseriesServer <- function(id, vh_results) {
 
       # Get non-OK quality flags
       markers <- data %>%
-        filter(quality_flag != "OK") %>%
-        select(datetime, pulse_id, quality_flag, method, sensor_position, Vh_cm_hr) %>%
+        dplyr::filter(quality_flag != "OK") %>%
+        dplyr::select(datetime, pulse_id, quality_flag, method, sensor_position, Vh_cm_hr) %>%
         distinct()
 
       markers
@@ -899,7 +898,6 @@ plotTimeseriesServer <- function(id, vh_results) {
         data <- filtered_data()
         req(nrow(data) > 0)
 
-        cat("\n=== TIME SERIES PLOT DEBUG ===\n")
         cat("Data rows:", nrow(data), "\n")
         cat("Data columns:", paste(names(data), collapse = ", "), "\n")
         cat("Unique methods in data:", paste(unique(data$method), collapse = ", "), "\n")
@@ -916,7 +914,7 @@ plotTimeseriesServer <- function(id, vh_results) {
         # Add trace for each method
         for (method in unique(data$method)) {
           cat("Processing method:", method, "\n")
-          method_data <- data %>% filter(method == !!method)
+          method_data <- data %>% dplyr::filter(method == !!method)
           cat("  Rows for this method:", nrow(method_data), "\n")
 
           # Make sure color exists for this method
@@ -941,7 +939,7 @@ plotTimeseriesServer <- function(id, vh_results) {
         # Separate by sensor position if both selected
         if (length(input$sensor_position) > 1) {
           for (pos in unique(method_data$sensor_position)) {
-            pos_data <- method_data %>% filter(sensor_position == !!pos)
+            pos_data <- method_data %>% dplyr::filter(sensor_position == !!pos)
 
             trace_name <- paste0(method, " (", pos, ")")
 
@@ -1000,13 +998,13 @@ plotTimeseriesServer <- function(id, vh_results) {
         if (nrow(markers) > 0) {
           # Filter markers to displayed methods/positions and selected flags
           markers <- markers %>%
-            filter(method %in% input$methods,
+            dplyr::filter(method %in% input$methods,
                    sensor_position %in% input$sensor_position)
 
           # Also filter by selected quality flags if input exists
           if (!is.null(input$quality_flags) && length(input$quality_flags) > 0) {
             markers <- markers %>%
-              filter(quality_flag %in% input$quality_flags)
+              dplyr::filter(quality_flag %in% input$quality_flags)
           }
 
           if (nrow(markers) > 0) {
@@ -1022,7 +1020,7 @@ plotTimeseriesServer <- function(id, vh_results) {
             )
 
             for (flag in unique(markers$quality_flag)) {
-              flag_data <- markers %>% filter(quality_flag == !!flag)
+              flag_data <- markers %>% dplyr::filter(quality_flag == !!flag)
 
               # Get shape and color using our flag_colors definition
               flag_shape <- if (flag %in% names(flag_shapes)) {
@@ -1105,7 +1103,6 @@ plotTimeseriesServer <- function(id, vh_results) {
 
       # Add interpolated points markers if enabled
       if (input$show_interpolated) {
-        cat("\n=== INTERPOLATED POINTS DEBUG ===\n")
         cat("Show interpolated checkbox:", input$show_interpolated, "\n")
         cat("is_interpolated column exists:", "is_interpolated" %in% names(data), "\n")
 
@@ -1117,13 +1114,13 @@ plotTimeseriesServer <- function(id, vh_results) {
           if (n_interpolated > 0) {
             # Get interpolated points
             interpolated_points <- data %>%
-              filter(is_interpolated == TRUE)
+              dplyr::filter(is_interpolated == TRUE)
 
           if (nrow(interpolated_points) > 0) {
             cat("Adding", nrow(interpolated_points), "hollow circle markers\n")
             # Group by method to apply method-specific colors
             for (method in unique(interpolated_points$method)) {
-              method_interp <- interpolated_points %>% filter(method == !!method)
+              method_interp <- interpolated_points %>% dplyr::filter(method == !!method)
 
               # Get method color
               method_color <- if (method %in% names(colours)) {
@@ -1164,7 +1161,7 @@ plotTimeseriesServer <- function(id, vh_results) {
         # Also show markers for originally missing data that was then interpolated
         if ("quality_flag_original" %in% names(data) && "is_interpolated" %in% names(data)) {
           originally_missing <- data %>%
-            filter(quality_flag_original == "DATA_MISSING" & is_interpolated == TRUE)
+            dplyr::filter(quality_flag_original == "DATA_MISSING" & is_interpolated == TRUE)
 
           if (nrow(originally_missing) > 0) {
             p <- p %>%
@@ -1204,19 +1201,19 @@ plotTimeseriesServer <- function(id, vh_results) {
         if ("peclet_number" %in% names(full_data)) {
           # Filter Peclet data by sensor position and quality flags (but not by method)
           peclet_data <- full_data %>%
-            filter(!is.na(peclet_number))
+            dplyr::filter(!is.na(peclet_number))
 
           # Filter by sensor position to match displayed data
           if (!is.null(input$sensor_position) && length(input$sensor_position) > 0) {
             peclet_data <- peclet_data %>%
-              filter(sensor_position %in% input$sensor_position)
+              dplyr::filter(sensor_position %in% input$sensor_position)
           }
 
           # Filter by quality flags to match displayed data
           if (!is.null(input$quality_flags) && length(input$quality_flags) > 0) {
             if ("quality_flag" %in% names(peclet_data)) {
               peclet_data <- peclet_data %>%
-                filter(quality_flag %in% input$quality_flags)
+                dplyr::filter(quality_flag %in% input$quality_flags)
             }
           }
 
@@ -1225,7 +1222,7 @@ plotTimeseriesServer <- function(id, vh_results) {
             if (length(input$sensor_position) > 1 && "sensor_position" %in% names(peclet_data)) {
               # Add separate traces for inner and outer
               for (pos in unique(peclet_data$sensor_position)) {
-                pos_peclet <- peclet_data %>% filter(sensor_position == !!pos)
+                pos_peclet <- peclet_data %>% dplyr::filter(sensor_position == !!pos)
 
                 trace_name <- paste0("Peclet Number (", pos, ")")
                 line_dash <- if (pos == "inner") "dot" else "dashdot"

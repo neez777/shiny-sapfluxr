@@ -13,81 +13,92 @@ clockDriftUI <- function(id) {
   ns <- NS(id)
 
   tagList(
-    # Collapsible panel using wellPanel
-    wellPanel(
-      style = "background-color: #f9f9f9; border: 1px solid #ddd;",
+    p(class = "help-text",
+      "Correct clock drift assuming the first pulse time was correct (synced at data collection start)."),
 
-      h4(
-        icon("clock"),
-        "Correct Clock Drift",
-        span(
-          style = "float: right; font-size: 0.8em; font-style: italic; color: #666;",
-          "Optional"
-        )
-      ),
+    # Show data range
+    uiOutput(ns("data_range_info")),
 
-      p(class = "help-text",
-        "Correct clock drift assuming the first pulse time was correct (synced at data collection start)."),
+    hr(),
 
-      # Show data range
-      uiOutput(ns("data_range_info")),
-
-      hr(),
-
-      fluidRow(
-        column(
-          width = 6,
-          h5("Device Time (at collection end)"),
-          p(class = "help-text", "What time did the logger show?"),
-          dateInput(
-            ns("device_time"),
-            "Date:",
-            value = NULL
-          ),
-          textInput(
-            ns("device_time_time"),
-            "Time (HH:MM:SS):",
-            value = "",
-            placeholder = "12:00:00"
-          )
+    fluidRow(
+      column(
+        width = 6,
+        h5("Device Time (at collection end)"),
+        p(class = "help-text", "What time did the logger show?"),
+        dateInput(
+          ns("device_time"),
+          "Date:",
+          value = NULL
         ),
-        column(
-          width = 6,
-          h5("Actual Time (at collection end)"),
-          p(class = "help-text", "What was the actual time?"),
-          dateInput(
-            ns("actual_time"),
-            "Date:",
-            value = Sys.Date()
-          ),
-          textInput(
-            ns("actual_time_time"),
-            "Time (HH:MM:SS):",
-            value = format(Sys.time(), "%H:%M:%S"),
-            placeholder = "12:00:00"
-          )
+        textInput(
+          ns("device_time_time"),
+          "Time (HH:MM:SS):",
+          value = "",
+          placeholder = "12:00:00"
         )
       ),
-
-      hr(),
-
-      # Warning message
-      uiOutput(ns("drift_warning")),
-
-      # Apply button
-      div(
-        style = "text-align: center;",
-        actionButton(
-          ns("apply_correction"),
-          "Apply Clock Drift Correction",
-          icon = icon("check"),
-          class = "btn-primary"
+      column(
+        width = 6,
+        h5("Actual Time (at collection end)"),
+        p(class = "help-text", "What was the actual time?"),
+        dateInput(
+          ns("actual_time"),
+          "Date:",
+          value = Sys.Date()
+        ),
+        textInput(
+          ns("actual_time_time"),
+          "Time (HH:MM:SS):",
+          value = format(Sys.time(), "%H:%M:%S"),
+          placeholder = "12:00:00"
         )
-      ),
+      )
+    ),
 
-      # Correction status
-      uiOutput(ns("correction_status"))
-    )
+    hr(),
+
+    # Warning message
+    uiOutput(ns("drift_warning")),
+
+    # Apply button
+    div(
+      style = "text-align: center;",
+      actionButton(
+        ns("apply_correction"),
+        "Apply Clock Drift Correction",
+        icon = icon("check"),
+        class = "btn-primary"
+      )
+    ),
+
+    # Correction status
+    uiOutput(ns("correction_status"))
+  )
+}
+
+# Data Trimming UI (separate function)
+dataTrimUI <- function(id) {
+  ns <- NS(id)
+
+  tagList(
+    p(class = "help-text",
+      "Remove first and/or last day if they contain less than 23 hours of data. ",
+      "This is recommended for daily aggregation analyses."),
+
+    # Apply button
+    div(
+      style = "text-align: center; margin-top: 10px;",
+      actionButton(
+        ns("apply_trimming"),
+        "Apply Data Trimming",
+        icon = icon("scissors"),
+        class = "btn-primary"
+      )
+    ),
+
+    # Trimming status
+    uiOutput(ns("trimming_status"))
   )
 }
 
@@ -95,8 +106,11 @@ clockDriftUI <- function(id) {
 clockDriftServer <- function(id, heat_pulse_data) {
   moduleServer(id, function(input, output, session) {
 
-    # Reactive to store corrected data
+    # Reactive to store corrected data (from clock drift)
     corrected_data <- reactiveVal(NULL)
+
+    # Reactive to store trimmed data (after clock drift correction)
+    trimmed_data <- reactiveVal(NULL)
 
     # Reactive for first and last pulse times
     pulse_times <- reactive({
@@ -252,7 +266,122 @@ clockDriftServer <- function(id, heat_pulse_data) {
       )
     })
 
-    # Return reactive containing corrected data
-    return(corrected_data)
+    # Apply data trimming
+    observeEvent(input$apply_trimming, {
+      # Get the data to trim (use corrected data if available, otherwise original)
+      data_to_trim <- if (!is.null(corrected_data())) {
+        corrected_data()
+      } else {
+        req(heat_pulse_data())
+        heat_pulse_data()
+      }
+
+      tryCatch({
+        # Show loading message
+        notify_progress(
+          title = "Trimming Incomplete Days...",
+          text = "Please wait while incomplete days are removed."
+        )
+
+        # Apply trimming using sapfluxr function
+        trimmed <- sapfluxr:::trim_incomplete_days(
+          measurements = data_to_trim$measurements,
+          diagnostics = data_to_trim$diagnostics,
+          verbose = TRUE
+        )
+
+        # Update the heat_pulse_data object with trimmed data
+        data_trimmed <- data_to_trim
+        data_trimmed$measurements <- trimmed$measurements
+        data_trimmed$diagnostics <- trimmed$diagnostics
+
+        # Update metadata to reflect trimming
+        data_trimmed$metadata$n_pulses <- nrow(trimmed$diagnostics)
+
+        # Store trimmed data
+        trimmed_data(data_trimmed)
+
+        # Close loading notification
+        close_notify(session)
+
+        # Calculate how much was trimmed
+        n_measurements_removed <- nrow(data_to_trim$measurements) - nrow(trimmed$measurements)
+        n_pulses_removed <- nrow(data_to_trim$diagnostics) - nrow(trimmed$diagnostics)
+
+        # Show success message
+        trim_msg <- if (n_measurements_removed > 0) {
+          sprintf("Trimmed %s measurements (%s pulses) from incomplete days",
+                  format(n_measurements_removed, big.mark = ","),
+                  format(n_pulses_removed, big.mark = ","))
+        } else {
+          "No trimming needed - first and last days are complete (≥ 23 hours)"
+        }
+
+        shinyWidgets::sendSweetAlert(
+          session = session,
+          title = "Data Trimming Complete!",
+          text = trim_msg,
+          type = "success",
+          timer = 4000
+        )
+
+      }, error = function(e) {
+        # Close loading notification
+        close_notify(session)
+
+        # Show error message
+        notify_error(
+          session = session,
+          title = "Trimming Error",
+          text = e$message
+        )
+
+        trimmed_data(NULL)
+      })
+    })
+
+    # Trimming status UI
+    output$trimming_status <- renderUI({
+      req(trimmed_data())
+
+      # Calculate trimming stats
+      data_before <- if (!is.null(corrected_data())) corrected_data() else heat_pulse_data()
+      data_after <- trimmed_data()
+
+      n_measurements_removed <- nrow(data_before$measurements) - nrow(data_after$measurements)
+
+      div(
+        style = "margin-top: 15px; padding: 10px; background-color: #E8F5E9; border-left: 4px solid #4CAF50;",
+        p(
+          icon("check-circle", class = "success-message"),
+          strong("Data trimming applied"),
+          style = "margin: 0; color: #4CAF50;"
+        ),
+        p(
+          class = "help-text",
+          style = "margin: 5px 0 0 0;",
+          if (n_measurements_removed > 0) {
+            sprintf("Removed %s measurements from incomplete days. Trimmed data will be used for all calculations.",
+                    format(n_measurements_removed, big.mark = ","))
+          } else {
+            "No measurements removed - first and last days were complete."
+          }
+        )
+      )
+    })
+
+    # Return reactive containing final processed data
+    # Priority: trimmed_data > corrected_data > NULL
+    final_data <- reactive({
+      if (!is.null(trimmed_data())) {
+        trimmed_data()
+      } else if (!is.null(corrected_data())) {
+        corrected_data()
+      } else {
+        NULL
+      }
+    })
+
+    return(final_data)
   })
 }
