@@ -15,9 +15,10 @@ library(yaml)
 library(lubridate)
 library(ggplot2)
 library(waiter)
+library(fresh)
 
 # Load sapfluxr package
-#library(sapfluxr)
+library(sapfluxr)
 
 # Source modules
 source("R/notify_helper.R")
@@ -52,6 +53,28 @@ if (requireNamespace("progressr", quietly = TRUE)) {
   progressr::handlers("void")
 }
 
+# ---- DEFINE SAPFLUXR THEME (Professional/Flatly Look) ----
+sapfluxr_theme <- create_theme(
+  adminlte_color(
+    light_blue = "#6C757D", # Dark Slate (Replaces standard Blue)
+    aqua = "#6C757D",       # Teal (Replaces standard Cyan)
+    green = "#a0af6f",      # Teal (Replaces standard bright Green)
+    red = "#DC3545",        # Muted Red
+    yellow = "#78909c"      # Muted Orange
+  ),
+  adminlte_sidebar(
+    width = "250px",
+    dark_bg = "#263238",    # Dark Slate sidebar
+    dark_hover_bg = "#37474f", # Teal highlight on hover
+    dark_color = "#E4E6EB"  # Light grey text
+  ),
+  adminlte_global(
+    content_bg = "#F8F9FA",
+    box_bg = "#E4E6EB",
+    info_box_bg = "#ffffff"
+  )
+)
+
 # UI ----
 ui <- tagList(
   tags$head(
@@ -68,7 +91,7 @@ ui <- tagList(
     )
   ),
   dashboardPage(
-  skin = "blue",
+#  skin = "green",
 
   ## Header ----
   dashboardHeader(
@@ -93,7 +116,10 @@ ui <- tagList(
         menuItem("2. Configuration", tabName = "config", icon = icon("cog")),
         menuItem("3. Calculations", tabName = "methods", icon = icon("calculator")),
         menuItem("4. Visualise (Raw HPV)", tabName = "visualise_raw", icon = icon("chart-line")),
-        menuItem("5. Corrections", tabName = "corrections", icon = icon("adjust")),
+        menuItem("5. Corrections", icon = icon("adjust"),
+          menuSubItem("Spacing Correction", tabName = "corrections", icon = icon("ruler-horizontal")),
+          menuSubItem("Wound Correction", tabName = "wound_correction", icon = icon("bandage"))
+        ),
         menuItem("6. Visualise (Corrected)", tabName = "visualise_corrected", icon = icon("chart-area")),
         tags$hr(style = "margin: 10px 0; border-color: #555;"),
         menuItem("Tools", icon = icon("wrench"),
@@ -117,6 +143,8 @@ ui <- tagList(
 
   ## Body ----
   dashboardBody(
+
+    use_theme(sapfluxr_theme),
 
     # Initialize waiter
     waiter::use_waiter(),
