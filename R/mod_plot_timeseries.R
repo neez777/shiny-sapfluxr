@@ -312,7 +312,6 @@ plotTimeseriesServer <- function(id, vh_results) {
 
     # Available methods from data
     available_methods <- reactive({
-      req(vh_results())
       unique(vh_results()$method)
     })
 
@@ -883,11 +882,25 @@ plotTimeseriesServer <- function(id, vh_results) {
 
       data <- vh_results()
 
+      # Determine which Vh column exists
+      vh_col <- if ("Vh_cm_hr_sc" %in% names(data)) {
+        "Vh_cm_hr_sc"
+      } else if ("Vh_cm_hr_zf" %in% names(data)) {
+        "Vh_cm_hr_zf"
+      } else {
+        "Vh_cm_hr"
+      }
+
       # Get non-OK quality flags
       markers <- data %>%
         dplyr::filter(quality_flag != "OK") %>%
-        dplyr::select(datetime, pulse_id, quality_flag, method, sensor_position, Vh_cm_hr) %>%
+        dplyr::select(datetime, pulse_id, quality_flag, method, sensor_position, !!sym(vh_col)) %>%
         distinct()
+
+      # Rename to standard name for consistency
+      if (vh_col != "Vh_cm_hr") {
+        markers <- markers %>% dplyr::rename(Vh_cm_hr = !!sym(vh_col))
+      }
 
       markers
     })
@@ -901,6 +914,18 @@ plotTimeseriesServer <- function(id, vh_results) {
         cat("Data rows:", nrow(data), "\n")
         cat("Data columns:", paste(names(data), collapse = ", "), "\n")
         cat("Unique methods in data:", paste(unique(data$method), collapse = ", "), "\n")
+
+        # Determine which Vh column to use (prefer corrected if available)
+        vh_col <- if ("Vh_cm_hr_sc" %in% names(data)) {
+          cat("Using spacing-corrected Vh column\n")
+          "Vh_cm_hr_sc"
+        } else if ("Vh_cm_hr_zf" %in% names(data)) {
+          cat("Using zero-flow corrected Vh column\n")
+          "Vh_cm_hr_zf"
+        } else {
+          cat("Using original Vh column\n")
+          "Vh_cm_hr"
+        }
 
         # Get method colours
         colours <- method_colours()
@@ -947,7 +972,7 @@ plotTimeseriesServer <- function(id, vh_results) {
               add_trace(
                 data = pos_data,
                 x = ~datetime,
-                y = ~Vh_cm_hr,
+                y = as.formula(paste0("~", vh_col)),
                 customdata = ~pulse_id,
                 type = "scatter",
                 mode = if (input$show_points) "lines+markers" else "lines",
@@ -971,7 +996,7 @@ plotTimeseriesServer <- function(id, vh_results) {
             add_trace(
               data = method_data,
               x = ~datetime,
-              y = ~Vh_cm_hr,
+              y = as.formula(paste0("~", vh_col)),
               type = "scatter",
               customdata = ~pulse_id,
               mode = if (input$show_points) "lines+markers" else "lines",
@@ -1077,7 +1102,7 @@ plotTimeseriesServer <- function(id, vh_results) {
                   add_trace(
                     data = flag_data,
                     x = ~datetime,
-                    y = ~Vh_cm_hr,
+                    y = as.formula(paste0("~", vh_col)),
                     type = "scatter",
                     customdata = ~pulse_id,
                     mode = "markers",
@@ -1133,7 +1158,7 @@ plotTimeseriesServer <- function(id, vh_results) {
                 add_trace(
                   data = method_interp,
                   x = ~datetime,
-                  y = ~Vh_cm_hr,
+                  y = as.formula(paste0("~", vh_col)),
                   customdata = ~pulse_id,
                   type = "scatter",
                   mode = "markers",
@@ -1194,14 +1219,13 @@ plotTimeseriesServer <- function(id, vh_results) {
       if (input$show_peclet) {
         # Get Peclet data from full results (not filtered by method selection)
         # This allows Peclet to be displayed even when HRM velocity trace is hidden
-        req(vh_results())
         full_data <- vh_results()
 
         # Check if peclet_number column exists
-        if ("peclet_number" %in% names(full_data)) {
+        if ("hrm_peclet_number" %in% names(full_data)) {
           # Filter Peclet data by sensor position and quality flags (but not by method)
           peclet_data <- full_data %>%
-            dplyr::filter(!is.na(peclet_number))
+            dplyr::filter(!is.na(hrm_peclet_number))
 
           # Filter by sensor position to match displayed data
           if (!is.null(input$sensor_position) && length(input$sensor_position) > 0) {
@@ -1232,7 +1256,7 @@ plotTimeseriesServer <- function(id, vh_results) {
                     data = pos_peclet,
                     customdata = ~pulse_id,
                     x = ~datetime,
-                    y = ~peclet_number,
+                    y = ~hrm_peclet_number,
                     type = "scatter",
                     mode = "lines",
                     name = trace_name,
@@ -1257,7 +1281,7 @@ plotTimeseriesServer <- function(id, vh_results) {
                   customdata = ~pulse_id,
                   data = peclet_data,
                   x = ~datetime,
-                  y = ~peclet_number,
+                  y = ~hrm_peclet_number,
                   type = "scatter",
                   mode = "lines",
                   name = "Peclet Number",
@@ -1327,74 +1351,58 @@ plotTimeseriesServer <- function(id, vh_results) {
       }
 
       # Apply layout - conditionally add yaxis2 if Peclet is enabled
+      use_peclet_axis <- FALSE
       if (input$show_peclet) {
-        # Check full dataset for Peclet numbers (not just filtered data)
-        req(vh_results())
+        # Check if we actually have Peclet data
         full_data <- vh_results()
-        has_peclet <- "peclet_number" %in% names(full_data) && any(!is.na(full_data$peclet_number))
-
-        if (has_peclet) {
-          # Layout with secondary y-axis for Peclet
-          p <- p %>%
-            layout(
-              xaxis = xaxis_config,
-              yaxis = list(
-                title = "Heat Pulse Velocity (cm/hr)",
-                rangemode = "tozero",
-                showgrid = TRUE,
-                gridcolor = "#E5E5E5",
-                zeroline = TRUE,
-                zerolinecolor = "#969696",
-                zerolinewidth = 1
-              ),
-              yaxis2 = list(
-                title = "Peclet Number (Pe)",
-                overlaying = "y",
-                side = "right",
-                showgrid = FALSE,  # Don't show gridlines for secondary axis
-                zeroline = FALSE   # Don't show zero line for secondary axis
-              ),
-              hovermode = "closest",
-              legend = list(
-                orientation = "h",
-                x = 0,
-                y = -0.45,
-                xanchor = "left",
-                yanchor = "top"
-              ),
-              plot_bgcolor = "white",
-              paper_bgcolor = "white",
-              margin = list(b = 150, r = 80)  # Increased right margin for y-axis label
-            )
-        } else {
-          # No Peclet data, use single axis
-          p <- p %>%
-            layout(
-              xaxis = xaxis_config,
-              yaxis = list(
-                title = "Heat Pulse Velocity (cm/hr)",
-                rangemode = "tozero",
-                showgrid = TRUE,
-                gridcolor = "#E5E5E5",
-                zeroline = TRUE,
-                zerolinecolor = "#969696",
-                zerolinewidth = 1
-              ),
-              hovermode = "closest",
-              legend = list(
-                orientation = "h",
-                x = 0,
-                y = -0.45,
-                xanchor = "left",
-                yanchor = "top"
-              ),
-              plot_bgcolor = "white",
-              paper_bgcolor = "white",
-              margin = list(b = 150)  # Increased for range slider
-            )
+        if (!is.null(full_data) && "hrm_peclet_number" %in% names(full_data)) {
+          has_any_peclet <- any(!is.na(full_data$hrm_peclet_number))
+          use_peclet_axis <- has_any_peclet
         }
+      }
+
+      if (use_peclet_axis) {
+        # Simple approach: use rangemode tozero for both axes
+        # This ensures zero is included, though they may not perfectly align
+        # For perfect alignment, both axes would need identical scale ratios
+
+        # Layout with secondary y-axis for Peclet
+        p <- p %>%
+          layout(
+            xaxis = xaxis_config,
+            yaxis = list(
+              title = "Heat Pulse Velocity (cm/hr)",
+              rangemode = "tozero",
+              showgrid = TRUE,
+              gridcolor = "#E5E5E5",
+              zeroline = TRUE,
+              zerolinecolor = "#969696",
+              zerolinewidth = 1
+            ),
+            yaxis2 = list(
+              title = "Peclet Number (Pe)",
+              overlaying = "y",
+              side = "right",
+              rangemode = "tozero",
+              showgrid = FALSE,
+              zerolinecolor = "#969696",
+              zerolinewidth = 1,
+              zeroline = TRUE
+            ),
+            hovermode = "closest",
+            legend = list(
+              orientation = "h",
+              x = 0,
+              y = -0.45,
+              xanchor = "left",
+              yanchor = "top"
+            ),
+            plot_bgcolor = "white",
+            paper_bgcolor = "white",
+            margin = list(b = 150, r = 80)
+          )
       } else {
-        # Peclet not enabled, use single axis
+        # Standard single-axis layout
         p <- p %>%
           layout(
             xaxis = xaxis_config,
@@ -1417,7 +1425,7 @@ plotTimeseriesServer <- function(id, vh_results) {
             ),
             plot_bgcolor = "white",
             paper_bgcolor = "white",
-            margin = list(b = 150)  # Increased for range slider
+            margin = list(b = 150)
           )
       }
 

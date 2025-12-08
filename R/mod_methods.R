@@ -386,8 +386,8 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
       display_results$datetime <- format(display_results$datetime, "%Y-%m-%d %H:%M:%S")
       display_results$Vh_cm_hr <- round(display_results$Vh_cm_hr, 2)
 
-      if ("peclet_number" %in% names(display_results)) {
-        display_results$peclet_number <- round(display_results$peclet_number, 3)
+      if ("hrm_peclet_number" %in% names(display_results)) {
+        display_results$hrm_peclet_number <- round(display_results$hrm_peclet_number, 3)
       }
 
       DT::datatable(

@@ -89,49 +89,40 @@ configUI <- function(id) {
           collapsible = TRUE,
           collapsed = FALSE,
 
-          # Mode selector
+          # Mode selection
           radioButtons(
             ns("wood_mode"),
-            "Configuration Source:",
+            "Configuration Mode:",
             choices = c(
-              "Default" = "builtin",
-              "Upload YAML" = "upload",
+              "Use Default (Generic Softwood)" = "builtin",
+              "Upload YAML File" = "upload",
               "Manual Entry" = "manual"
             ),
             selected = "builtin"
           ),
 
-          # Built-in configurations selector
+          # Conditional panels for each mode
           conditionalPanel(
             condition = sprintf("input['%s'] == 'builtin'", ns("wood_mode")),
-            selectInput(
-              ns("wood_yaml_builtin"),
-              "Built-in configurations:",
-              choices = NULL  # Will be populated in server
+            div(
+              class = "alert alert-info",
+              icon("info-circle"),
+              " Using default generic softwood properties."
             )
           ),
 
-          # Upload YAML
           conditionalPanel(
-            condition = sprintf("input['%s'] == 'upload'", ns("wood_mode")),
-            fileInput(
-              ns("wood_yaml_upload"),
-              "Upload Wood Properties YAML:",
-              accept = c(".yaml", ".yml")
-            )
-          ),
-
-          # Manual entry
-          conditionalPanel(
-            condition = sprintf("input['%s'] == 'manual'", ns("wood_mode")),
-            uiOutput(ns("wood_manual_ui"))
+            condition = sprintf("input['%s'] == 'upload' || input['%s'] == 'manual'", ns("wood_mode"), ns("wood_mode")),
+            # Embed the wood properties tool UI
+            toolWoodUI(ns("wood_tool"))
           ),
 
           hr(),
           uiOutput(ns("wood_summary"))
         )
-      )
+      ),
     ),
+
 
     # Probe Visualisation
     fluidRow(
@@ -175,6 +166,29 @@ configServer <- function(id, heat_pulse_data = NULL) {
     # Reactive values
     probe_config <- reactiveVal(NULL)
     wood_properties <- reactiveVal(NULL)
+
+    # Call the wood properties tool server
+    wood_tool_return <- toolWoodServer("wood_tool", heat_pulse_data = heat_pulse_data)
+
+    # Sync the tool's config with our wood_properties reactive
+    observe({
+      req(input$wood_mode)
+      
+      if (input$wood_mode %in% c("manual", "upload")) {
+        # When using tool, sync its config
+        tool_config <- wood_tool_return$config()
+        if (!is.null(tool_config)) {
+          cat("DEBUG: Syncing tool config to wood_properties()
+")
+          wood_properties(tool_config)
+        }
+      } else if (input$wood_mode == "builtin") {
+        # Load default builtin config
+        builtin_config <- sapfluxr::load_wood_properties("generic_sw")
+        wood_properties(builtin_config)
+      }
+    })
+
 
     # Get available YAML files from sapfluxr
     available_probe_yamls <- reactive({
@@ -279,71 +293,6 @@ configServer <- function(id, heat_pulse_data = NULL) {
       # Manual mode handled separately
     })
 
-    # Load wood properties based on mode
-    observe({
-      if (input$wood_mode == "builtin") {
-        req(input$wood_yaml_builtin)
-
-        tryCatch({
-          config <- sapfluxr::load_wood_properties(input$wood_yaml_builtin)
-
-          # Auto-calculate derived properties if not present
-          has_derived <- !is.null(config$derived_properties) &&
-                        !all(sapply(config$derived_properties, is.null))
-
-          if (!has_derived) {
-            # Check if we have measurements to calculate from
-            has_measurements <- (!is.null(config$density_dry_kg_m3) && !is.na(config$density_dry_kg_m3) &&
-                                !is.null(config$density_fresh_kg_m3) && !is.na(config$density_fresh_kg_m3)) ||
-                               (!is.null(config$fresh_weight_g) && !is.na(config$fresh_weight_g) &&
-                                !is.null(config$dry_weight_g) && !is.na(config$dry_weight_g) &&
-                                !is.null(config$fresh_volume_cm3) && !is.na(config$fresh_volume_cm3))
-
-            if (has_measurements) {
-              # Calculate derived properties
-              sapfluxr::calculate_wood_properties(config)
-            }
-          }
-
-          wood_properties(config)
-        }, error = function(e) {
-          notify_error(session, "Error loading wood properties:", e$message)
-        })
-
-      } else if (input$wood_mode == "upload") {
-        req(input$wood_yaml_upload)
-
-        tryCatch({
-          config <- sapfluxr::load_wood_properties(input$wood_yaml_upload$datapath)
-
-          # Auto-calculate derived properties if not present
-          has_derived <- !is.null(config$derived_properties) &&
-                        !all(sapply(config$derived_properties, is.null))
-
-          if (!has_derived) {
-            # Check if we have measurements to calculate from
-            has_measurements <- (!is.null(config$density_dry_kg_m3) && !is.na(config$density_dry_kg_m3) &&
-                                !is.null(config$density_fresh_kg_m3) && !is.na(config$density_fresh_kg_m3)) ||
-                               (!is.null(config$fresh_weight_g) && !is.na(config$fresh_weight_g) &&
-                                !is.null(config$dry_weight_g) && !is.na(config$dry_weight_g) &&
-                                !is.null(config$fresh_volume_cm3) && !is.na(config$fresh_volume_cm3))
-
-            if (has_measurements) {
-              # Calculate derived properties
-              sapfluxr::calculate_wood_properties(config)
-            }
-          }
-
-          wood_properties(config)
-
-          notify_success(session, "Success!", "Wood properties loaded successfully")
-        }, error = function(e) {
-          notify_error(session, "Error loading uploaded YAML:", e$message)
-          wood_properties(NULL)
-        })
-      }
-      # Manual mode handled separately
-    })
 
     # Populate manual entry fields when switching to manual mode with loaded config
     observeEvent(input$wood_mode, {
@@ -355,7 +304,7 @@ configServer <- function(id, heat_pulse_data = NULL) {
       if (!is.null(config)) {
         # Update thermal properties
         if (!is.null(config$wood_constants$thermal_diffusivity_default_cm2_s)) {
-          updateNumericInput(session, "thermal_diffusivity", value = config$wood_constants$thermal_diffusivity_default_cm2_s)
+          updateNumericInput(session, "thermal_diffusivity_default_cm2_s", value = config$wood_constants$thermal_diffusivity_default_cm2_s)
         }
         if (!is.null(config$wood_constants$K_sap_W_m_K)) {
           updateNumericInput(session, "K_sap_W_m_K", value = config$wood_constants$K_sap_W_m_K)
@@ -372,42 +321,40 @@ configServer <- function(id, heat_pulse_data = NULL) {
       if (!is.null(config$wood_constants$c_dry_wood_J_kg_K) && !is.na(config$wood_constants$c_dry_wood_J_kg_K)) {
         updateNumericInput(session, "c_dry_wood_J_kg_K", value = config$wood_constants$c_dry_wood_J_kg_K)
       }
-      if (!is.null(config$wood_constants$rho_sap_kg_m3) && !is.na(config$wood_constants$rho_sap_kg_m3)) {
-        updateNumericInput(session, "rho_sap_kg_m3", value = config$wood_constants$rho_sap_kg_m3)
-      }
-      if (!is.null(config$wood_constants$rho_cell_wall_kg_m3) && !is.na(config$wood_constants$rho_cell_wall_kg_m3)) {
-        updateNumericInput(session, "rho_cell_wall_kg_m3", value = config$wood_constants$rho_cell_wall_kg_m3)
-      }
-      if (!is.null(config$wood_constants$c_dry_wood_J_kg_K) && !is.na(config$wood_constants$c_dry_wood_J_kg_K)) {
-        updateNumericInput(session, "c_dry_wood_J_kg_K", value = config$wood_constants$c_dry_wood_J_kg_K)
-      }
-      if (!is.null(config$wood_constants$rho_sap_kg_m3) && !is.na(config$wood_constants$rho_sap_kg_m3)) {
-        updateNumericInput(session, "rho_sap_kg_m3", value = config$wood_constants$rho_sap_kg_m3)
-      }
-      if (!is.null(config$wood_constants$rho_cell_wall_kg_m3) && !is.na(config$wood_constants$rho_cell_wall_kg_m3)) {
-        updateNumericInput(session, "rho_cell_wall_kg_m3", value = config$wood_constants$rho_cell_wall_kg_m3)
-      }
-      if (!is.null(config$wood_constants$c_dry_wood_J_kg_K) && !is.na(config$wood_constants$c_dry_wood_J_kg_K)) {
-        updateNumericInput(session, "c_dry_wood_J_kg_K", value = config$wood_constants$c_dry_wood_J_kg_K)
-      }
 
         # Update physical properties
         if (!is.null(config$wood_property$species)) {
           updateTextInput(session, "species", value = config$wood_property$species)
         }
+      if (!is.null(config$config_name)) {
+        updateTextInput(session, "wood_config_name", value = config$config_name)
+      }
         if (!is.null(config$wood_property$wood_type)) {
           updateSelectInput(session, "wood_type", selected = config$wood_property$wood_type)
         }
         if (!is.null(config$wood_measurements$density_dry_kg_m3) && !is.na(config$wood_measurements$density_dry_kg_m3)) {
-          updateNumericInput(session, "dry_density", value = config$wood_measurements$density_dry_kg_m3)
+          updateNumericInput(session, "density_dry_kg_m3", value = config$wood_measurements$density_dry_kg_m3)
         }
         if (!is.null(config$wood_measurements$density_fresh_kg_m3) && !is.na(config$wood_measurements$density_fresh_kg_m3)) {
-          updateNumericInput(session, "fresh_density", value = config$wood_measurements$density_fresh_kg_m3)
+          updateNumericInput(session, "density_fresh_kg_m3", value = config$wood_measurements$density_fresh_kg_m3)
         }
         if (!is.null(config$derived_properties$mc_kg_kg) && !is.na(config$derived_properties$mc_kg_kg)) {
           updateNumericInput(session, "moisture_content", value = config$derived_properties$mc_kg_kg)
         }
 
+
+      # Update wood measurements
+      if (!is.null(config$wood_measurements)) {
+        if (!is.null(config$wood_measurements$fresh_weight_g) && !is.na(config$wood_measurements$fresh_weight_g)) {
+          updateNumericInput(session, "fresh_weight_g", value = config$wood_measurements$fresh_weight_g)
+        }
+        if (!is.null(config$wood_measurements$dry_weight_g) && !is.na(config$wood_measurements$dry_weight_g)) {
+          updateNumericInput(session, "dry_weight_g", value = config$wood_measurements$dry_weight_g)
+        }
+        if (!is.null(config$wood_measurements$fresh_volume_cm3) && !is.na(config$wood_measurements$fresh_volume_cm3)) {
+          updateNumericInput(session, "fresh_volume_cm3", value = config$wood_measurements$fresh_volume_cm3)
+        }
+      }
         # Update tree measurements
         if (!is.null(config$tree_measurements)) {
           if (!is.null(config$tree_measurements$dbh)) {
@@ -419,6 +366,19 @@ configServer <- function(id, heat_pulse_data = NULL) {
           if (!is.null(config$tree_measurements$sapwood_depth)) {
             updateNumericInput(session, "sapwood_depth", value = config$tree_measurements$sapwood_depth)
           }
+        if (!is.null(config$tree_measurements$sapwood_area) && !is.na(config$tree_measurements$sapwood_area)) {
+          updateNumericInput(session, "sapwood_area", value = config$tree_measurements$sapwood_area)
+        }
+      }
+
+      # Update wound correction parameters
+      if (!is.null(config$wound_correction)) {
+        if (!is.null(config$wound_correction$drill_bit_diameter_mm) && !is.na(config$wound_correction$drill_bit_diameter_mm)) {
+          updateNumericInput(session, "drill_bit_diameter_mm", value = config$wound_correction$drill_bit_diameter_mm)
+        }
+        if (!is.null(config$wound_correction$wound_addition_mm) && !is.na(config$wound_correction$wound_addition_mm)) {
+          updateNumericInput(session, "wound_addition_mm", value = config$wound_correction$wound_addition_mm)
+        }
           if (!is.null(config$tree_measurements$sapwood_area)) {
             updateNumericInput(session, "sapwood_area", value = config$tree_measurements$sapwood_area)
           }
@@ -447,7 +407,7 @@ configServer <- function(id, heat_pulse_data = NULL) {
 
       # Update all fields when properties change
       if (!is.null(config$wood_constants$thermal_diffusivity_default_cm2_s) && !is.na(config$wood_constants$thermal_diffusivity_default_cm2_s)) {
-        updateNumericInput(session, "thermal_diffusivity", value = config$wood_constants$thermal_diffusivity_default_cm2_s)
+        updateNumericInput(session, "thermal_diffusivity_default_cm2_s", value = config$wood_constants$thermal_diffusivity_default_cm2_s)
       }
       if (!is.null(config$wood_constants$K_sap_W_m_K) && !is.na(config$wood_constants$K_sap_W_m_K)) {
         updateNumericInput(session, "K_sap_W_m_K", value = config$wood_constants$K_sap_W_m_K)
@@ -474,10 +434,10 @@ configServer <- function(id, heat_pulse_data = NULL) {
         updateNumericInput(session, "c_dry_wood_J_kg_K", value = config$wood_constants$c_dry_wood_J_kg_K)
       }
       if (!is.null(config$wood_measurements$density_dry_kg_m3) && !is.na(config$wood_measurements$density_dry_kg_m3)) {
-        updateNumericInput(session, "dry_density", value = config$wood_measurements$density_dry_kg_m3)
+        updateNumericInput(session, "density_dry_kg_m3", value = config$wood_measurements$density_dry_kg_m3)
       }
       if (!is.null(config$wood_measurements$density_fresh_kg_m3) && !is.na(config$wood_measurements$density_fresh_kg_m3)) {
-        updateNumericInput(session, "fresh_density", value = config$wood_measurements$density_fresh_kg_m3)
+        updateNumericInput(session, "density_fresh_kg_m3", value = config$wood_measurements$density_fresh_kg_m3)
       }
       if (!is.null(config$derived_properties$mc_kg_kg) && !is.na(config$derived_properties$mc_kg_kg)) {
         updateNumericInput(session, "moisture_content", value = config$derived_properties$mc_kg_kg)
@@ -485,10 +445,26 @@ configServer <- function(id, heat_pulse_data = NULL) {
       if (!is.null(config$wood_property$species)) {
         updateTextInput(session, "species", value = config$wood_property$species)
       }
+      if (!is.null(config$config_name)) {
+        updateTextInput(session, "wood_config_name", value = config$config_name)
+      }
       if (!is.null(config$wood_property$wood_type)) {
         updateSelectInput(session, "wood_type", selected = config$wood_property$wood_type)
       }
 
+
+      # Update wood measurements
+      if (!is.null(config$wood_measurements)) {
+        if (!is.null(config$wood_measurements$fresh_weight_g) && !is.na(config$wood_measurements$fresh_weight_g)) {
+          updateNumericInput(session, "fresh_weight_g", value = config$wood_measurements$fresh_weight_g)
+        }
+        if (!is.null(config$wood_measurements$dry_weight_g) && !is.na(config$wood_measurements$dry_weight_g)) {
+          updateNumericInput(session, "dry_weight_g", value = config$wood_measurements$dry_weight_g)
+        }
+        if (!is.null(config$wood_measurements$fresh_volume_cm3) && !is.na(config$wood_measurements$fresh_volume_cm3)) {
+          updateNumericInput(session, "fresh_volume_cm3", value = config$wood_measurements$fresh_volume_cm3)
+        }
+      }
       # Update tree measurements
       if (!is.null(config$tree_measurements)) {
         if (!is.null(config$tree_measurements$dbh) && !is.na(config$tree_measurements$dbh)) {
@@ -499,6 +475,19 @@ configServer <- function(id, heat_pulse_data = NULL) {
         }
         if (!is.null(config$tree_measurements$sapwood_depth) && !is.na(config$tree_measurements$sapwood_depth)) {
           updateNumericInput(session, "sapwood_depth", value = config$tree_measurements$sapwood_depth)
+        }
+        if (!is.null(config$tree_measurements$sapwood_area) && !is.na(config$tree_measurements$sapwood_area)) {
+          updateNumericInput(session, "sapwood_area", value = config$tree_measurements$sapwood_area)
+        }
+      }
+
+      # Update wound correction parameters
+      if (!is.null(config$wound_correction)) {
+        if (!is.null(config$wound_correction$drill_bit_diameter_mm) && !is.na(config$wound_correction$drill_bit_diameter_mm)) {
+          updateNumericInput(session, "drill_bit_diameter_mm", value = config$wound_correction$drill_bit_diameter_mm)
+        }
+        if (!is.null(config$wound_correction$wound_addition_mm) && !is.na(config$wound_correction$wound_addition_mm)) {
+          updateNumericInput(session, "wound_addition_mm", value = config$wound_correction$wound_addition_mm)
         }
         if (!is.null(config$tree_measurements$sapwood_area) && !is.na(config$tree_measurements$sapwood_area)) {
           updateNumericInput(session, "sapwood_area", value = config$tree_measurements$sapwood_area)
@@ -617,321 +606,8 @@ configServer <- function(id, heat_pulse_data = NULL) {
       )
     })
 
-    # Wood manual entry UI - UPDATED VERSION
-    output$wood_manual_ui <- renderUI({
-      ns <- session$ns
+    # Display derived properties in Derived Properties tab
 
-      tagList(
-        tabsetPanel(
-          id = ns("wood_tabs"),
-
-          # Wood Measurements Tab (NEW - Method 1 or 2)
-          tabPanel(
-            "Wood Measurements",
-            br(),
-
-            # Method selector
-            radioButtons(
-              ns("wood_input_method"),
-              "Input Method:",
-              choices = c(
-                "Method 1: Weight & Volume" = "method1",
-                "Method 2: Dual Density (RECOMMENDED)" = "method2"
-              ),
-              selected = "method1"
-            ),
-
-            # Help text
-            uiOutput(ns("method_help_text")),
-
-            # Method 1 inputs
-            conditionalPanel(
-              condition = sprintf("input['%s'] == 'method1'", ns("wood_input_method")),
-
-              p(class = "help-text",
-                "Measure fresh weight immediately after sampling, then oven-dry at 105°C."),
-
-              numericInput(ns("fresh_weight_g"),
-                          "Fresh Weight (g):",
-                          value = NULL, min = 0.01, max = 100, step = 0.0001),
-
-              numericInput(ns("dry_weight_g"),
-                          "Dry Weight (g):",
-                          value = NULL, min = 0.01, max = 100, step = 0.0001),
-
-              numericInput(ns("fresh_volume_cm3"),
-                          "Fresh Volume (cm³):",
-                          value = NULL, min = 0.01, max = 100, step = 0.0001)
-            ),
-
-            # Method 2 inputs
-            conditionalPanel(
-              condition = sprintf("input['%s'] == 'method2'", ns("wood_input_method")),
-
-              h5("Dual Density Measurements (RECOMMENDED):"),
-              p(class = "help-text",
-                "Measure BOTH densities on the same sample. Volume cancels out!"),
-
-              numericInput(ns("density_dry_kg_m3"),
-                          "Dry Wood Density (kg/m³):",
-                          value = NULL, min = 200, max = 1000, step = 10),
-
-              numericInput(ns("density_fresh_kg_m3"),
-                          "Fresh Wood Density (kg/m³):",
-                          value = NULL, min = 400, max = 1400, step = 10)
-            )
-          ),
-
-          # Wood Constants Tab (UPDATED - replaces Thermal Properties)
-          tabPanel(
-            "Wood Constants",
-            br(),
-            p(class = "help-text",
-              "Physical constants for wood and sap. Defaults from Burgess et al. (2001)."),
-
-            h5("Basic Properties:"),
-            textInput(ns("species"), "Species:", value = "unknown"),
-
-            selectInput(ns("wood_type"), "Wood Type:",
-                       choices = c("Softwood" = "softwood",
-                                  "Hardwood" = "hardwood",
-                                  "Unknown" = "unknown"),
-                       selected = "softwood"),
-
-            hr(),
-
-            h5("Thermal Constants:"),
-
-            fluidRow(
-              column(
-                width = 6,
-                numericInput(ns("thermal_diffusivity_default_cm2_s"),
-                            "Default Thermal Diffusivity (cm²/s):",
-                            value = 0.0025, min = 0.001, max = 0.01, step = 0.0001),
-
-                numericInput(ns("c_sap_J_kg_K"),
-                            "Sap Specific Heat (J/(kg·K)):",
-                            value = 4186, min = 4000, max = 4400, step = 10),
-
-                numericInput(ns("rho_cell_wall_kg_m3"),
-                            "Cell Wall Density (kg/m³):",
-                            value = 1530, min = 1400, max = 1600, step = 10)
-              ),
-              column(
-                width = 6,
-                numericInput(ns("rho_sap_kg_m3"),
-                            "Sap Density (kg/m³):",
-                            value = 1000, min = 900, max = 1100, step = 10),
-
-                numericInput(ns("K_sap_W_m_K"),
-                            "Sap Thermal Conductivity (W/(m·K)):",
-                            value = 0.5984, min = 0.5, max = 0.7, step = 0.01),
-
-                numericInput(ns("c_dry_wood_J_kg_K"),
-                            "Dry Wood Specific Heat (J/(kg·K)):",
-                            value = 1200, min = 1000, max = 1400, step = 10)
-              )
-            )
-          ),
-
-          # Wound Correction Tab (NEW)
-          tabPanel(
-            "Wound Correction",
-            br(),
-
-            h5("Initial Wound Configuration:"),
-            p(class = "help-text",
-              "The wound around the probe affects the measured sapwood area."),
-
-            numericInput(ns("drill_bit_diameter_mm"),
-                        "Drill Bit Diameter (mm):",
-                        value = 2.0, min = 1.0, max = 5.0, step = 0.1),
-
-            numericInput(ns("wound_addition_mm"),
-                        "Wound Addition per Side (mm):",
-                        value = 0.3, min = 0.0, max = 1.0, step = 0.05),
-
-            uiOutput(ns("initial_wound_display")),
-
-            hr(),
-
-            h5("Temporal Wound Tracking (Optional):"),
-            checkboxInput(ns("enable_temporal_wound"),
-                         "Enable temporal wound expansion tracking",
-                         value = FALSE),
-
-            conditionalPanel(
-              condition = sprintf("input['%s'] == true", ns("enable_temporal_wound")),
-
-              dateInput(ns("wound_initial_date"),
-                       "Installation Date:",
-                       value = NULL),
-
-              dateInput(ns("wound_final_date"),
-                       "Final Measurement Date:",
-                       value = NULL),
-
-              numericInput(ns("wound_final_diameter_mm"),
-                          "Final Wound Diameter (mm):",
-                          value = NULL, min = 2.0, max = 10.0, step = 0.1),
-
-              uiOutput(ns("wound_growth_summary"))
-            ),
-
-            p(class = "text-muted",
-              "Initial wound = drill bit + 2 × wound addition. Default: 2.0 + 2(0.3) = 2.6 mm")
-          ),
-
-          # Derived Properties Tab (NEW)
-          tabPanel(
-            "Derived Properties",
-            br(),
-
-            actionButton(ns("calculate_wood_props"),
-                        "Calculate Derived Properties",
-                        icon = icon("calculator"),
-                        class = "btn-success",
-                        style = "width: 100%; margin-bottom: 20px;"),
-
-            p(class = "help-text",
-              "Calculate wood properties based on your measurements. Requires Method 1 or Method 2 measurements."),
-
-            uiOutput(ns("derived_properties_display"))
-          ),
-
-          # Tree Measurements Tab (UNCHANGED)
-          tabPanel(
-            "Tree Measurements",
-            br(),
-            p(class = "help-text", "Optional - tree-specific measurements for scaling calculations."),
-
-            numericInput(ns("dbh"), "DBH - Diameter at Breast Height (cm):",
-                        value = 20, min = 1, max = 300, step = 0.1),
-
-            numericInput(ns("bark_thickness"), "Bark Thickness (cm):",
-                        value = 0.5, min = 0.1, max = 5, step = 0.1),
-
-            numericInput(ns("sapwood_depth"), "Sapwood Depth (cm):",
-                        value = 3.0, min = 0.1, max = 50, step = 0.1),
-
-            div(
-              id = ns("sapwood_area_container"),
-              numericInput(ns("sapwood_area"), "Sapwood Area (cm²):",
-                          value = NULL, min = 1, max = 10000, step = 1)
-            ),
-            tags$style(HTML(sprintf("
-              #%s.calculated-value input {
-                color: #2196F3 !important;
-                font-weight: bold !important;
-              }
-              #%s.calculated-value label::after {
-                content: ' (calculated)';
-                color: #2196F3;
-                font-weight: normal;
-                font-size: 0.9em;
-                font-style: italic;
-              }
-            ", ns("sapwood_area_container"), ns("sapwood_area_container"))))
-          ),
-
-          # Quality Thresholds Tab (UNCHANGED)
-          tabPanel(
-            "Quality Thresholds",
-            br(),
-            p(class = "help-text", "Set acceptable ranges for quality control."),
-
-            numericInput(ns("max_velocity"), "Maximum Velocity (cm/hr):",
-                        value = 200, min = 50, max = 500, step = 10),
-
-            numericInput(ns("min_velocity"), "Minimum Velocity (cm/hr):",
-                        value = -50, min = -100, max = 0, step = 5),
-
-            sliderInput(ns("temp_range"), "Temperature Range (°C):",
-                       min = -20, max = 80, value = c(-10, 60), step = 1)
-          )
-        ),
-
-        hr(),
-        actionButton(ns("apply_wood_manual"), "Apply Manual Configuration", class = "btn-primary", style = "width: 100%;")
-      )
-    })
-
-    # Calculate and display derived thermal values
-    output$derived_thermal_values <- renderUI({
-      # Get current values
-      diff <- input$thermal_diffusivity
-      cond <- input$thermal_conductivity
-      cap <- input$volumetric_heat_capacity
-
-      derived <- list()
-
-      # Calculate missing value if 2 of 3 are provided
-      # Formula: diffusivity = conductivity / capacity
-      # Therefore: conductivity = diffusivity * capacity
-      #            capacity = conductivity / diffusivity
-
-      if (!is.null(diff) && !is.null(cond) && is.null(cap)) {
-        # Calculate capacity
-        cap_calc <- cond / (diff * 10000)  # Convert diff from cm²/s to m²/s
-        derived$volumetric_heat_capacity <- cap_calc
-      } else if (!is.null(diff) && is.null(cond) && !is.null(cap)) {
-        # Calculate conductivity
-        cond_calc <- diff * 10000 * cap  # Convert diff to m²/s
-        derived$thermal_conductivity <- cond_calc
-      } else if (is.null(diff) && !is.null(cond) && !is.null(cap)) {
-        # Calculate diffusivity
-        diff_calc <- cond / cap / 10000  # Result in cm²/s
-        derived$thermal_diffusivity <- diff_calc
-      }
-
-      if (length(derived) > 0) {
-        div(
-          style = "margin-top: 15px; padding: 10px; background-color: #E3F2FD; border-radius: 3px;",
-          p(strong("Derived Values:"), class = "derived-value"),
-          tags$ul(
-            lapply(names(derived), function(name) {
-              tags$li(
-                span(paste0(gsub("_", " ", tools::toTitleCase(name)), ":")),
-                span(sprintf(" %.4g", derived[[name]]), class = "derived-value")
-              )
-            })
-          )
-        )
-      }
-    })
-
-    # Method help text
-    output$method_help_text <- renderUI({
-      if (input$wood_input_method == "method1") {
-        div(
-          class = "alert alert-info",
-          style = "margin-bottom: 15px;",
-          tags$strong(icon("flask"), " Method 1: Weight & Volume"),
-          tags$p(style = "margin-top: 10px; margin-bottom: 5px;",
-            "Directly measure fresh weight, dry weight, and volume from wood samples."),
-          tags$ul(
-            tags$li("Most intuitive approach"),
-            tags$li("Fresh weight must be measured quickly after sampling"),
-            tags$li("Requires oven access for drying to constant weight"),
-            tags$li("Volume measured by water displacement")
-          )
-        )
-      } else {
-        div(
-          class = "alert alert-success",
-          style = "margin-bottom: 15px;",
-          tags$strong(icon("check-circle"), " Method 2: Dual Density (RECOMMENDED)"),
-          tags$p(style = "margin-top: 10px; margin-bottom: 5px;",
-            "Measure both dry and fresh density on the same sample."),
-          tags$ul(
-            tags$li(tags$strong("Easier workflow:"), " no fresh weight timing pressure"),
-            tags$li(tags$strong("Same results:"), " back-calculates moisture content from density ratio"),
-            tags$li(tags$strong("Complete:"), " calculates ALL properties including Z factor"),
-            tags$li(tags$strong("Simpler:"), " volume measurement only once")
-          )
-        )
-      }
-    })
 
     # Initial wound display
     output$initial_wound_display <- renderUI({
@@ -1023,87 +699,19 @@ configServer <- function(id, heat_pulse_data = NULL) {
     })
 
     # Calculate wood properties when requested
-    wood_properties_calculated <- eventReactive(input$calculate_wood_props, {
-      req(wood_properties())
 
-      wood <- wood_properties()
 
-      # Populate measurements based on method
-      if (input$wood_input_method == "method1") {
-        req(input$fresh_weight_g, input$dry_weight_g, input$fresh_volume_cm3)
-
-        wood$wood_measurements$fresh_weight_g <- input$fresh_weight_g
-        wood$wood_measurements$dry_weight_g <- input$dry_weight_g
-        wood$wood_measurements$fresh_volume_cm3 <- input$fresh_volume_cm3
-        wood$wood_measurements$density_dry_kg_m3 <- NULL
-        wood$wood_measurements$density_fresh_kg_m3 <- NULL
-
-      } else {
-        req(input$density_dry_kg_m3, input$density_fresh_kg_m3)
-
-        wood$wood_measurements$density_dry_kg_m3 <- input$density_dry_kg_m3
-        wood$wood_measurements$density_fresh_kg_m3 <- input$density_fresh_kg_m3
-        wood$wood_measurements$fresh_weight_g <- NULL
-        wood$wood_measurements$dry_weight_g <- NULL
-        wood$wood_measurements$fresh_volume_cm3 <- NULL
-      }
-
-      # Populate wound correction
-      wood$wound_correction$drill_bit_diameter_mm <- input$drill_bit_diameter_mm
-      wood$wound_correction$wound_addition_mm <- input$wound_addition_mm
-
-      if (input$enable_temporal_wound &&
-          !is.null(input$wound_initial_date) &&
-          !is.null(input$wound_final_date) &&
-          !is.null(input$wound_final_diameter_mm)) {
-        wood$wound_correction$initial_date <- as.character(input$wound_initial_date)
-        wood$wound_correction$final_date <- as.character(input$wound_final_date)
-        wood$wound_correction$final_diameter_mm <- input$wound_final_diameter_mm
-      } else {
-        wood$wound_correction$initial_date <- NULL
-        wood$wound_correction$final_date <- NULL
-        wood$wound_correction$final_diameter_mm <- NULL
-      }
-
-      # Calculate derived properties
-      tryCatch({
-        wood_calc <- sapfluxr::calculate_wood_properties(wood)
-
-        showNotification(
-          "Wood properties calculated successfully!",
-          type = "message",
-          duration = 3
-        )
-
-        wood_calc
-      }, error = function(e) {
-        showNotification(
-          paste("Error calculating wood properties:", e$message),
-          type = "error",
-          duration = 10
-        )
-        NULL
-      })
-    })
 
     # Derived properties display
     output$derived_properties_display <- renderUI({
-      # Check if calculate button has been pressed
-      if (input$calculate_wood_props == 0) {
-        return(div(
-          class = "alert alert-info",
-          icon("info-circle"),
-          " Click 'Calculate Derived Properties' button above to compute wood properties from your measurements."
-        ))
-      }
 
-      wood_calc <- wood_properties_calculated()
+      wood_calc <- wood_properties()
 
       if (is.null(wood_calc)) {
         return(div(
-          class = "alert alert-danger",
-          icon("exclamation-triangle"),
-          " Calculation failed. Check error message above and ensure all required measurements are provided."
+          class = "alert alert-info",
+          icon("info-circle"),
+          " No wood properties loaded. Upload a YAML file or enter measurements manually."
         ))
       }
 
@@ -1111,9 +719,9 @@ configServer <- function(id, heat_pulse_data = NULL) {
 
       if (is.null(deriv) || all(sapply(deriv, is.null))) {
         return(div(
-          class = "alert alert-warning",
-          icon("exclamation-triangle"),
-          " No derived properties calculated. Ensure you have provided all required measurements."
+          class = "alert alert-info",
+          icon("info-circle"),
+          " Enter wood measurements (Method 1 or 2) to automatically calculate derived properties."
         ))
       }
 
@@ -1191,36 +799,6 @@ configServer <- function(id, heat_pulse_data = NULL) {
     })
 
     # Calculate and update sapwood area when DBH or sapwood_depth changes
-    observe({
-      req(input$wood_mode == "manual")
-
-      dbh <- input$dbh
-      sapwood_depth <- input$sapwood_depth
-
-      if (!is.null(dbh) && !is.null(sapwood_depth) && dbh > 0 && sapwood_depth > 0) {
-        # Calculate sapwood area
-        # Outer radius = DBH/2, inner radius = DBH/2 - sapwood_depth
-        outer_r <- dbh / 2
-        inner_r <- max(0, outer_r - sapwood_depth)
-        sapwood_area <- pi * (outer_r^2 - inner_r^2)
-
-        # Update the sapwood_area input field
-        updateNumericInput(session, "sapwood_area", value = round(sapwood_area, 1))
-
-        # Add calculated-value class to the container for styling using JavaScript
-        session$sendCustomMessage(
-          type = "addClass",
-          message = list(id = session$ns("sapwood_area_container"), class = "calculated-value")
-        )
-      } else {
-        # Remove calculated-value class if inputs are invalid
-        session$sendCustomMessage(
-          type = "removeClass",
-          message = list(id = session$ns("sapwood_area_container"), class = "calculated-value")
-        )
-      }
-    })
-
     # Apply manual probe configuration
     observeEvent(input$apply_probe_manual, {
       # Create probe config from manual inputs
@@ -1299,122 +877,6 @@ configServer <- function(id, heat_pulse_data = NULL) {
       })
     })
 
-    # Apply manual wood configuration
-    observeEvent(input$apply_wood_manual, {
-      # Create wood properties from manual inputs
-      # This would call sapfluxr's WoodProperties R6 class
-      tryCatch({
-        # Get all values
-        # Create wood properties object with new structure
-        config <- sapfluxr::WoodProperties$new(
-          config_name = "Custom Manual Entry"
-        )
-
-        # Set wood_property (species, wood_type, etc.)
-        config$wood_property <- list(
-          species = input$species,
-          wood_type = input$wood_type,
-          temperature = 20,
-          comments = "Manual entry via Shiny app"
-        )
-
-        # Populate wood_constants
-        config$wood_constants <- list(
-          thermal_diffusivity_default_cm2_s = input$thermal_diffusivity_default_cm2_s,
-          rho_sap_kg_m3 = input$rho_sap_kg_m3,
-          c_sap_J_kg_K = input$c_sap_J_kg_K,
-          K_sap_W_m_K = input$K_sap_W_m_K,
-          rho_cell_wall_kg_m3 = input$rho_cell_wall_kg_m3,
-          c_dry_wood_J_kg_K = input$c_dry_wood_J_kg_K
-        )
-
-        # Populate wood_measurements based on selected method
-        config$wood_measurements <- list()
-
-        if (!is.null(input$wood_input_method) && input$wood_input_method == "method1") {
-          # Method 1: Weight & Volume
-          if (!is.null(input$fresh_weight_g)) {
-            config$wood_measurements$fresh_weight_g <- input$fresh_weight_g
-          }
-          if (!is.null(input$dry_weight_g)) {
-            config$wood_measurements$dry_weight_g <- input$dry_weight_g
-          }
-          if (!is.null(input$fresh_volume_cm3)) {
-            config$wood_measurements$fresh_volume_cm3 <- input$fresh_volume_cm3
-          }
-        } else {
-          # Method 2: Dual Density
-          if (!is.null(input$density_dry_kg_m3)) {
-            config$wood_measurements$density_dry_kg_m3 <- input$density_dry_kg_m3
-          }
-          if (!is.null(input$density_fresh_kg_m3)) {
-            config$wood_measurements$density_fresh_kg_m3 <- input$density_fresh_kg_m3
-          }
-        }
-
-        # Populate wound_correction
-        config$wound_correction <- list(
-          drill_bit_diameter_mm = input$drill_bit_diameter_mm,
-          wound_addition_mm = input$wound_addition_mm
-        )
-
-        if (!is.null(input$enable_temporal_wound) && input$enable_temporal_wound) {
-          if (!is.null(input$wound_initial_date)) {
-            config$wound_correction$initial_date <- as.character(input$wound_initial_date)
-          }
-          if (!is.null(input$wound_final_date)) {
-            config$wound_correction$final_date <- as.character(input$wound_final_date)
-          }
-          if (!is.null(input$wound_final_diameter_mm)) {
-            config$wound_correction$final_diameter_mm <- input$wound_final_diameter_mm
-          }
-        }
-
-        # Populate tree_measurements
-        config$tree_measurements <- list(
-          dbh = input$dbh,
-          bark_thickness = input$bark_thickness,
-          sapwood_depth = input$sapwood_depth,
-          sapwood_area = input$sapwood_area
-        )
-
-        # Populate quality_thresholds
-        config$quality_thresholds <- list(
-          max_velocity_cm_hr = input$max_velocity,
-          min_velocity_cm_hr = input$min_velocity,
-          temperature_range = input$temp_range
-        )
-
-        # Auto-calculate derived properties if measurements are present
-        has_measurements <- (!is.null(config$wood_measurements$density_dry_kg_m3) &&
-                            !is.na(config$wood_measurements$density_dry_kg_m3) &&
-                            !is.null(config$wood_measurements$density_fresh_kg_m3) &&
-                            !is.na(config$wood_measurements$density_fresh_kg_m3)) ||
-                           (!is.null(config$wood_measurements$fresh_weight_g) &&
-                            !is.na(config$wood_measurements$fresh_weight_g) &&
-                            !is.null(config$wood_measurements$dry_weight_g) &&
-                            !is.na(config$wood_measurements$dry_weight_g) &&
-                            !is.null(config$wood_measurements$fresh_volume_cm3) &&
-                            !is.na(config$wood_measurements$fresh_volume_cm3))
-
-        if (has_measurements) {
-          # Calculate derived properties
-          sapfluxr::calculate_wood_properties(config)
-        }
-
-        wood_properties(config)
-
-        # Notify with derived properties status
-        if (has_measurements) {
-          notify_success(session, "Success!", "Manual wood configuration applied and derived properties calculated")
-        } else {
-          notify_success(session, "Success!", "Manual wood configuration applied (no measurements provided for derived properties)")
-        }
-
-      }, error = function(e) {
-        notify_error(session, "Error creating configuration:", e$message)
-      })
-    })
 
     # Probe summary
     output$probe_summary <- renderUI({
@@ -1608,7 +1070,7 @@ configServer <- function(id, heat_pulse_data = NULL) {
               style = "font-size: 0.9em; padding-left: 20px;",
               tags$li(paste("Species:", if (!is.null(config$wood_property$species)) config$wood_property$species else "Unknown")),
               tags$li(paste("Wood type:", if (!is.null(config$wood_property$wood_type)) config$wood_property$wood_type else "Unknown")),
-              tags$li(paste("Thermal diffusivity:", config$wood_constants$thermal_diffusivity_default_cm2_s, "cm²/s")),
+              tags$li(paste("Thermal diffusivity:", if (!is.null(config$derived_properties$thermal_diffusivity_actual_cm2_s)) sprintf("%.6f", config$derived_properties$thermal_diffusivity_actual_cm2_s) else config$wood_constants$thermal_diffusivity_default_cm2_s, "cm²/s")),
               if (!is.null(config$wood_constants$K_sap_W_m_K)) {
                 tags$li(paste("Thermal conductivity:", config$wood_constants$K_sap_W_m_K, "W/(m·K)"))
               },
@@ -1709,27 +1171,27 @@ configServer <- function(id, heat_pulse_data = NULL) {
 
     # Get current wood properties for visualization (includes manual entry)
     current_wood_properties <- reactive({
-      if (input$wood_mode == "manual") {
-        # Return a minimal list structure with values from manual inputs
-        req(input$dbh, input$bark_thickness, input$sapwood_depth)
 
-        list(
-          tree_measurements = list(
-            dbh = input$dbh,
-            bark_thickness = input$bark_thickness,
-            sapwood_depth = input$sapwood_depth
-          )
-        )
-      } else {
-        # Use the stored configuration
-        req(wood_properties())
-        wood_properties()
-      }
+      # Always use the stored wood_properties() from the sync observer
+      # The tool handles all modes (builtin/upload/manual)
+      req(wood_properties())
+      wood_properties()
+
+
     })
 
-    # Validate probe and tree configuration
     validation_data <- reactive({
       req(current_probe_config(), current_wood_properties())
+
+      # Debug output
+      wp <- current_wood_properties()
+      cat("DEBUG validation_data reactive triggered\n")
+      if (!is.null(wp$tree_measurements)) {
+        cat("  DBH:", if(!is.null(wp$tree_measurements$dbh)) wp$tree_measurements$dbh else "NULL", "\n")
+        cat("  Bark thickness:", if(!is.null(wp$tree_measurements$bark_thickness)) wp$tree_measurements$bark_thickness else "NULL", "\n")
+        cat("  Sapwood depth:", if(!is.null(wp$tree_measurements$sapwood_depth)) wp$tree_measurements$sapwood_depth else "NULL", "\n")
+      }
+
 
       validate_probe_tree_config(
         probe_config = current_probe_config(),

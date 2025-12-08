@@ -135,14 +135,18 @@ correctionsUI <- function(id) {
                     HTML('Merge Short Segments <span style="color: #999; cursor: help;" title="Automatically merge segments shorter than Min Segment Days with adjacent segments. Recommended to avoid spurious changepoints from outliers."><i class="fa fa-circle-question"></i></span>'),
                     value = TRUE
                   )
-                )
+
+                ),
               ),
 
+              br(),
+
+              # Run detection button
               actionButton(
                 ns("detect_changepoints"),
-                "Detect Changepoints",
-                icon = icon("search"),
-                class = "btn-info",
+                "Run PELT Detection",
+                icon = icon("chart-line"),
+                class = "btn-primary",
                 width = "100%"
               ),
 
@@ -176,50 +180,34 @@ correctionsUI <- function(id) {
                       class = "btn-warning", width = "100%")
         ),
 
-        # Analysis settings
+        # Correction method selection and action button
         box(
           width = 12,
-          title = "Analysis Settings",
-          status = "warning",
-          solidHeader = TRUE,
-          collapsible = TRUE,
-
-          selectInput(
-            ns("sensor_to_correct"),
-            "Sensor to Correct",
-            choices = c("Outer" = "outer", "Inner" = "inner"),
-            selected = "outer"
-          ),
-
-          numericInput(
-            ns("k_assumed"),
-            "Assumed k (cm²/s)",
-            value = 0.0025,
-            min = 0.001,
-            max = 0.005,
-            step = 0.0001
-          ),
-
-          numericInput(
-            ns("probe_spacing"),
-            "Probe Spacing (cm)",
-            value = 0.5,
-            min = 0.1,
-            max = 2.0,
-            step = 0.1
-          )
-        ),
-
-        # Action button
-        box(
-          width = 12,
-          title = "Run Analysis",
+          title = "Apply Spacing Correction",
           status = "success",
           solidHeader = TRUE,
 
+          radioButtons(
+            ns("correction_method"),
+            "Correction Method:",
+            choices = c(
+              "Burgess (Physics-based, HRM only)" = "burgess",
+              "Linear Offset (Empirical, all methods)" = "linear"
+            ),
+            selected = "burgess",
+            inline = FALSE
+          ),
+
+          helpText(
+            tags$strong("Burgess:"), " Uses Burgess et al. (2001) physics-based correction. Most accurate for HRM with offsets ≤ ±5 cm/hr.", tags$br(),
+            tags$strong("Linear:"), " Simple empirical offset subtraction. Works for all methods (HRM, MHR, Tmax) and large offsets."
+          ),
+
+          br(),
+
           actionButton(
             ns("run_correction"),
-            "Apply Segment-Based Spacing Correction",
+            "Apply Correction",
             icon = icon("play"),
             class = "btn-primary",
             width = "100%"
@@ -240,6 +228,14 @@ correctionsUI <- function(id) {
           collapsible = TRUE,
 
           helpText("Visualise daily minimum velocities and changepoints. Click on the plot to add a changepoint at that date."),
+
+          radioButtons(
+            ns("display_sensor"),
+            "Sensor to Display:",
+            choices = c("Outer" = "outer", "Inner" = "inner"),
+            selected = "outer",
+            inline = TRUE
+          ),
 
           checkboxInput(
             ns("show_original_data"),
@@ -465,6 +461,8 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
     observeEvent(input$detect_changepoints, {
       req(vh_results())
 
+      vh_data <- vh_results()
+
       # Show waiter
       waiter <- waiter::Waiter$new(
         html = waiter::spin_fading_circles(),
@@ -472,12 +470,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
       )
       waiter$show()
 
-      # Ensure waiter is always hidden, even if code returns early or errors
-      on.exit(waiter$hide(), add = TRUE)
-
       tryCatch({
-        vh_data <- vh_results()
-
         # Step 1: Calculate daily minima
         daily_min <- sapfluxr::calculate_daily_minima(
           vh_data = vh_data,
@@ -487,6 +480,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         )
 
         if (nrow(daily_min) < 10) {
+          waiter$hide()
           showNotification(
             "Not enough data for changepoint detection (need at least 10 days)",
             type = "error",
@@ -510,15 +504,26 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
 
         cpt_result$segments <- segments
 
-        rv$detected_result <- cpt_result
+        # Hide waiter after detection completes
+        waiter$hide()
 
         if (length(cpt_result$changepoints) == 0) {
+          # No changepoints detected
+          # Only clear rv$detected_result if it was previously set
+          # This avoids triggering plot re-render if already NULL
+          if (!is.null(rv$detected_result)) {
+            rv$detected_result <- NULL
+          }
+
           showNotification(
             "No changepoints detected with current settings. Try reducing penalty or minimum segment days.",
             type = "warning",
             duration = 5
           )
         } else {
+          # Update detected results - this will trigger plot re-render
+          rv$detected_result <- cpt_result
+
           showNotification(
             sprintf("Detected %d changepoint(s), creating %d segment(s)",
                    length(cpt_result$changepoints),
@@ -529,6 +534,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         }
 
       }, error = function(e) {
+        waiter$hide()
         showNotification(
           paste("Error detecting changepoints:", e$message),
           type = "error",
@@ -659,6 +665,38 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
     })
 
     # ==================================================================
+    # CACHED DAILY MINIMA CALCULATION
+    # ==================================================================
+
+    # Cache daily minima to avoid recalculating on every plot render
+    cached_daily_min <- reactive({
+      req(vh_results())
+
+      vh_data <- vh_results()
+
+      # Display sensor (single selection from radio button)
+      display_sensor <- if (!is.null(input$display_sensor)) {
+        input$display_sensor
+      } else {
+        "outer"  # Default
+      }
+
+      method <- if (!is.null(input$detect_method_filter)) {
+        input$detect_method_filter
+      } else {
+        "HRM"
+      }
+
+      # Calculate daily minima using DISPLAY sensor (user's current selection)
+      sapfluxr::calculate_daily_minima(
+        vh_data = vh_data,
+        sensor_position = display_sensor,
+        method = method,
+        vh_col = "Vh_cm_hr"
+      )
+    })
+
+    # ==================================================================
     # INTERACTIVE CHANGEPOINT PLOT
     # ==================================================================
 
@@ -668,14 +706,29 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
       # Add explicit dependency on changepoints to trigger re-render
       rv$changepoints
 
-      tryCatch({
-        vh_data <- vh_results()
+      # Also depend on detected results
+      rv$detected_result
 
-        # Use detection settings or defaults
-        sensor <- if (!is.null(input$detect_sensor_position)) {
-          input$detect_sensor_position
+      # Debug: Track when plot re-renders
+      start_time <- Sys.time()
+      message("=== PLOT RENDER START ===")
+
+      # Show progress during plot rendering for large datasets
+      withProgress(message = 'Rendering plot...', value = 0, {
+        incProgress(0.2)
+
+        tryCatch({
+          vh_data <- vh_results()
+          daily_min <- cached_daily_min()
+          incProgress(0.2)
+
+          message(sprintf("Daily minima cached: %d rows", nrow(daily_min)))
+
+        # Display sensor (single selection from radio button)
+        display_sensor <- if (!is.null(input$display_sensor)) {
+          input$display_sensor
         } else {
-          "outer"
+          "outer"  # Default
         }
 
         method <- if (!is.null(input$detect_method_filter)) {
@@ -683,14 +736,6 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         } else {
           "HRM"
         }
-
-        # Calculate daily minima for plotting
-        daily_min <- sapfluxr::calculate_daily_minima(
-          vh_data = vh_data,
-          sensor_position = sensor,
-          method = method,
-          vh_col = "Vh_cm_hr"
-        )
 
         if (nrow(daily_min) == 0) {
           return(plotly::plotly_empty())
@@ -712,9 +757,9 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
           NULL
         }
 
-        # Filter vh_data to same sensor/method for overlay
+        # Filter vh_data to DISPLAY sensors (can be both) and method for overlay
         vh_filtered <- vh_data[
-          vh_data$sensor_position == sensor &
+          vh_data$sensor_position == display_sensor &
           vh_data$method == method,
         ]
 
@@ -729,32 +774,44 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         n_confirmed <- if (!is.null(cpts_dates)) length(cpts_dates) else 0
         n_proposed <- if (!is.null(proposed_cpts)) length(proposed_cpts) else 0
 
-        message(sprintf("Plot rendering: %d confirmed changepoints, %d proposed changepoints",
-                       n_confirmed, n_proposed))
+          message(sprintf("Plot rendering: %d confirmed changepoints, %d proposed changepoints",
+                         n_confirmed, n_proposed))
 
-        # Create interactive plot
-        # NOTE: segments = NULL so they will be auto-generated from confirmed changepoints only
-        sapfluxr::plot_changepoints_interactive(
-          daily_min = daily_min,
-          changepoints = cpts_dates,  # Confirmed changepoints (red lines + baselines)
-          segments = NULL,  # Let plot auto-generate from confirmed changepoints
-          proposed_changepoints = proposed_cpts,  # Detected but not confirmed (orange lines, no baselines)
-          vh_data = vh_filtered,
-          title = sprintf("Daily Minimum Velocities - %s Sensor (%s)",
-                         toupper(sensor), method),
-          show_baseline_values = TRUE,
-          show_original_data = isTRUE(input$show_original_data)
-        )
+          incProgress(0.2, detail = "Calculating daily minima")
 
-      }, error = function(e) {
-        # Show error to user
-        showNotification(
-          paste("Error rendering changepoint plot:", e$message),
-          type = "error",
-          duration = 10
-        )
-        # Return empty plot on error
-        plotly::plotly_empty()
+          # Create interactive plot
+          incProgress(0.3, detail = "Generating plot")
+          # NOTE: segments = NULL so they will be auto-generated from confirmed changepoints only
+          p <- sapfluxr::plot_changepoints_interactive(
+            daily_min = daily_min,
+            changepoints = cpts_dates,  # Confirmed changepoints (red lines + baselines)
+            segments = NULL,  # Let plot auto-generate from confirmed changepoints
+            proposed_changepoints = proposed_cpts,  # Detected but not confirmed (orange lines, no baselines)
+            vh_data = vh_filtered,
+            title = sprintf("Daily Minimum Velocities - %s Sensor (%s)",
+                           toupper(display_sensor), method),
+            show_baseline_values = TRUE,
+            show_original_data = isTRUE(input$show_original_data)
+          )
+
+          incProgress(0.2, detail = "Finalizing")
+
+          end_time <- Sys.time()
+          elapsed <- as.numeric(difftime(end_time, start_time, units = "secs"))
+          message(sprintf("=== PLOT RENDER COMPLETE: %.2f seconds ===", elapsed))
+
+          p
+
+        }, error = function(e) {
+          # Show error to user
+          showNotification(
+            paste("Error rendering changepoint plot:", e$message),
+            type = "error",
+            duration = 10
+          )
+          # Return empty plot on error
+          plotly::plotly_empty()
+        })
       })
     })
 
@@ -785,7 +842,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
     # ==================================================================
 
     observeEvent(input$run_correction, {
-      req(vh_results())
+      req(vh_results(), wood_properties(), probe_config(), input$correction_method)
 
       vh_data <- vh_results()
 
@@ -800,35 +857,126 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
       on.exit(waiter$hide(), add = TRUE)
 
       tryCatch({
-        # Convert changepoints to Date objects
+        correction_method <- input$correction_method
+
+        # Convert changepoints to Date objects for segment-based correction
         # rv$changepoints is a list of POSIXct, convert each to Date
-        changepoint_dates <- if (length(rv$changepoints) > 0) {
-          vapply(rv$changepoints, as.Date, FUN.VALUE = as.Date("2000-01-01"))
+        changepoint_dates <- if (!is.null(rv$changepoints) && length(rv$changepoints) > 0) {
+          # Convert list to vector first, then to Date
+          cpts_vec <- do.call(c, rv$changepoints)
+          as.Date(cpts_vec)
         } else {
           NULL
         }
 
-        # Run segment-based spacing correction
-        result <- sapfluxr::apply_spacing_correction_per_segment(
-          vh_data = vh_data,
-          changepoints = changepoint_dates,
-          sensor_position = input$sensor_to_correct,
-          method = "HRM",
-          k_assumed = input$k_assumed,
-          probe_spacing = input$probe_spacing,
-          measurement_time = 80,
-          verbose = FALSE
-        )
+        # Get wood properties and probe config
+        wood_props <- wood_properties()
+        probe_conf <- probe_config()
 
-        rv$correction_result <- result
+        # Extract and validate required parameters
+        # Use actual calculated thermal diffusivity if available, otherwise fall back to default
+        if (!is.null(wood_props$derived_properties) &&
+            !is.null(wood_props$derived_properties$thermal_diffusivity_actual_cm2_s)) {
+          k_value <- wood_props$derived_properties$thermal_diffusivity_actual_cm2_s
+        } else if (!is.null(wood_props$wood_constants$thermal_diffusivity_default_cm2_s)) {
+          k_value <- wood_props$wood_constants$thermal_diffusivity_default_cm2_s
+        } else {
+          stop("No thermal diffusivity value found in wood properties")
+        }
+
+        # Calculate probe spacing from sensor positions
+        # ProbeConfiguration stores sensor_positions as a named list/vector
+        # For HRM, x = distance from heater to sensor (one-sided)
+        if (!is.null(probe_conf$sensor_positions)) {
+          positions <- unlist(probe_conf$sensor_positions)
+          # Spacing x is distance from heater (0) to sensor (convert mm to cm)
+          # For symmetric probes, use upstream distance (positive value)
+          probe_spacing <- max(abs(positions)) / 10
+        } else {
+          # Fallback to default ICT spacing
+          probe_spacing <- 0.5  # cm (5mm)
+        }
+
+        if (is.null(k_value) || length(k_value) == 0 || !is.numeric(k_value)) {
+          stop("Invalid thermal diffusivity in wood properties: ",
+               paste(capture.output(str(k_value)), collapse = " "))
+        }
+        if (is.null(probe_spacing) || length(probe_spacing) == 0 || !is.numeric(probe_spacing)) {
+          stop("Invalid probe spacing in probe configuration: ",
+               paste(capture.output(str(probe_spacing)), collapse = " "))
+        }
+
+        # Determine which correction to apply
+        if (correction_method == "burgess") {
+          # Burgess correction - loop through each sensor
+          corrected_data <- vh_data
+          sensors <- c("outer", "inner")
+
+          for (sensor in sensors) {
+            result <- sapfluxr::apply_spacing_correction_per_segment(
+              vh_data = corrected_data,
+              changepoints = changepoint_dates,
+              sensor_position = sensor,
+              method = "HRM",
+              k_assumed = k_value,
+              probe_spacing = probe_spacing,
+              measurement_time = 80,
+              verbose = FALSE
+            )
+            corrected_data <- result$vh_corrected
+          }
+
+          rv$correction_result <- list(
+            vh_corrected = corrected_data,
+            metadata = list(
+              method = "burgess",
+              n_segments = if (is.null(changepoint_dates)) 1 else length(changepoint_dates) + 1
+            )
+          )
+
+        } else {
+          # Linear offset correction
+          # Convert changepoints to datetime for zero periods
+          zero_periods <- if (length(rv$changepoints) > 0) {
+            lapply(seq_along(rv$changepoints), function(i) {
+              start_time <- if (i == 1) min(vh_data$datetime) else rv$changepoints[[i-1]]
+              end_time <- rv$changepoints[[i]]
+              list(start = start_time, end = end_time)
+            })
+          } else {
+            # No changepoints - use entire dataset as one period
+            list(list(
+              start = min(vh_data$datetime),
+              end = max(vh_data$datetime)
+            ))
+          }
+
+          result <- sapfluxr::apply_zero_flow_offset(
+            vh_data = vh_data,
+            zero_periods = zero_periods,
+            sensors = c("outer", "inner"),
+            methods = "HRM",
+            verbose = FALSE
+          )
+
+          rv$correction_result <- list(
+            vh_corrected = result,
+            metadata = list(
+              method = "linear",
+              n_segments = length(zero_periods)
+            )
+          )
+        }
 
         # Automatically apply corrections
-        rv$corrected_vh <- result$vh_corrected
+        rv$corrected_vh <- rv$correction_result$vh_corrected
         rv$correction_applied <- TRUE
 
-        n_segments <- result$metadata$n_segments
+        n_segments <- rv$correction_result$metadata$n_segments
+        method_name <- if (correction_method == "burgess") "Burgess" else "Linear Offset"
         showNotification(
-          sprintf("Spacing correction completed! Applied %d segment-specific corrections.", n_segments),
+          sprintf("%s correction completed! Applied %d segment-specific correction%s to both sensors.",
+                  method_name, n_segments, if (n_segments > 1) "s" else ""),
           type = "message",
           duration = 5
         )
