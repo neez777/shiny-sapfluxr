@@ -351,6 +351,7 @@ ui <- tagList(
     )
   )
 )
+)
 
 # Server ----
 server <- function(input, output, session) {
@@ -522,7 +523,7 @@ server <- function(input, output, session) {
 
       # Show pulse completeness if available (accounts for missing pulses)
       if (!is.null(data$validation$summary$pulse_completeness)) {
-        cat("Pulse Completeness:", round(data$validation$summary$pulse_completeness * 100, 2), "\%\n")
+        cat("Pulse Completeness:", round(data$validation$summary$pulse_completeness * 100, 2), "%\n")
         cat("  Actual pulses:", data$validation$summary$n_actual_pulses, "\n")
         cat("  Expected pulses:", data$validation$summary$n_expected_pulses, "\n")
         cat("  Missing pulses:", data$validation$summary$n_missing_pulses, "\n")
@@ -530,13 +531,13 @@ server <- function(input, output, session) {
           cat("  ** ", data$validation$summary$n_missing_pulses, " gap(s) detected in pulse sequence **\n")
         }
       } else {
-        cat("Overall Completeness:", round(data$validation$summary$overall_completeness * 100, 2), "\%\n")
+        cat("Overall Completeness:", round(data$validation$summary$overall_completeness * 100, 2), "%\n")
       }
 
       if (!is.null(data$validation$summary$data_completeness)) {
         cat("\nSensor Completeness:\n")
         for (sensor in names(data$validation$summary$data_completeness)) {
-          cat("  ", toupper(sensor), ":", round(data$validation$summary$data_completeness[sensor] * 100, 2), "\%\n")
+          cat("  ", toupper(sensor), ":", round(data$validation$summary$data_completeness[sensor] * 100, 2), "%\n")
         }
       }
 

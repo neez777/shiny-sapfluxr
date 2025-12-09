@@ -800,6 +800,9 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
           elapsed <- as.numeric(difftime(end_time, start_time, units = "secs"))
           message(sprintf("=== PLOT RENDER COMPLETE: %.2f seconds ===", elapsed))
 
+          # Register click event to avoid warnings
+          p <- p %>% plotly::event_register("plotly_click")
+
           p
 
         }, error = function(e) {
