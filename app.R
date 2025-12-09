@@ -155,8 +155,8 @@ ui <- tagList(
       tags$link(rel = "icon", type = "image/png", href = "sapfluxr.png"),
 
       # Background Image CSS (Inlined for Reverse Proxy Compatibility)
-      tags$style(HTML("
-        .content-wrapper {
+      tags$style(HTML(
+        ".content-wrapper {
           position: relative;
           z-index: 0;
         }
@@ -178,8 +178,8 @@ ui <- tagList(
       ")),
 
       # JavaScript to auto-close Shiny notifications (blue toasts) after 5 seconds
-      tags$script(HTML("
-        // Simple approach: every 500ms, check for and auto-close old notifications
+      tags$script(HTML(
+        "// Simple approach: every 500ms, check for and auto-close old notifications
         setInterval(function() {
           // Find all shiny notification elements
           var notifications = document.querySelectorAll('.shiny-notification');
@@ -350,7 +350,6 @@ ui <- tagList(
       )
     )
   )
-)
 )
 
 # Server ----
@@ -523,7 +522,7 @@ server <- function(input, output, session) {
 
       # Show pulse completeness if available (accounts for missing pulses)
       if (!is.null(data$validation$summary$pulse_completeness)) {
-        cat("Pulse Completeness:", round(data$validation$summary$pulse_completeness * 100, 2), "%\n")
+        cat("Pulse Completeness:", round(data$validation$summary$pulse_completeness * 100, 2), "\%\n")
         cat("  Actual pulses:", data$validation$summary$n_actual_pulses, "\n")
         cat("  Expected pulses:", data$validation$summary$n_expected_pulses, "\n")
         cat("  Missing pulses:", data$validation$summary$n_missing_pulses, "\n")
@@ -531,13 +530,13 @@ server <- function(input, output, session) {
           cat("  ** ", data$validation$summary$n_missing_pulses, " gap(s) detected in pulse sequence **\n")
         }
       } else {
-        cat("Overall Completeness:", round(data$validation$summary$overall_completeness * 100, 2), "%\n")
+        cat("Overall Completeness:", round(data$validation$summary$overall_completeness * 100, 2), "\%\n")
       }
 
       if (!is.null(data$validation$summary$data_completeness)) {
         cat("\nSensor Completeness:\n")
         for (sensor in names(data$validation$summary$data_completeness)) {
-          cat("  ", toupper(sensor), ":", round(data$validation$summary$data_completeness[sensor] * 100, 2), "%\n")
+          cat("  ", toupper(sensor), ":", round(data$validation$summary$data_completeness[sensor] * 100, 2), "\%\n")
         }
       }
 

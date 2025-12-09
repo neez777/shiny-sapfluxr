@@ -79,18 +79,6 @@
   height: 100%;
 }
 
-/* Header Title Color */
-.main-header .logo,
-.main-header .logo a {
-  color: #6A8B6F !important; /* Eucalyptus green */
-  font-weight: bold;
-  text-decoration: none !important;
-}
-
-.main-header .logo a:hover {
-  color: #8FBC96 !important; /* Lighter green on hover */
-}
-
 /* Help text styling */
 .help-text {
   color: #666;
@@ -169,3 +157,15 @@
 
 /* --- Background Image Watermark --- */
 /* MOVED TO app.R to fix reverse proxy path resolution issues */
+
+/* Header Title Color */
+.main-header .logo,
+.main-header .logo a {
+  color: #6A8B6F !important; /* Eucalyptus green */
+  font-weight: bold;
+  text-decoration: none !important;
+}
+
+.main-header .logo a:hover {
+  color: #8FBC96 !important; /* Lighter green on hover */
+}
