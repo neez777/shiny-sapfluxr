@@ -738,7 +738,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         }
 
         if (nrow(daily_min) == 0) {
-          return(plotly::plotly_empty())
+          return(plotly::plotly_empty(source = "changepoint_plot") %>% plotly::event_register("plotly_click"))
         }
 
         # Convert current changepoints to dates for plotting
@@ -800,6 +800,9 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
           elapsed <- as.numeric(difftime(end_time, start_time, units = "secs"))
           message(sprintf("=== PLOT RENDER COMPLETE: %.2f seconds ===", elapsed))
 
+          # Register click event to avoid warnings
+          p <- p %>% plotly::event_register("plotly_click")
+
           p
 
         }, error = function(e) {
@@ -810,7 +813,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
             duration = 10
           )
           # Return empty plot on error
-          plotly::plotly_empty()
+          plotly::plotly_empty(source = "changepoint_plot") %>% plotly::event_register("plotly_click")
         })
       })
     })

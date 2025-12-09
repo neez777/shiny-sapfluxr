@@ -1453,7 +1453,7 @@ plotTimeseriesServer <- function(id, vh_results) {
         cat("Available methods:", paste(available_methods(), collapse = ", "), "\n")
 
         # Return empty plot with error message
-        plot_ly() %>%
+        plot_ly(source = "timeseries") %>%
           layout(
             title = list(
               text = paste("Plot Error:", e$message),
@@ -1461,7 +1461,9 @@ plotTimeseriesServer <- function(id, vh_results) {
             ),
             xaxis = list(title = "Time"),
             yaxis = list(title = "Vh (cm/hr)")
-          )
+          ) %>%
+          event_register("plotly_relayout") %>%
+          event_register("plotly_click")
       })
     })
 
