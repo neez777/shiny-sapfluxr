@@ -21,17 +21,17 @@ library(fresh)
 library(sapfluxr)
 
 # Source modules
-source("R/notify_helper.R")
-source("R/mod_data_upload.R")
-source("R/mod_clock_drift.R")
-source("R/mod_config.R")
-source("R/mod_methods.R")
-source("R/mod_corrections.R")
-source("R/mod_plot_timeseries.R")
-source("R/mod_pulse_trace.R")
-source("R/mod_tool_probe.R")
-source("R/mod_tool_wood.R")
-source("R/utils.R")
+source("modules/notify_helper.R")
+source("modules/mod_data_upload.R")
+source("modules/mod_clock_drift.R")
+source("modules/mod_config.R")
+source("modules/mod_methods.R")
+source("modules/mod_corrections.R")
+source("modules/mod_plot_timeseries.R")
+source("modules/mod_pulse_trace.R")
+source("modules/mod_tool_probe.R")
+source("modules/mod_tool_wood.R")
+source("modules/utils.R")
 
 # Increase file upload size limit
 # Default is 5MB - we need to handle large sap flow data files (100s of MB)
@@ -153,6 +153,29 @@ ui <- tagList(
     tags$head(
       tags$link(rel = "stylesheet", type = "text/css", href = "custom.css"),
       tags$link(rel = "icon", type = "image/png", href = "sapfluxr.png"),
+
+      # Background Image CSS (Inlined for Reverse Proxy Compatibility)
+      tags$style(HTML("
+        .content-wrapper {
+          position: relative;
+          z-index: 0;
+        }
+        .content-wrapper::before {
+          content: \"\";
+          position: fixed;
+          bottom: 0px;
+          right: 0px;
+          width: 702px;
+          height: 473px;
+          background-image: url('sapfluxr_bg.png');
+          background-repeat: no-repeat;
+          background-position: bottom right;
+          background-size: contain;
+          opacity: 0.10;
+          z-index: 0;
+          pointer-events: none;
+        }
+      ")),
 
       # JavaScript to auto-close Shiny notifications (blue toasts) after 5 seconds
       tags$script(HTML("

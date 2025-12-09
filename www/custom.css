@@ -79,6 +79,18 @@
   height: 100%;
 }
 
+/* Header Title Color */
+.main-header .logo,
+.main-header .logo a {
+  color: #6A8B6F !important; /* Eucalyptus green */
+  font-weight: bold;
+  text-decoration: none !important;
+}
+
+.main-header .logo a:hover {
+  color: #8FBC96 !important; /* Lighter green on hover */
+}
+
 /* Help text styling */
 .help-text {
   color: #666;
@@ -156,35 +168,4 @@
 }
 
 /* --- Background Image Watermark --- */
-
-.content-wrapper {
-  position: relative; /* Ensures the pseudo-element is positioned relative to this container */
-  /* Make sure background is not obscuring the image if needed */
-  z-index: 0;
-}
-
-.content-wrapper::before {
-  content: "";
-  position: fixed;
-
-  /* Position at bottom right with padding */
-  bottom: 0px;
-  right: 0px;
-
-  /* Size of the background image */
-  width: 702px;  /* Adjust size as needed */
-  height: 473px;
-
-  /* Image details */
-  background-image: url('sapfluxr_bg.png');
-  background-repeat: no-repeat;
-  background-position: bottom right;
-  background-size: contain;
-
-  /* Transparency/Alpha */
-  opacity: 0.10;
-
-  /* Layering - Z-index is higher than default content, but not enough to block inputs */
-  z-index: 0;
-  pointer-events: none; /* CRITICAL: Allows clicks to pass through the image */
-}
+/* MOVED TO app.R to fix reverse proxy path resolution issues */
