@@ -97,7 +97,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
       data <- heat_pulse_data()
 
       # Filter measurements by pulse_id (now reliable after standardization!)
-      cat("  Looking for measurements with pulse_id:", pulse_id, "\n")
+#       cat("  Looking for measurements with pulse_id:", pulse_id, "\n")
 
       pulse_measurements <- data$measurements %>%
         dplyr::filter(pulse_id == !!pulse_id)
@@ -109,8 +109,8 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
 
       # DIAGNOSTIC: Verify we got the right data
       meas_datetime <- pulse_measurements$datetime[1]
-      cat("  ✓ Found", nrow(pulse_measurements), "measurements for pulse_id", pulse_id,
-          "starting at", as.character(meas_datetime), "\n")
+#       cat("  ✓ Found", nrow(pulse_measurements), "measurements for pulse_id", pulse_id,
+#           "starting at", as.character(meas_datetime), "\n")
 
       # Return just the measurements we need
       pulse_measurements
@@ -203,7 +203,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
       }
 
       # Use pre-filtered data (FAST! No loading needed)
-      cat("Looking for pulse_id:", pulse_id, "\n")
+#       cat("Looking for pulse_id:", pulse_id, "\n")
 
       pulse_data <- selected_pulse_data()
 
@@ -219,7 +219,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
         )
       }
 
-      cat("Pulse data rows:", nrow(pulse_data), "\n")
+#       cat("Pulse data rows:", nrow(pulse_data), "\n")
 
       if (nrow(pulse_data) == 0) {
         return(
@@ -235,7 +235,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
       # Calculate time_sec if not present
       # Time should be seconds from start of measurement series (row number - 1)
       if (!"time_sec" %in% names(pulse_data)) {
-        cat("time_sec column not found, calculating from row numbers\n")
+#         cat("time_sec column not found, calculating from row numbers\n")
         pulse_data <- pulse_data %>%
           dplyr::mutate(time_sec = row_number() - 1)
       }
@@ -265,7 +265,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
           deltaT_ui = ui - ui_baseline
         )
 
-      cat("Time range:", range(pulse_data$time_sec, na.rm = TRUE), "\n")
+#       cat("Time range:", range(pulse_data$time_sec, na.rm = TRUE), "\n")
 
       # Create plot with temperature delta traces
       p <- plot_ly()
@@ -384,11 +384,11 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
             cat("  vh_results columns:", paste(names(results), collapse = ", "), "\n")
 
             # Check if window columns exist
-            if (!("calc_window_start_sec" %in% names(results))) {
-              cat("  WARNING: calc_window_start_sec column missing in vh_results!\n")
+            if (!("hrm_window_start_sec" %in% names(results))) {
+              cat("  WARNING: hrm_window_start_sec column missing in vh_results!\n")
               cat("  Using default HRM window: 60-100s\n")
-            } else if (!("calc_window_end_sec" %in% names(results))) {
-              cat("  WARNING: calc_window_end_sec column missing in vh_results!\n")
+            } else if (!("hrm_window_end_sec" %in% names(results))) {
+              cat("  WARNING: hrm_window_end_sec column missing in vh_results!\n")
               cat("  Using default HRM window: 60-100s\n")
             } else {
               # Columns exist, try to get values
@@ -397,8 +397,8 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
                                     results$sensor_position == position, ]
 
               if (nrow(hrm_result) > 0) {
-                window_start <- hrm_result$calc_window_start_sec[1]
-                window_end <- hrm_result$calc_window_end_sec[1]
+                window_start <- hrm_result$hrm_window_start_sec[1]
+                window_end <- hrm_result$hrm_window_end_sec[1]
 
                 cat("  Retrieved window values:", window_start, "-", window_end, "\n")
 
@@ -548,10 +548,10 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
                                     results$sensor_position == position, ]
 
             if (nrow(hrmxa_result) > 0 &&
-                "calc_window_start_sec" %in% names(results) &&
-                "calc_window_end_sec" %in% names(results)) {
-              window_start <- hrmxa_result$calc_window_start_sec[1]
-              window_end <- hrmxa_result$calc_window_end_sec[1]
+                "hrmxa_window_start_sec" %in% names(results) &&
+                "hrmxa_window_end_sec" %in% names(results)) {
+              window_start <- hrmxa_result$hrmxa_window_start_sec[1]
+              window_end <- hrmxa_result$hrmxa_window_end_sec[1]
 
               # Check if values are NA
               if (!is.na(window_start) && !is.na(window_end)) {
@@ -700,13 +700,13 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
                                     results$sensor_position == position, ]
 
             if (nrow(hrmxb_result) > 0 &&
-                "downstream_window_start_sec" %in% names(results) &&
-                "upstream_window_start_sec" %in% names(results)) {
+                "hrmxb_downstream_start_sec" %in% names(results) &&
+                "hrmxb_upstream_start_sec" %in% names(results)) {
 
-              ds_start <- hrmxb_result$downstream_window_start_sec[1]
-              ds_end <- hrmxb_result$downstream_window_end_sec[1]
-              us_start <- hrmxb_result$upstream_window_start_sec[1]
-              us_end <- hrmxb_result$upstream_window_end_sec[1]
+              ds_start <- hrmxb_result$hrmxb_downstream_start_sec[1]
+              ds_end <- hrmxb_result$hrmxb_downstream_end_sec[1]
+              us_start <- hrmxb_result$hrmxb_upstream_start_sec[1]
+              us_end <- hrmxb_result$hrmxb_upstream_end_sec[1]
 
               cat("  Retrieved HRMXb windows - DS:", ds_start, "-", ds_end, ", US:", us_start, "-", us_end, "\n")
 
@@ -913,7 +913,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
           if (!is.null(results) && nrow(results) > 0) {
             cat("  vh_results columns:", paste(names(results), collapse = ", "), "\n")
             # Check if window columns exist
-            if ("calc_window_start_sec" %in% names(results) && "calc_window_end_sec" %in% names(results)) {
+            if ("hrm_window_start_sec" %in% names(results) && "hrm_window_end_sec" %in% names(results)) {
               cat("  Window columns FOUND in results\n")
             } else {
             }
@@ -1104,7 +1104,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
       # Layout
       p <- p %>%
         layout(
-          title = paste("Pulse ID:", pulse_id),
+          title = paste("Pulse Temperature Trace -", format(pulse_data$datetime[1], "%Y-%m-%d %H:%M:%S")),
           xaxis = list(
             title = "Time relative to heat pulse injection (seconds)",
             showgrid = TRUE,

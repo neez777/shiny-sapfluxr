@@ -1,0 +1,97 @@
+%% Module Interaction Diagram
+%% Shows how Shiny modules pass data to each other
+
+graph TB
+    subgraph "Data Input Modules"
+        M1[mod_data_upload<br/>Data file → hp_raw]
+        M2[mod_weather_upload<br/>Weather file → weather]
+        M3[mod_clock_drift<br/>Optional time correction]
+        M4[mod_config<br/>Probe & Wood → configs]
+    end
+
+    subgraph "Calculation Modules"
+        M5[mod_methods<br/>HPV Calculation<br/>→ vh_results]
+    end
+
+    subgraph "Visualization Modules"
+        M6[mod_plot_timeseries<br/>Interactive plots]
+        M7[mod_pulse_trace<br/>Individual pulse traces]
+    end
+
+    subgraph "Correction Modules"
+        M8[mod_corrections<br/>Spacing Correction<br/>→ vh_corrected]
+        M9[mod_wound_correction<br/>Wound Expansion<br/>→ vh_wound_corrected]
+    end
+
+    subgraph "Advanced Processing NEW"
+        M10[mod_calibration_sdma<br/>Calibration & sDMA<br/>→ vh_calibrated_sdma]
+        M11[mod_flux_density<br/>Future: Flux conversion]
+    end
+
+    subgraph "Code Generation"
+        M12[mod_code_generation<br/>Reproducible R scripts]
+    end
+
+    subgraph "Utilities"
+        M13[mod_tool_probe<br/>Probe config builder]
+        M14[mod_tool_wood<br/>Wood properties builder]
+    end
+
+    %% Data Flow
+    M1 -->|hp_raw| M5
+    M2 -->|weather| M8
+    M3 -->|corrected_data| M5
+    M4 -->|probe_config| M5
+    M4 -->|wood_properties| M5
+
+    M5 -->|vh_results| M6
+    M5 -->|vh_results| M7
+    M5 -->|vh_results| M8
+
+    M8 -->|vh_corrected| M9
+    M8 -->|vh_corrected| M6
+
+    M9 -->|vh_wound_corrected| M10
+
+    M10 -->|vh_calibrated_sdma| M6
+    M10 -->|vh_calibrated_sdma| M11
+
+    M11 -->|flux_density| M6
+
+    %% Code Tracking
+    M5 -.->|track step| M12
+    M8 -.->|track step| M12
+    M9 -.->|track step| M12
+    M10 -.->|track step| M12
+    M11 -.->|track step| M12
+
+    %% Config builders
+    M13 -.->|create config| M4
+    M14 -.->|create config| M4
+
+    %% Reactive Dependencies
+    M1 -->|reactive hp_raw| RV1((rv$corrected_data))
+    M4 -->|reactive configs| RV2((configs$probe_config<br/>configs$wood_properties))
+    M5 -->|reactive vh| RV3((vh_results))
+    M8 -->|reactive corrected| RV4((corrected_vh))
+    M9 -->|reactive wound| RV5((vh_wound_corrected))
+    M10 -->|reactive calib| RV6((vh_calibrated_sdma))
+
+    %% Styling
+    classDef inputMod fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef calcMod fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef visMod fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    classDef correctMod fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    classDef advMod fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef codeMod fill:#e0f2f1,stroke:#00897b,stroke-width:2px
+    classDef utilMod fill:#fff9c4,stroke:#f9a825,stroke-width:2px
+    classDef reactiveVal fill:#ffebee,stroke:#d32f2f,stroke-width:2px,stroke-dasharray: 5 5
+
+    class M1,M2,M3,M4 inputMod
+    class M5 calcMod
+    class M6,M7 visMod
+    class M8,M9 correctMod
+    class M10,M11 advMod
+    class M12 codeMod
+    class M13,M14 utilMod
+    class RV1,RV2,RV3,RV4,RV5,RV6 reactiveVal

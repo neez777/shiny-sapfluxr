@@ -100,6 +100,12 @@ plotTimeseriesUI <- function(id) {
             value = FALSE
           ),
 
+          checkboxInput(
+            ns("show_vpd"),
+            "Show VPD (right axis)",
+            value = FALSE
+          ),
+
           hr(),
 
           actionButton(
@@ -237,24 +243,6 @@ plotTimeseriesUI <- function(id) {
           uiOutput(ns("cleaning_summary_ui"))
         ),
 
-        box(
-          width = NULL,
-          title = "Plot Information",
-          status = "info",
-          collapsible = TRUE,
-          collapsed = TRUE,
-
-          uiOutput(ns("plot_info"))
-        ),
-
-        box(
-          width = NULL,
-          title = "Quality Control Summary",
-          status = "warning",
-          solidHeader = TRUE,
-
-          uiOutput(ns("qc_summary"))
-        )
       ),
 
       # Time Series Plot
@@ -268,13 +256,36 @@ plotTimeseriesUI <- function(id) {
 
           plotly::plotlyOutput(ns("timeseries_plot"), height = "600px")
         )
+,
+
+        box(
+          width = NULL,
+          title = "Plot Information & Quality Control",
+          status = "info",
+          collapsible = TRUE,
+          collapsed = FALSE,
+          solidHeader = TRUE,
+
+          fluidRow(
+            column(
+              width = 6,
+              h5("Plot Information"),
+              uiOutput(ns("plot_info"))
+            ),
+            column(
+              width = 6,
+              h5("Quality Control Summary"),
+              uiOutput(ns("qc_summary"))
+            )
+          )
+        )
       )
     )
   )
 }
 
 # Server ----
-plotTimeseriesServer <- function(id, vh_results) {
+plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL)) {
   moduleServer(id, function(input, output, session) {
 
     # Store current axis ranges
@@ -1321,6 +1332,49 @@ plotTimeseriesServer <- function(id, vh_results) {
         }
       }
 
+      # Add VPD overlay if enabled
+      if (input$show_vpd) {
+        vpd_data <- daily_vpd()
+        
+        if (!is.null(vpd_data) && nrow(vpd_data) > 0) {
+          # VPD data is daily, need to match with filtered datetime range
+          # Get date range from filtered data
+          date_range <- range(data$datetime, na.rm = TRUE)
+          
+          # Filter VPD to match plot range
+          vpd_filtered <- vpd_data %>%
+            dplyr::filter(date >= as.Date(date_range[1]) & date <= as.Date(date_range[2]))
+          
+          if (nrow(vpd_filtered) > 0) {
+            # Add VPD trace
+            p <- p %>%
+              add_trace(
+                data = vpd_filtered,
+                x = ~date,
+                y = ~mean_vpd,
+                type = "scatter",
+                mode = "lines+markers",
+                name = "VPD (kPa)",
+                line = list(
+                  color = "orange",
+                  width = 2
+                ),
+                marker = list(
+                  size = 6,
+                  color = "orange"
+                ),
+                yaxis = "y2",
+                hovertemplate = paste0(
+                  "<b>VPD</b><br>",
+                  "Date: %{x|%Y-%m-%d}<br>",
+                  "VPD: %{y:.2f} kPa<br>",
+                  "<extra></extra>"
+                )
+              )
+          }
+        }
+      }
+
       # Layout with range slider
       # Build xaxis config
       xaxis_config <- list(
@@ -1350,18 +1404,32 @@ plotTimeseriesServer <- function(id, vh_results) {
         cat("Preserving zoom range:", stored_range[1], "to", stored_range[2], "\n")
       }
 
-      # Apply layout - conditionally add yaxis2 if Peclet is enabled
-      use_peclet_axis <- FALSE
+      # Apply layout - conditionally add yaxis2 for Peclet or VPD
+      use_secondary_axis <- FALSE
+      secondary_axis_title <- ""
+      
+      # Check for Peclet
       if (input$show_peclet) {
-        # Check if we actually have Peclet data
         full_data <- vh_results()
         if (!is.null(full_data) && "hrm_peclet_number" %in% names(full_data)) {
           has_any_peclet <- any(!is.na(full_data$hrm_peclet_number))
-          use_peclet_axis <- has_any_peclet
+          if (has_any_peclet) {
+            use_secondary_axis <- TRUE
+            secondary_axis_title <- "Peclet Number (Pe)"
+          }
+        }
+      }
+      
+      # Check for VPD (only if Peclet not already selected)
+      if (!use_secondary_axis && input$show_vpd) {
+        vpd_data <- daily_vpd()
+        if (!is.null(vpd_data) && nrow(vpd_data) > 0) {
+          use_secondary_axis <- TRUE
+          secondary_axis_title <- "VPD (kPa)"
         }
       }
 
-      if (use_peclet_axis) {
+      if (use_secondary_axis) {
         # Simple approach: use rangemode tozero for both axes
         # This ensures zero is included, though they may not perfectly align
         # For perfect alignment, both axes would need identical scale ratios

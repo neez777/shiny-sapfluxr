@@ -167,6 +167,94 @@ correctionsUI <- function(id) {
                   width = "100%"
                 )
               )
+            ),
+
+            # Tab 3: VPD Detect
+            tabPanel(
+              "VPD Detect",
+              br(),
+
+              helpText(
+                icon("info-circle"),
+                " Detect suitable dates for spacing correction based on low VPD (atmospheric demand) conditions."
+              ),
+
+              # Check if weather data is available
+              conditionalPanel(
+                condition = "output.weather_data_available == false",
+                ns = ns,
+                div(class = "alert alert-warning",
+                  icon("exclamation-triangle"),
+                  strong(" Weather data required"),
+                  br(),
+                  "Please upload weather data in Tab 1 and calculate VPD before using this method."
+                )
+              ),
+
+              conditionalPanel(
+                condition = "output.weather_data_available == true",
+                ns = ns,
+
+                # VPD Threshold
+                sliderInput(
+                  ns("vpd_threshold"),
+                  HTML('VPD Threshold (kPa) <span style="color: #999; cursor: help;" title="Maximum VPD threshold. Days with minimum VPD at or below this value are selected as changepoints. 0.3 kPa = very conservative, 0.5 kPa = moderate (recommended), 0.8 kPa = permissive."><i class="fa fa-circle-question"></i></span>'),
+                  min = 0.1,
+                  max = 1.5,
+                  value = 0.5,
+                  step = 0.1
+                ),
+
+                fluidRow(
+                  column(6,
+                    numericInput(
+                      ns("vpd_min_segment_days"),
+                      HTML('Min Segment Days <span style="color: #999; cursor: help;" title="Minimum days between selected changepoints. If closer than this, only the day with lowest VPD is retained."><i class="fa fa-circle-question"></i></span>'),
+                      value = 7,
+                      min = 1,
+                      max = 30
+                    )
+                  ),
+                  column(6,
+                    numericInput(
+                      ns("vpd_min_consecutive_days"),
+                      HTML('Min Consecutive Days <span style="color: #999; cursor: help;" title="Minimum consecutive days with low VPD required for changepoint selection. Set to 1 to select any single day below threshold."><i class="fa fa-circle-question"></i></span>'),
+                      value = 1,
+                      min = 1,
+                      max = 10
+                    )
+                  )
+                ),
+
+                br(),
+
+                # Run detection button
+                actionButton(
+                  ns("detect_vpd_changepoints"),
+                  "Run VPD Detection",
+                  icon = icon("cloud"),
+                  class = "btn-primary",
+                  width = "100%"
+                ),
+
+                br(), br(),
+
+                # Results display
+                conditionalPanel(
+                  condition = sprintf("output['%s']", ns("vpd_changepoints_detected")),
+                  h5("Detected VPD-Based Changepoints:"),
+                  helpText(icon("info-circle"), " Detected changepoints shown as ", tags$span(style = "color: purple;", "purple dotted lines"), " on plot. Click ", tags$code("[+]"), " to add individually or use button below to add all."),
+                  uiOutput(ns("detected_vpd_changepoints_list")),
+                  br(),
+                  actionButton(
+                    ns("add_detected_vpd_changepoints"),
+                    "Add All VPD Changepoints",
+                    icon = icon("check"),
+                    class = "btn-success",
+                    width = "100%"
+                  )
+                )
+              )
             )
           ),
 
@@ -237,10 +325,25 @@ correctionsUI <- function(id) {
             inline = TRUE
           ),
 
-          checkboxInput(
-            ns("show_original_data"),
-            "Overlay original data points (all timestamps)",
-            value = FALSE
+          fluidRow(
+            column(6,
+              checkboxInput(
+                ns("show_original_data"),
+                "Overlay original data points",
+                value = FALSE
+              )
+            ),
+            column(6,
+              conditionalPanel(
+                condition = "output.weather_data_available == true",
+                ns = ns,
+                checkboxInput(
+                  ns("show_vpd_overlay"),
+                  "Show VPD overlay",
+                  value = FALSE
+                )
+              )
+            )
           ),
 
           plotly::plotlyOutput(ns("plot_changepoints"), height = "500px"),
@@ -314,13 +417,15 @@ correctionsUI <- function(id) {
 }
 
 # Server ----
-correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, wood_properties, calc_methods) {
+correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, wood_properties, calc_methods,
+                              daily_vpd = reactive(NULL)) {
   moduleServer(id, function(input, output, session) {
 
     # Reactive values
     rv <- reactiveValues(
       changepoints = list(),  # List of POSIXct dates
-      detected_result = NULL,  # Changepoint detection result
+      detected_result = NULL,  # Changepoint detection result (PELT)
+      vpd_detected_result = NULL,  # VPD changepoint detection result
       correction_result = NULL,  # Spacing correction result
       corrected_vh = NULL,
       correction_applied = FALSE
@@ -665,6 +770,174 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
     })
 
     # ==================================================================
+    # VPD-BASED CHANGEPOINT DETECTION
+    # ==================================================================
+
+    # Weather data availability flag
+    output$weather_data_available <- reactive({
+      !is.null(daily_vpd()) && nrow(daily_vpd()) > 0
+    })
+    outputOptions(output, "weather_data_available", suspendWhenHidden = FALSE)
+
+    # VPD changepoint detection
+    observeEvent(input$detect_vpd_changepoints, {
+      req(daily_vpd())
+
+      vpd_data <- daily_vpd()
+
+      # Show waiter
+      waiter <- waiter::Waiter$new(
+        html = waiter::spin_fading_circles(),
+        color = waiter::transparent(0.5)
+      )
+      waiter$show()
+
+      tryCatch({
+        # Detect VPD-based changepoints
+        vpd_result <- sapfluxr::detect_vpd_changepoints(
+          daily_vpd = vpd_data,
+          vpd_threshold = input$vpd_threshold,
+          min_segment_days = input$vpd_min_segment_days,
+          min_consecutive_days = input$vpd_min_consecutive_days
+        )
+
+        # Hide waiter
+        waiter$hide()
+
+        if (length(vpd_result$changepoints) == 0) {
+          # No changepoints detected
+          if (!is.null(rv$vpd_detected_result)) {
+            rv$vpd_detected_result <- NULL
+          }
+
+          showNotification(
+            sprintf("No suitable VPD dates found with threshold %.2f kPa. Try increasing the threshold or reducing min_segment_days.",
+                   input$vpd_threshold),
+            type = "warning",
+            duration = 5
+          )
+        } else {
+          # Update detected results
+          rv$vpd_detected_result <- vpd_result
+
+          showNotification(
+            sprintf("Detected %d VPD-based changepoint(s) from %d days below threshold",
+                   length(vpd_result$changepoints),
+                   vpd_result$n_days_below_threshold),
+            type = "message",
+            duration = 5
+          )
+        }
+
+      }, error = function(e) {
+        waiter$hide()
+        showNotification(
+          paste("Error detecting VPD changepoints:", e$message),
+          type = "error",
+          duration = 10
+        )
+        rv$vpd_detected_result <- NULL
+      })
+    })
+
+    # Show/hide VPD detected changepoints output
+    output$vpd_changepoints_detected <- reactive({
+      !is.null(rv$vpd_detected_result) && length(rv$vpd_detected_result$changepoints) > 0
+    })
+    outputOptions(output, "vpd_changepoints_detected", suspendWhenHidden = FALSE)
+
+    # Display VPD detected changepoints with individual add buttons
+    output$detected_vpd_changepoints_list <- renderUI({
+      req(rv$vpd_detected_result)
+
+      cpts <- rv$vpd_detected_result$changepoints
+      vpd_vals <- rv$vpd_detected_result$vpd_values
+
+      if (length(cpts) == 0) return(NULL)
+
+      # Create list of changepoints with add buttons
+      tagList(
+        lapply(seq_along(cpts), function(i) {
+          div(
+            style = "margin-bottom: 5px;",
+            actionButton(
+              session$ns(paste0("add_vpd_cp_", i)),
+              label = NULL,
+              icon = icon("plus"),
+              class = "btn-xs btn-success",
+              style = "padding: 2px 6px; margin-right: 8px;"
+            ),
+            tags$span(
+              sprintf("%s (VPD: %.3f kPa)", format(cpts[i], "%Y-%m-%d"), vpd_vals[i]),
+              style = "font-family: monospace;"
+            )
+          )
+        })
+      )
+    })
+
+    # Handle individual add button clicks for VPD detected changepoints
+    observe({
+      req(rv$vpd_detected_result)
+
+      cpts <- rv$vpd_detected_result$changepoints
+
+      # Create observers for each individual add button
+      lapply(seq_along(cpts), function(i) {
+        btn_id <- paste0("add_vpd_cp_", i)
+        observeEvent(input[[btn_id]], {
+          # Convert Date to POSIXct at midnight
+          cp_date <- cpts[i]
+          cp_posix <- as.POSIXct(paste(cp_date, "00:00:00"), format = "%Y-%m-%d %H:%M:%S")
+
+          # Add to changepoints list
+          rv$changepoints <- c(rv$changepoints, list(cp_posix))
+
+          # Sort chronologically
+          rv$changepoints <- rv$changepoints[order(sapply(rv$changepoints, as.numeric))]
+
+          showNotification(
+            sprintf("Added VPD changepoint: %s", format(cp_date, "%Y-%m-%d")),
+            type = "message",
+            duration = 3
+          )
+        }, ignoreInit = TRUE)
+      })
+    })
+
+    # Add all VPD detected changepoints to the list
+    observeEvent(input$add_detected_vpd_changepoints, {
+      req(rv$vpd_detected_result)
+
+      cpts <- rv$vpd_detected_result$changepoints
+
+      if (length(cpts) == 0) {
+        showNotification("No VPD changepoints to add", type = "warning")
+        return()
+      }
+
+      # Convert Date to POSIXct at midnight
+      cpts_posix <- lapply(cpts, function(d) {
+        as.POSIXct(paste(d, "00:00:00"), format = "%Y-%m-%d %H:%M:%S")
+      })
+
+      # Add to existing changepoints
+      rv$changepoints <- c(rv$changepoints, cpts_posix)
+
+      # Sort chronologically
+      rv$changepoints <- rv$changepoints[order(sapply(rv$changepoints, as.numeric))]
+
+      showNotification(
+        sprintf("Added %d VPD changepoint(s) to the list", length(cpts)),
+        type = "message",
+        duration = 5
+      )
+
+      # Clear detected results after adding
+      # rv$vpd_detected_result <- NULL  # Keep results for plot
+    })
+
+    # ==================================================================
     # CACHED DAILY MINIMA CALCULATION
     # ==================================================================
 
@@ -708,6 +981,9 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
 
       # Also depend on detected results
       rv$detected_result
+
+      # Depend on VPD overlay checkbox
+      input$show_vpd_overlay
 
       # Debug: Track when plot re-renders
       start_time <- Sys.time()
@@ -791,7 +1067,9 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
             title = sprintf("Daily Minimum Velocities - %s Sensor (%s)",
                            toupper(display_sensor), method),
             show_baseline_values = TRUE,
-            show_original_data = isTRUE(input$show_original_data)
+            show_original_data = isTRUE(input$show_original_data),
+            vpd_data = daily_vpd(),
+            show_vpd = isTRUE(input$show_vpd_overlay)
           )
 
           incProgress(0.2, detail = "Finalizing")

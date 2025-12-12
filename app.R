@@ -6,6 +6,7 @@
 library(shiny)
 library(shinydashboard)
 library(shinyWidgets)
+library(shinyjs)
 library(plotly)
 library(DT)
 library(dplyr)
@@ -18,20 +19,23 @@ library(waiter)
 library(fresh)
 
 # Load sapfluxr package
-library(sapfluxr)
+devtools::load_all("E:/r/project/sapfluxr")
 
 # Source modules
 source("modules/notify_helper.R")
-source("modules/mod_data_upload.R")
-source("modules/mod_clock_drift.R")
-source("modules/mod_config.R")
-source("modules/mod_methods.R")
-source("modules/mod_corrections.R")
-source("modules/mod_plot_timeseries.R")
-source("modules/mod_pulse_trace.R")
-source("modules/mod_tool_probe.R")
-source("modules/mod_tool_wood.R")
+source("modules/mod_1_data_upload.R")
+source("modules/mod_util_weather_upload.R")
+source("modules/mod_util_clock_drift.R")
+source("modules/mod_2_config.R")
+source("modules/mod_3_methods.R")
+source("modules/mod_5a_corrections_spacing.R")
+source("modules/mod_4_plot_timeseries.R")
+source("modules/mod_4_pulse_trace.R")
+source("modules/mod_tools_probe.R")
+source("modules/mod_tools_wood.R")
 source("modules/utils.R")
+source("modules/mod_5b_corrections_wound.R")
+source("modules/mod_6_calibration_sdma.R")
 
 # Increase file upload size limit
 # Default is 5MB - we need to handle large sap flow data files (100s of MB)
@@ -120,7 +124,8 @@ ui <- tagList(
           menuSubItem("Spacing Correction", tabName = "corrections", icon = icon("ruler-horizontal")),
           menuSubItem("Wound Correction", tabName = "wound_correction", icon = icon("bandage"))
         ),
-        menuItem("6. Visualise (Corrected)", tabName = "visualise_corrected", icon = icon("chart-area")),
+        menuItem("6. Calibration & sDMA", tabName = "calibration_sdma", icon = icon("balance-scale")),
+        menuItem("7. Visualise (Corrected)", tabName = "visualise_corrected", icon = icon("chart-area")),
         tags$hr(style = "margin: 10px 0; border-color: #555;"),
         menuItem("Tools", icon = icon("wrench"),
           menuSubItem("Probe Configuration", tabName = "tool_probe", icon = icon("ruler")),
@@ -133,7 +138,7 @@ ui <- tagList(
           p("Interactive interface for processing heat pulse velocity data from ICT SFM1x sensors."),
           p("Built on ", code("sapfluxr"), " package."),
           hr(),
-          p(strong("Version:"), " 0.1.0"),
+          p(strong("Version:"), " 0.2.0"),
           p(a("Report Issues",
               href = "https://github.com/neez777/sapfluxr/issues",
               target = "_blank"))
@@ -145,6 +150,9 @@ ui <- tagList(
   dashboardBody(
 
     use_theme(sapfluxr_theme),
+
+    # Initialize shinyjs
+    shinyjs::useShinyjs(),
 
     # Initialize waiter
     waiter::use_waiter(),
@@ -238,11 +246,7 @@ ui <- tagList(
               collapsible = TRUE,
               collapsed = TRUE,
 
-              p(class = "help-text",
-                "Weather data upload functionality will be implemented soon."),
-              p(class = "text-muted",
-                "This will allow you to upload meteorological data (temperature, VPD, solar radiation) ",
-                "for correlation analysis with sap flow measurements.")
+              weatherUploadUI("weather_upload")
             )
           ),
           column(
@@ -318,7 +322,24 @@ ui <- tagList(
         correctionsUI("corrections")
       ),
 
-      # Tab 6: Visualise Corrected ----
+      # Tab 5b: Wound Correction ----
+      tabItem(
+        tabName = "wound_correction",
+        h2("Wound Correction"),
+        p(class = "text-muted", "Apply wound correction for probe reinstallations."),
+
+        woundCorrectionUI("wound_correction")
+      ),
+
+      # Tab 6: Calibration & sDMA ----
+      tabItem(
+        tabName = "calibration_sdma",
+        h2("Method Calibration & sDMA"),
+        p(class = "text-muted", "Calibrate secondary methods to a primary method and apply Selectable Dual Method Approach (sDMA)."),
+
+        calibrationSdmaUI("calibration_sdma")
+      ),
+      # Tab 7: Visualise Corrected ----
       tabItem(
         tabName = "visualise_corrected",
         h2("Interactive Visualisation - Corrected HPV"),
@@ -363,7 +384,10 @@ server <- function(input, output, session) {
     probe_config = NULL,
     wood_properties = NULL,
     selected_methods = NULL,
-    vh_results = NULL
+    vh_results = NULL,
+    weather_data = NULL,
+    weather_vpd = NULL,
+    daily_vpd = NULL
   )
 
   # Module: Data Upload
@@ -373,6 +397,17 @@ server <- function(input, output, session) {
   observe({
     req(uploaded_data())
     rv$heat_pulse_data <- uploaded_data()
+  })
+
+  # Module: Weather Upload
+  weather_outputs <- weatherUploadServer("weather_upload",
+                                         heat_pulse_data = reactive(rv$corrected_data))
+
+  # Store weather data
+  observe({
+    rv$weather_data <- weather_outputs$weather_data()
+    rv$weather_vpd <- weather_outputs$weather_vpd()
+    rv$daily_vpd <- weather_outputs$daily_vpd()
   })
 
   # Module: Clock Drift Correction
@@ -451,7 +486,7 @@ server <- function(input, output, session) {
   })
 
   # Module: Visualise Raw (Tab 4) - Always shows uncorrected data
-  selected_pulse_id_raw <- plotTimeseriesServer("plot_timeseries_raw", vh_results)
+  selected_pulse_id_raw <- plotTimeseriesServer("plot_timeseries_raw", vh_results, reactive(rv$daily_vpd))
   pulseTraceServer("pulse_trace_raw", reactive(rv$corrected_data), selected_pulse_id_raw, vh_results)
 
   # Module: Corrections (Tab 5) - Spacing Correction & k Estimation
@@ -467,12 +502,46 @@ server <- function(input, output, session) {
     heat_pulse_data = reactive(rv$corrected_data),
     probe_config = configs$probe_config,
     wood_properties = configs$wood_properties,
-    calc_methods = reactive(rv$calc_methods)
+    calc_methods = reactive(rv$calc_methods),
+    daily_vpd = reactive(rv$daily_vpd)
+  )
+  # Module: Wound Correction (Tab 5b) - Apply wound corrections
+  wound_module <- woundCorrectionServer(
+    "wound_correction",
+    vh_data = corrected_vh,
+    wood_properties = configs$wood_properties,
+    probe_config = configs$probe_config
   )
 
-  # Module: Visualise Corrected (Tab 6) - Shows corrected data
-  selected_pulse_id_corrected <- plotTimeseriesServer("plot_timeseries_corrected", corrected_vh)
-  pulseTraceServer("pulse_trace_corrected", reactive(rv$corrected_data), selected_pulse_id_corrected, corrected_vh)
+  # Module: Calibration & sDMA (Tab 6) - Calibrate methods and apply sDMA
+  vh_calibrated_sdma <- calibrationSdmaServer(
+    "calibration_sdma",
+    vh_corrected = reactive({
+      wound_data <- wound_module$wound_corrected_data()
+      if (!is.null(wound_data)) wound_data else corrected_vh()
+    }),
+    code_tracker = NULL  # TODO: Integrate code tracker if needed
+  )
+  # Fallback data flow: use calibrated data if available, else wound corrected, else spacing corrected
+  final_vh <- reactive({
+    # Priority 1: Calibrated/sDMA data
+    if (!is.null(vh_calibrated_sdma())) {
+      return(vh_calibrated_sdma())
+    }
+    # Priority 2: Wound-corrected data
+    wound_data <- wound_module$wound_corrected_data()
+    if (!is.null(wound_data)) {
+      return(wound_data)
+    }
+    # Priority 3: Spacing-corrected only
+    corrected_vh()
+  })
+
+
+
+  # Module: Visualise Corrected (Tab 7) - Shows corrected data
+  selected_pulse_id_corrected <- plotTimeseriesServer("plot_timeseries_corrected", final_vh, reactive(rv$daily_vpd))
+  pulseTraceServer("pulse_trace_corrected", reactive(rv$corrected_data), selected_pulse_id_corrected, final_vh)
 
   # Data Summary Output
   output$data_summary <- renderPrint({
@@ -554,7 +623,7 @@ server <- function(input, output, session) {
   toolProbeServer("tool_probe")
 
   # Module: Tool - Wood Properties
-  toolWoodServer("tool_wood")
+  toolWoodServer("tool_wood", heat_pulse_data = heat_pulse_data)
 
 }
 

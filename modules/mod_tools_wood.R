@@ -25,11 +25,7 @@ toolWoodUI <- function(id) {
 #  }
 
   tagList(
-    p(class = "help-text",
-      strong("Tip: "),
-      "Save your configuration with a descriptive name matching your heat pulse data file for easy recognition ",
-      "(e.g., if your data file is ", code(file_example), ", name your config ",
-      code(config_example), ")."),
+    uiOutput(ns("filename_help_text")),
 
     fluidRow(
       box(
@@ -337,7 +333,7 @@ toolWoodUI <- function(id) {
         status = "success",
         solidHeader = TRUE,
 
-        p(class = "help-text",
+        p(class = "help-text", style = "font-size: 0.9em;",
           "Download your wood properties configuration as a YAML file. ",
           "Derived properties will be automatically calculated if measurements are provided."),
 
@@ -372,6 +368,33 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
     # Reactive to store uploaded filename
     uploaded_filename <- reactiveVal(NULL)
 
+
+    # Dynamic filename help text
+    output$filename_help_text <- renderUI({
+      # Get heat pulse data (handles both reactive and static)
+      hp_data <- tryCatch({
+        if (is.function(heat_pulse_data)) {
+          heat_pulse_data()
+        } else {
+          heat_pulse_data
+        }
+      }, error = function(e) NULL)
+      
+      # Extract filename if available
+      if (!is.null(hp_data) && !is.null(hp_data$metadata$file_name)) {
+        file_example <- hp_data$metadata$file_name
+        config_example <- paste0(tools::file_path_sans_ext(file_example), "_wood.yaml")
+      } else {
+        file_example <- "SX99X999.txt"
+        config_example <- "SX99X999_wood.yaml"
+      }
+      
+      p(class = "help-text",
+        strong("Tip: "),
+        "Save your configuration with a descriptive name matching your heat pulse data file for easy recognition ",
+        "(e.g., if your data file is ", code(file_example), ", name your config ",
+        code(config_example), ").")
+    })
 
     # Observer: Auto-populate temporal wound dates from heat pulse data
     observeEvent(input$enable_temporal_wound, {
@@ -827,7 +850,7 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
 
 
           tags$dt(class = "col-sm-6", tags$strong("Sap Flux Conversion Factor (Z):", style = "color: #28a745;")),
-          tags$dd(class = "col-sm-6", style = "color: #007bff; font-weight: bold; font-size: 1.1em;",
+          tags$dd(class = "col-sm-6", style = "color: #007bff; font-weight: bold;",
                   if (!is.null(dp$sap_flux_conversion_factor)) sprintf("%.4f", dp$sap_flux_conversion_factor) else "N/A")
         ),
         p(class = "text-muted", style = "margin-top: 10px; font-size: 0.9em;",

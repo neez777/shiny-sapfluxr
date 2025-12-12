@@ -1,0 +1,141 @@
+%% Data Structure Transformations
+%% Shows how data columns evolve through the workflow
+
+graph TD
+    subgraph "1. RAW IMPORT"
+        A[heat_pulse_data<br/>List object]
+        A1[measurements tibble:<br/>datetime, pulse_id,<br/>do, di, uo, ui<br/>temperature readings]
+        A2[diagnostics tibble:<br/>battery, current, etc.]
+        A3[metadata list:<br/>file info, format]
+        A4[validation list:<br/>quality checks]
+
+        A --> A1
+        A --> A2
+        A --> A3
+        A --> A4
+    end
+
+    subgraph "2. WOOD PROPERTIES"
+        B[wood_properties<br/>List object]
+        B1[basic properties:<br/>density, diffusivity,<br/>conductivity, dbh]
+        B2[derived properties:<br/>volumetric_heat_capacity,<br/>thermal_diffusivity_cm2_s]
+
+        B --> B1
+        B1 --> B2
+    end
+
+    subgraph "3. HPV CALCULATION"
+        C[vh_results tibble]
+        C1[Core columns:<br/>datetime, pulse_id,<br/>method, sensor_position,<br/>Vh_cm_hr]
+        C2[HRM-specific:<br/>hrm_Tr, hrm_v1, hrm_v2,<br/>hrm_peclet_number,<br/>hrm_window_start_sec]
+        C3[MHR-specific:<br/>mhr_Tr_max, mhr_t_Tr_max,<br/>mhr_window_start_sec]
+        C4[Quality flags:<br/>quality_flag,<br/>quality_issues]
+
+        C --> C1
+        C --> C2
+        C --> C3
+        C --> C4
+    end
+
+    A1 --> C
+    B2 --> C
+
+    subgraph "4. SPACING CORRECTION"
+        D[vh_corrected tibble]
+        D1[Original columns from vh_results<br/>PLUS:]
+        D2[Updated Vh_cm_hr:<br/>corrected velocities<br/>using adjusted k]
+        D3[Correction metadata:<br/>segment_id,<br/>k_value_used,<br/>correction_applied]
+
+        D --> D1
+        D --> D2
+        D --> D3
+    end
+
+    C --> D
+
+    subgraph "5. WOUND CORRECTION"
+        E[vh_wound_corrected tibble]
+        E1[All vh_corrected columns<br/>PLUS:]
+        E2[Vc_cm_hr:<br/>wound-corrected velocities<br/>accounting for wound expansion]
+        E3[Wound metadata:<br/>wound_diameter_cm,<br/>effective_probe_spacing,<br/>wound_correction_factor]
+
+        E --> E1
+        E --> E2
+        E --> E3
+    end
+
+    D --> E
+
+    subgraph "6. CALIBRATION"
+        F[vh_calibrated tibble]
+        F1[Methods:<br/>- HRM unchanged<br/>- MHR calibrated<br/>- HRMXb calibrated]
+        F2[Updated Vc_cm_hr or Vh_cm_hr:<br/>Calibrated = slope × Primary + intercept]
+        F3[Calibration metadata:<br/>calibration_applied,<br/>calibration_slope,<br/>calibration_intercept]
+
+        F --> F1
+        F --> F2
+        F --> F3
+    end
+
+    E --> F
+
+    subgraph "7. sDMA METHODS"
+        G[vh_with_sdma tibble]
+        G1[Original + Calibrated methods<br/>PLUS:]
+        G2[sDMA methods:<br/>method = sDMA:MHR<br/>method = sDMA:HRMXb]
+        G3[sDMA metadata:<br/>selected_method<br/>shows which method was used<br/>for each measurement]
+
+        G --> G1
+        G --> G2
+        G --> G3
+    end
+
+    F --> G
+
+    subgraph "8. FLUX DENSITY future"
+        H[flux_density tibble]
+        H1[Qps_cm3_cm2_hr:<br/>sap flux density per unit area<br/>uses sapwood properties]
+        H2[Q_cm3_hr:<br/>total sap flux<br/>scaled by sapwood area]
+        H3[Method tracking:<br/>same method column<br/>including sDMA methods]
+
+        H --> H1
+        H --> H2
+        H --> H3
+    end
+
+    G --> H
+
+    subgraph "Column Evolution Summary"
+        S1[datetime ✓<br/>Always present]
+        S2[Vh_cm_hr → Vh_cm_hr corrected → Vc_cm_hr<br/>Velocity evolution]
+        S3[method:<br/>HRM → HRM calibrated → sDMA:MHR<br/>Method evolution]
+        S4[Quality tracking:<br/>quality_flag present throughout]
+    end
+
+    %% Key Columns Highlighted
+    KC1[KEY: Vh_cm_hr]
+    KC2[KEY: Vc_cm_hr]
+    KC3[KEY: method]
+    KC4[KEY: selected_method]
+    KC5[KEY: hrm_peclet_number]
+
+    C1 -.-> KC1
+    E2 -.-> KC2
+    C1 -.-> KC3
+    G3 -.-> KC4
+    C2 -.-> KC5
+
+    %% Styling
+    classDef rawData fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef processedData fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef correctedData fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    classDef calibData fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef finalData fill:#e0f2f1,stroke:#00897b,stroke-width:2px
+    classDef keyCol fill:#ffebee,stroke:#d32f2f,stroke-width:3px
+
+    class A,A1,A2,A3,A4,B,B1,B2 rawData
+    class C,C1,C2,C3,C4 processedData
+    class D,D1,D2,D3,E,E1,E2,E3 correctedData
+    class F,F1,F2,F3,G,G1,G2,G3 calibData
+    class H,H1,H2,H3 finalData
+    class KC1,KC2,KC3,KC4,KC5 keyCol

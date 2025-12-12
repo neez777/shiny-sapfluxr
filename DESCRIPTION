@@ -1,7 +1,7 @@
 Package: shinysapfluxr
 Type: Package
 Title: Interactive Shiny Interface for Sap Flow Analysis
-Version: 0.1.0
+Version: 0.2.0
 Authors@R: c(
     person("Grant", "Joyce", email = "neez1977@gmail.com",
            role = c("aut", "cre"), comment = "Developer"),
@@ -13,7 +13,9 @@ Authors@R: c(
 Description: Interactive web application for processing and visualising heat pulse
     velocity data from ICT SFM1x sensors. Provides an easy-to-use interface for
     students and researchers to analyse sap flow data and generate publication-quality
-    plots. Built on the sapfluxr package.
+    plots, apply corrections (spacing, wound), calibrate methods, and apply sDMA
+    (Selectable Dual Method Approach). Generates reproducible R code and
+    publication-quality plots. Built on the sapfluxr package.
 License: GPL-3
 Encoding: UTF-8
 LazyData: true
@@ -26,6 +28,9 @@ Imports:
     shinydashboard (>= 0.7.2),
     shinyWidgets (>= 0.7.0),
     sapfluxr,
+    R6,
+    shinyjs (>= 2.1.0),
+    fresh,
     plotly (>= 4.10.0),
     DT (>= 0.27),
     dplyr (>= 1.0.0),

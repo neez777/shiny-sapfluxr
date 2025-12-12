@@ -1,0 +1,133 @@
+%% Shiny-sapfluxr Complete Workflow Diagram
+%% Generated: 2025-12-10
+%%
+%% This diagram shows the complete data flow from raw heat pulse data
+%% to final flux density calculations with calibration and sDMA
+
+graph TB
+    subgraph "PHASE 1: DATA IMPORT"
+        A1[Upload Heat Pulse Data<br/>.txt file] --> B1[read_heat_pulse_data]
+        A2[Upload Wood Properties<br/>.yaml file] --> B2[load_wood_properties]
+        A3[Upload Weather Data<br/>optional .csv] --> B3[read.csv]
+
+        B1 --> C1[hp_raw reactive]
+        B2 --> C2[wood reactive]
+        B3 --> C3[weather reactive]
+
+        C2 --> D2[calculate_wood_properties]
+        D2 --> E2[wood with derived properties]
+    end
+
+    subgraph "PHASE 2: VELOCITY CALCULATION"
+        C1 --> F1[Select HPV Methods:<br/>HRM, MHR, HRMXa, HRMXb,<br/>Tmax_Coh, Tmax_Klu]
+        E2 --> F1
+
+        F1 --> G1[calc_heat_pulse_velocity]
+        G1 --> H1[vh_results<br/>uncorrected velocities<br/>Vh_cm_hr column]
+    end
+
+    subgraph "PHASE 3: VISUALIZE RAW"
+        H1 --> VIS1[Tab 4: Visualise Raw HPV<br/>Interactive plots<br/>Identify outliers]
+    end
+
+    subgraph "PHASE 4: SPACING CORRECTION"
+        H1 --> I1{Choose Correction Method}
+
+        I1 -->|PELT| J1[Automatic Changepoint Detection<br/>Penalty: MBIC/BIC/AIC<br/>Min segment days]
+        I1 -->|Manual| J2[User-Specified Dates<br/>Manual baselines]
+        I1 -->|VPD| J3[Environmental Trigger<br/>VPD threshold]
+        I1 -->|Heartwood| J4[Continuous Reference<br/>Heartwood sensor]
+
+        C3 --> J3
+
+        J1 --> K1[apply_spacing_correction]
+        J2 --> K1
+        J3 --> K1
+        J4 --> K1
+
+        E2 --> K1
+
+        K1 --> L1[correction_result]
+        L1 --> M1[vh_corrected<br/>spacing-corrected<br/>Vh_cm_hr updated]
+        L1 --> M2[changepoints detected]
+        L1 --> M3[segments identified]
+    end
+
+    subgraph "PHASE 5: WOUND CORRECTION"
+        M1 --> N1[Initial Installation Date<br/>auto-detected from data]
+        N1 --> N2[Add Reinstallation Dates<br/>user-specified]
+        N2 --> O1[Wound diameter<br/>linear interpolation]
+        O1 --> P1[apply_wound_correction]
+        E2 --> P1
+
+        P1 --> Q1[vh_wound_corrected<br/>Vc_cm_hr column added]
+    end
+
+    subgraph "PHASE 6: CALIBRATION & sDMA"
+        Q1 --> R1{Calibration Timing}
+
+        R1 -->|Late Recommended| R2[After Corrections]
+        R1 -->|Early Tim's approach| R3[Before Corrections]
+        R1 -->|Compare| R4[Both approaches]
+
+        R2 --> S1[Select Primary Method<br/>usually HRM]
+        R2 --> S2[Select Secondary Methods<br/>MHR, HRMXa, HRMXb, etc.]
+        R2 --> S3[Enable sDMA?<br/>Auto method switching]
+
+        S1 --> T1[apply_late_calibration_sdma]
+        S2 --> T1
+        S3 --> T1
+
+        T1 --> U1[calibrate_multiple_methods<br/>Linear regression:<br/>Calibrated = slope × Primary + intercept]
+        U1 --> U2[Quality metrics:<br/>R², RMSE]
+
+        U1 --> V1{sDMA enabled?}
+
+        V1 -->|Yes| W1[apply_sdma_single<br/>for each secondary method]
+        V1 -->|No| W2[vh_calibrated only]
+
+        W1 --> X1[sDMA Method Selection:<br/>Pe < threshold → HRM<br/>Pe ≥ threshold → Secondary]
+        X1 --> Y1[vh_with_sdma<br/>Original + Calibrated + sDMA methods]
+
+        W2 --> Y2[vh_calibrated<br/>Original + Calibrated methods]
+    end
+
+    subgraph "PHASE 7: VISUALIZE CORRECTED"
+        Y1 --> Z1[Tab 7: Visualise Corrected<br/>Final corrected data<br/>Including sDMA methods]
+        Y2 --> Z1
+    end
+
+    subgraph "PHASE 8: FLUX DENSITY future"
+        Y1 --> AA1[calc_sap_flux_density]
+        Y2 --> AA1
+        E2 --> AA1
+
+        AA1 --> BB1[flux_density_results<br/>kg/m²/hr or cm³/cm²/hr]
+    end
+
+    subgraph "PHASE 9: CODE GENERATION"
+        B1 -.-> CC1[Code Tracker R6 Class]
+        F1 -.-> CC1
+        K1 -.-> CC1
+        P1 -.-> CC1
+        T1 -.-> CC1
+        AA1 -.-> CC1
+
+        CC1 --> DD1[Generate R Script<br/>Fully reproducible]
+        DD1 --> EE1[Copy to Clipboard /<br/>Download .R file]
+    end
+
+    %% Styling
+    classDef uploadClass fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef processClass fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef resultClass fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    classDef decisionClass fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    classDef calibClass fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef codeClass fill:#e0f2f1,stroke:#00897b,stroke-width:2px
+
+    class A1,A2,A3 uploadClass
+    class B1,B2,B3,D2,G1,K1,P1,T1,U1,W1,AA1 processClass
+    class C1,C2,C3,E2,H1,L1,M1,M2,M3,Q1,U2,Y1,Y2,BB1 resultClass
+    class I1,R1,V1 decisionClass
+    class S1,S2,S3,X1 calibClass
+    class CC1,DD1,EE1 codeClass
