@@ -190,6 +190,8 @@ methodsUI <- function(id) {
 
     # Results Table
     fluidRow(
+      column(
+        width = 12,
       box(
         width = 12,
         title = "Calculation Results",
@@ -200,13 +202,14 @@ methodsUI <- function(id) {
 
         DT::dataTableOutput(ns("results_table"))
       )
+      )
     )
   )
 )
 }
 
 # Server ----
-methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties) {
+methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties, code_tracker = TRUE) {
   moduleServer(id, function(input, output, session) {
 
     # Reactive to store results

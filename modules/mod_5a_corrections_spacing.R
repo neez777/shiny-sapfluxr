@@ -40,6 +40,8 @@ correctionsUI <- function(id) {
           title = "Define Zero-Flow Changepoints",
           status = "primary",
           solidHeader = TRUE,
+          collapsible = TRUE,
+          collapsed = FALSE,
 
           helpText("Changepoints mark dates where probe alignment shifts, dividing data into segments for separate calibration."),
 
@@ -48,23 +50,104 @@ correctionsUI <- function(id) {
             id = ns("changepoint_tabs"),
             type = "tabs",
 
-            # Tab 1: Manual Definition
+            # Tab 1: Stable VPD
             tabPanel(
-              "Manual",
+              "Stable VPD",
               br(),
 
-              helpText("Add a changepoint at a specific date/time where you know the baseline shifted."),
-
-              fluidRow(
-                column(6, dateInput(ns("changepoint_date"), "Changepoint Date", value = NULL)),
-                column(6, textInput(ns("changepoint_time"), "Time (HH:MM)", value = "00:00"))
+              helpText(
+                icon("info-circle"),
+                " Detect extended periods of stable low VPD conditions suitable for spacing correction."
               ),
 
-              actionButton(ns("add_changepoint"), "Add Changepoint", icon = icon("plus"),
-                          class = "btn-success", width = "100%")
+              # Check if weather data is available
+              conditionalPanel(
+                condition = "output.weather_data_available == false",
+                ns = ns,
+                div(class = "alert alert-warning",
+                  icon("exclamation-triangle"),
+                  strong(" Weather data required"),
+                  br(),
+                  "Please upload weather data in Tab 1 and calculate VPD before using this method."
+                )
+              ),
+
+              conditionalPanel(
+                condition = "output.weather_data_available == true",
+                ns = ns,
+
+                # VPD Threshold (Mean)
+                sliderInput(
+                  ns("stable_vpd_threshold"),
+                  HTML('Mean VPD Threshold (kPa) <span style="color: #999; cursor: help;" title="Maximum mean VPD during pre-dawn hours. Lower values = more conservative."><i class="fa fa-circle-question"></i></span>'),
+                  min = 0.1,
+                  max = 1.5,
+                  value = 0.5,
+                  step = 0.05
+                ),
+
+                # Stability Threshold (SD)
+                sliderInput(
+                  ns("stability_threshold"),
+                  HTML('Stability Threshold (SD kPa) <span style="color: #999; cursor: help;" title="Maximum standard deviation of VPD during pre-dawn hours. Lower values = strictly stable conditions."><i class="fa fa-circle-question"></i></span>'),
+                  min = 0.01,
+                  max = 0.5,
+                  value = 0.1,
+                  step = 0.01
+                ),
+
+                # Pre-dawn window as time range slider
+                sliderInput(
+                  ns("predawn_window"),
+                  HTML('Pre-dawn Window <span style="color: #999; cursor: help;" title="Time range to analyse for stability. Drag slider handles to select start and end hours (default: 02:00 to 06:00)."><i class="fa fa-circle-question"></i></span>'),
+                  min = 0,
+                  max = 23,
+                  value = c(2, 6),
+                  step = 1,
+                  post = ":00"
+                ),
+
+                # Minimum segment days
+                numericInput(
+                  ns("stable_min_segment_days"),
+                  HTML('Min Segment Days <span style="color: #999; cursor: help;" title="Minimum days between selected stable periods."><i class="fa fa-circle-question"></i></span>'),
+                  value = 7,
+                  min = 1,
+                  max = 30
+                ),
+
+                br(),
+
+                # Run detection button
+                actionButton(
+                  ns("detect_stable_vpd_changepoints"),
+                  "Run Stable VPD Detection",
+                  icon = icon("cloud-sun"),
+                  class = "btn-primary",
+                  width = "100%"
+                ),
+
+                br(), br(),
+
+                # Results display
+                conditionalPanel(
+                  condition = sprintf("output['%s']", ns("stable_vpd_changepoints_detected")),
+                  h5("Detected Stable VPD Changepoints:"),
+                  helpText(icon("info-circle"), " Detected changepoints shown as ", tags$span(style = "color: green;", "green dotted lines"), " on plot. Click ", tags$code("[+]"), " to add individually or use button below to add all."),
+                  uiOutput(ns("detected_stable_vpd_changepoints_list")),
+                  br(),
+                  actionButton(
+                    ns("add_detected_stable_vpd_changepoints"),
+                    "Add All Stable VPD Changepoints",
+                    icon = icon("check"),
+                    class = "btn-success",
+                    width = "100%"
+                  )
+                )
+              )
             ),
 
-            # Tab 2: Auto-Detect
+            # Tab 2: Auto-Detect (unchanged)
             tabPanel(
               "Auto-Detect",
               br(),
@@ -169,93 +252,109 @@ correctionsUI <- function(id) {
               )
             ),
 
-            # Tab 3: VPD Detect
+            # Tab 3: Manual Definition
             tabPanel(
-              "VPD Detect",
+              "Manual",
               br(),
 
-              helpText(
-                icon("info-circle"),
-                " Detect suitable dates for spacing correction based on low VPD (atmospheric demand) conditions."
+              helpText("Add a changepoint at a specific date/time where you know the baseline shifted."),
+
+              fluidRow(
+                column(6, dateInput(ns("changepoint_date"), "Changepoint Date", value = NULL)),
+                column(6, textInput(ns("changepoint_time"), "Time (HH:MM)", value = "00:00"))
               ),
 
-              # Check if weather data is available
-              conditionalPanel(
-                condition = "output.weather_data_available == false",
-                ns = ns,
-                div(class = "alert alert-warning",
-                  icon("exclamation-triangle"),
-                  strong(" Weather data required"),
-                  br(),
-                  "Please upload weather data in Tab 1 and calculate VPD before using this method."
-                )
-              ),
+              actionButton(ns("add_changepoint"), "Add Changepoint", icon = icon("plus"),
+                          class = "btn-success", width = "100%")
+            ),
 
-              conditionalPanel(
-                condition = "output.weather_data_available == true",
-                ns = ns,
+            # [HIDDEN]             # Tab 3: VPD Detect
+            # [HIDDEN]             tabPanel(
+            # [HIDDEN]               "VPD Detect",
+            # [HIDDEN]               br(),
 
-                # VPD Threshold
-                sliderInput(
-                  ns("vpd_threshold"),
-                  HTML('VPD Threshold (kPa) <span style="color: #999; cursor: help;" title="Maximum VPD threshold. Days with minimum VPD at or below this value are selected as changepoints. 0.3 kPa = very conservative, 0.5 kPa = moderate (recommended), 0.8 kPa = permissive."><i class="fa fa-circle-question"></i></span>'),
-                  min = 0.1,
-                  max = 1.5,
-                  value = 0.5,
-                  step = 0.1
-                ),
+            # [HIDDEN]               helpText(
+            # [HIDDEN]                 icon("info-circle"),
+            # [HIDDEN]                 " Detect suitable dates for spacing correction based on low VPD (atmospheric demand) conditions."
+            # [HIDDEN]               ),
 
-                fluidRow(
-                  column(6,
-                    numericInput(
-                      ns("vpd_min_segment_days"),
-                      HTML('Min Segment Days <span style="color: #999; cursor: help;" title="Minimum days between selected changepoints. If closer than this, only the day with lowest VPD is retained."><i class="fa fa-circle-question"></i></span>'),
-                      value = 7,
-                      min = 1,
-                      max = 30
-                    )
-                  ),
-                  column(6,
-                    numericInput(
-                      ns("vpd_min_consecutive_days"),
-                      HTML('Min Consecutive Days <span style="color: #999; cursor: help;" title="Minimum consecutive days with low VPD required for changepoint selection. Set to 1 to select any single day below threshold."><i class="fa fa-circle-question"></i></span>'),
-                      value = 1,
-                      min = 1,
-                      max = 10
-                    )
-                  )
-                ),
+            # [HIDDEN]               # Check if weather data is available
+            # [HIDDEN]               conditionalPanel(
+            # [HIDDEN]                 condition = "output.weather_data_available == false",
+            # [HIDDEN]                 ns = ns,
+            # [HIDDEN]                 div(class = "alert alert-warning",
+            # [HIDDEN]                   icon("exclamation-triangle"),
+            # [HIDDEN]                   strong(" Weather data required"),
+            # [HIDDEN]                   br(),
+            # [HIDDEN]                   "Please upload weather data in Tab 1 and calculate VPD before using this method."
+            # [HIDDEN]                 )
+            # [HIDDEN]               ),
 
-                br(),
+            # [HIDDEN]               conditionalPanel(
+            # [HIDDEN]                 condition = "output.weather_data_available == true",
+            # [HIDDEN]                 ns = ns,
 
-                # Run detection button
-                actionButton(
-                  ns("detect_vpd_changepoints"),
-                  "Run VPD Detection",
-                  icon = icon("cloud"),
-                  class = "btn-primary",
-                  width = "100%"
-                ),
+            # [HIDDEN]                 # VPD Threshold
+            # [HIDDEN]                 sliderInput(
+            # [HIDDEN]                   ns("vpd_threshold"),
+            # [HIDDEN]                   HTML('VPD Threshold (kPa) <span style="color: #999; cursor: help;" title="Maximum VPD threshold. Days with minimum VPD at or below this value are selected as changepoints. 0.3 kPa = very conservative, 0.5 kPa = moderate (recommended), 0.8 kPa = permissive."><i class="fa fa-circle-question"></i></span>'),
+            # [HIDDEN]                   min = 0.1,
+            # [HIDDEN]                   max = 1.5,
+            # [HIDDEN]                   value = 0.5,
+            # [HIDDEN]                   step = 0.1
+            # [HIDDEN]                 ),
 
-                br(), br(),
+            # [HIDDEN]                 fluidRow(
+            # [HIDDEN]                   column(6,
+            # [HIDDEN]                     numericInput(
+            # [HIDDEN]                       ns("vpd_min_segment_days"),
+            # [HIDDEN]                       HTML('Min Segment Days <span style="color: #999; cursor: help;" title="Minimum days between selected changepoints. If closer than this, only the day with lowest VPD is retained."><i class="fa fa-circle-question"></i></span>'),
+            # [HIDDEN]                       value = 7,
+            # [HIDDEN]                       min = 1,
+            # [HIDDEN]                       max = 30
+            # [HIDDEN]                     )
+            # [HIDDEN]                   ),
+            # [HIDDEN]                   column(6,
+            # [HIDDEN]                     numericInput(
+            # [HIDDEN]                       ns("vpd_min_consecutive_days"),
+            # [HIDDEN]                       HTML('Min Consecutive Days <span style="color: #999; cursor: help;" title="Minimum consecutive days with low VPD required for changepoint selection. Set to 1 to select any single day below threshold."><i class="fa fa-circle-question"></i></span>'),
+            # [HIDDEN]                       value = 1,
+            # [HIDDEN]                       min = 1,
+            # [HIDDEN]                       max = 10
+            # [HIDDEN]                     )
+            # [HIDDEN]                   )
+            # [HIDDEN]                 ),
 
-                # Results display
-                conditionalPanel(
-                  condition = sprintf("output['%s']", ns("vpd_changepoints_detected")),
-                  h5("Detected VPD-Based Changepoints:"),
-                  helpText(icon("info-circle"), " Detected changepoints shown as ", tags$span(style = "color: purple;", "purple dotted lines"), " on plot. Click ", tags$code("[+]"), " to add individually or use button below to add all."),
-                  uiOutput(ns("detected_vpd_changepoints_list")),
-                  br(),
-                  actionButton(
-                    ns("add_detected_vpd_changepoints"),
-                    "Add All VPD Changepoints",
-                    icon = icon("check"),
-                    class = "btn-success",
-                    width = "100%"
-                  )
-                )
-              )
-            )
+            # [HIDDEN]                 br(),
+
+            # [HIDDEN]                 # Run detection button
+            # [HIDDEN]                 actionButton(
+            # [HIDDEN]                   ns("detect_vpd_changepoints"),
+            # [HIDDEN]                   "Run VPD Detection",
+            # [HIDDEN]                   icon = icon("cloud"),
+            # [HIDDEN]                   class = "btn-primary",
+            # [HIDDEN]                   width = "100%"
+            # [HIDDEN]                 ),
+
+            # [HIDDEN]                 br(), br(),
+
+            # [HIDDEN]                 # Results display
+            # [HIDDEN]                 conditionalPanel(
+            # [HIDDEN]                   condition = sprintf("output['%s']", ns("vpd_changepoints_detected")),
+            # [HIDDEN]                   h5("Detected VPD-Based Changepoints:"),
+            # [HIDDEN]                   helpText(icon("info-circle"), " Detected changepoints shown as ", tags$span(style = "color: purple;", "purple dotted lines"), " on plot. Click ", tags$code("[+]"), " to add individually or use button below to add all."),
+            # [HIDDEN]                   uiOutput(ns("detected_vpd_changepoints_list")),
+            # [HIDDEN]                   br(),
+            # [HIDDEN]                   actionButton(
+            # [HIDDEN]                     ns("add_detected_vpd_changepoints"),
+            # [HIDDEN]                     "Add All VPD Changepoints",
+            # [HIDDEN]                     icon = icon("check"),
+            # [HIDDEN]                     class = "btn-success",
+            # [HIDDEN]                     width = "100%"
+            # [HIDDEN]                   )
+            # [HIDDEN]                 )
+            # [HIDDEN]               )
+            # [HIDDEN]             ),
           ),
 
           # Current changepoints display (shared between tabs)
@@ -375,10 +474,35 @@ correctionsUI <- function(id) {
               id = ns("results_tabs"),
 
               tabPanel(
+                "Before/After Comparison",
+                br(),
+
+                fluidRow(
+                  column(6,
+                    selectInput(
+                      ns("plot_sensor_position_spacing"),
+                      "Sensor Position:",
+                      choices = c("Outer" = "outer", "Inner" = "inner"),
+                      selected = "outer"
+                    )
+                  ),
+                  column(6,
+                    checkboxInput(
+                      ns("show_raw_overlay"),
+                      "Show Raw Data Overlay",
+                      value = FALSE
+                    )
+                  )
+                ),
+
+                plotly::plotlyOutput(ns("plot_before_after"), height = "500px")
+              ),
+
+              tabPanel(
                 "Segment Results",
                 br(),
                 helpText("Each segment between changepoints gets separate Burgess correction coefficients."),
-                verbatimTextOutput(ns("segment_results_table"))
+                DT::dataTableOutput(ns("segment_results_table"))
               ),
 
               tabPanel(
@@ -388,28 +512,6 @@ correctionsUI <- function(id) {
               )
             )
           )
-        ),
-
-        # Correction Status
-        box(
-          width = 12,
-          title = "Active Correction Status",
-          status = "success",
-          solidHeader = TRUE,
-
-          p("The most recent correction is automatically applied to downstream analyses:"),
-
-          verbatimTextOutput(ns("correction_status")),
-
-          hr(),
-
-          actionButton(
-            ns("reset_corrections"),
-            "Reset to Uncorrected Data",
-            icon = icon("undo"),
-            class = "btn-warning",
-            width = "100%"
-          )
         )
       )
     )
@@ -418,7 +520,7 @@ correctionsUI <- function(id) {
 
 # Server ----
 correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, wood_properties, calc_methods,
-                              daily_vpd = reactive(NULL)) {
+                              daily_vpd = reactive(NULL), weather_vpd = reactive(NULL), code_tracker = NULL) {
   moduleServer(id, function(input, output, session) {
 
     # Reactive values
@@ -426,6 +528,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
       changepoints = list(),  # List of POSIXct dates
       detected_result = NULL,  # Changepoint detection result (PELT)
       vpd_detected_result = NULL,  # VPD changepoint detection result
+      stable_vpd_detected_result = NULL,  # Stable VPD changepoint detection result
       correction_result = NULL,  # Spacing correction result
       corrected_vh = NULL,
       correction_applied = FALSE
@@ -938,6 +1041,202 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
     })
 
     # ==================================================================
+    # STABLE VPD CHANGEPOINT DETECTION
+    # ==================================================================
+
+    # Stable VPD changepoint detection
+    observeEvent(input$detect_stable_vpd_changepoints, {
+      req(weather_vpd())
+
+      # Get raw weather data (hourly/sub-hourly)
+      weather_data <- weather_vpd()
+
+      # Show waiter
+      waiter <- waiter::Waiter$new(
+        html = waiter::spin_fading_circles(),
+        color = waiter::transparent(0.5)
+      )
+      waiter$show()
+
+      tryCatch({
+        # Validate predawn window
+        if (length(input$predawn_window) == 0) {
+          stop("Please select at least one hour for the pre-dawn window.")
+        }
+
+        # Convert slider range (start, end) to sequence of hours
+        predawn_range <- as.numeric(input$predawn_window)
+        predawn_hours <- seq(predawn_range[1], predawn_range[2], by = 1)
+
+        # Detect stable VPD-based changepoints
+        stable_vpd_result <- sapfluxr::detect_stable_vpd_periods(
+          weather_data = weather_data,
+          predawn_window = predawn_hours,
+          vpd_threshold = input$stable_vpd_threshold,
+          stability_threshold = input$stability_threshold,
+          min_segment_days = input$stable_min_segment_days,
+          vpd_col = "vpd_kpa"
+        )
+
+        # Hide waiter
+        waiter$hide()
+
+        if (length(stable_vpd_result$valid_dates) == 0) {
+          # No changepoints detected
+          if (!is.null(rv$stable_vpd_detected_result)) {
+            rv$stable_vpd_detected_result <- NULL
+          }
+
+          showNotification(
+            sprintf("No stable VPD periods found with threshold %.2f kPa. Try adjusting thresholds.",
+                   input$stable_vpd_threshold),
+            type = "warning",
+            duration = 5
+          )
+        } else {
+          # Update detected results - normalize structure for UI
+          # UI expects $changepoints, $mean_vpd, $duration_days (we can map n_points or similar)
+
+          # Map to what UI expects or update UI logic?
+          # Let's check what the function returns:
+          # result$valid_dates (Date vector)
+          # result$daily_stats (dataframe with stats for valid dates)
+
+          # Filter daily_stats to only valid ones
+          valid_stats <- stable_vpd_result$daily_stats[
+            stable_vpd_result$daily_stats$date %in% stable_vpd_result$valid_dates,
+          ]
+
+          # Store in a structure compatible with our UI renderer
+          rv$stable_vpd_detected_result <- list(
+            changepoints = valid_stats$date,
+            mean_vpd = valid_stats$mean_predawn_vpd,
+            sd_vpd = valid_stats$sd_predawn_vpd,
+            n_points = valid_stats$n_points,
+            parameters = stable_vpd_result$parameters
+          )
+
+          showNotification(
+            sprintf("Detected %d stable VPD period(s)",
+                   length(stable_vpd_result$valid_dates)),
+            type = "message",
+            duration = 5
+          )
+        }
+
+      }, error = function(e) {
+        waiter$hide()
+        showNotification(
+          paste("Error detecting stable VPD periods:", e$message),
+          type = "error",
+          duration = 10
+        )
+        rv$stable_vpd_detected_result <- NULL
+      })
+    })
+
+    # Show/hide stable VPD detected changepoints output
+    output$stable_vpd_changepoints_detected <- reactive({
+      !is.null(rv$stable_vpd_detected_result) && length(rv$stable_vpd_detected_result$changepoints) > 0
+    })
+    outputOptions(output, "stable_vpd_changepoints_detected", suspendWhenHidden = FALSE)
+
+    # Display stable VPD detected changepoints with individual add buttons
+    output$detected_stable_vpd_changepoints_list <- renderUI({
+      req(rv$stable_vpd_detected_result)
+
+      cpts <- rv$stable_vpd_detected_result$changepoints
+      mean_vpd <- rv$stable_vpd_detected_result$mean_vpd
+      sd_vpd <- rv$stable_vpd_detected_result$sd_vpd
+
+      if (length(cpts) == 0) return(NULL)
+
+      # Create list of changepoints with add buttons
+      tagList(
+        lapply(seq_along(cpts), function(i) {
+          div(
+            style = "margin-bottom: 5px;",
+            actionButton(
+              session$ns(paste0("add_stable_vpd_cp_", i)),
+              label = NULL,
+              icon = icon("plus"),
+              class = "btn-xs btn-success",
+              style = "padding: 2px 6px; margin-right: 8px;"
+            ),
+            tags$span(
+              sprintf("%s (Mean: %.3f kPa, SD: %.3f)",
+                     format(cpts[i], "%Y-%m-%d"),
+                     mean_vpd[i],
+                     sd_vpd[i]),
+              style = "font-family: monospace;"
+            )
+          )
+        })
+      )
+    })
+
+    # Handle individual add button clicks for stable VPD detected changepoints
+    observe({
+      req(rv$stable_vpd_detected_result)
+
+      cpts <- rv$stable_vpd_detected_result$changepoints
+
+      # Create observers for each individual add button
+      lapply(seq_along(cpts), function(i) {
+        btn_id <- paste0("add_stable_vpd_cp_", i)
+        observeEvent(input[[btn_id]], {
+          # Convert Date to POSIXct at midnight
+          cp_date <- cpts[i]
+          cp_posix <- as.POSIXct(paste(cp_date, "00:00:00"), format = "%Y-%m-%d %H:%M:%S")
+
+          # Add to changepoints list
+          rv$changepoints <- c(rv$changepoints, list(cp_posix))
+
+          # Sort chronologically
+          rv$changepoints <- rv$changepoints[order(sapply(rv$changepoints, as.numeric))]
+
+          showNotification(
+            sprintf("Added stable VPD changepoint: %s", format(cp_date, "%Y-%m-%d")),
+            type = "message",
+            duration = 3
+          )
+        }, ignoreInit = TRUE)
+      })
+    })
+
+    # Add all stable VPD detected changepoints to the list
+    observeEvent(input$add_detected_stable_vpd_changepoints, {
+      req(rv$stable_vpd_detected_result)
+
+      cpts <- rv$stable_vpd_detected_result$changepoints
+
+      if (length(cpts) == 0) {
+        showNotification("No stable VPD changepoints to add", type = "warning")
+        return()
+      }
+
+      # Convert Date to POSIXct at midnight
+      cpts_posix <- lapply(cpts, function(d) {
+        as.POSIXct(paste(d, "00:00:00"), format = "%Y-%m-%d %H:%M:%S")
+      })
+
+      # Add to existing changepoints
+      rv$changepoints <- c(rv$changepoints, cpts_posix)
+
+      # Sort chronologically
+      rv$changepoints <- rv$changepoints[order(sapply(rv$changepoints, as.numeric))]
+
+      showNotification(
+        sprintf("Added %d stable VPD changepoint(s) to the list", length(cpts)),
+        type = "message",
+        duration = 5
+      )
+
+      # Clear detected results after adding
+      # rv$stable_vpd_detected_result <- NULL  # Keep results for plot
+    })
+
+    # ==================================================================
     # CACHED DAILY MINIMA CALCULATION
     # ==================================================================
 
@@ -1187,74 +1486,61 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
                paste(capture.output(str(probe_spacing)), collapse = " "))
         }
 
-        # Determine which correction to apply
-        if (correction_method == "burgess") {
-          # Burgess correction - loop through each sensor
-          corrected_data <- vh_data
-          sensors <- c("outer", "inner")
+        # FIX: Use the unified spacing correction interface
+        # This ensures Vh_cm_hr_sc column is properly created
+        # Need to apply to both sensors sequentially
 
-          for (sensor in sensors) {
-            result <- sapfluxr::apply_spacing_correction_per_segment(
-              vh_data = corrected_data,
-              changepoints = changepoint_dates,
-              sensor_position = sensor,
-              method = "HRM",
-              k_assumed = k_value,
-              probe_spacing = probe_spacing,
-              measurement_time = 80,
-              verbose = FALSE
-            )
-            corrected_data <- result$vh_corrected
-          }
+        corrected_data <- vh_data
+        sensors <- c("outer", "inner")
 
-          rv$correction_result <- list(
-            vh_corrected = corrected_data,
-            metadata = list(
-              method = "burgess",
-              n_segments = if (is.null(changepoint_dates)) 1 else length(changepoint_dates) + 1
-            )
-          )
-
-        } else {
-          # Linear offset correction
-          # Convert changepoints to datetime for zero periods
-          zero_periods <- if (length(rv$changepoints) > 0) {
-            lapply(seq_along(rv$changepoints), function(i) {
-              start_time <- if (i == 1) min(vh_data$datetime) else rv$changepoints[[i-1]]
-              end_time <- rv$changepoints[[i]]
-              list(start = start_time, end = end_time)
-            })
-          } else {
-            # No changepoints - use entire dataset as one period
-            list(list(
-              start = min(vh_data$datetime),
-              end = max(vh_data$datetime)
-            ))
-          }
-
-          result <- sapfluxr::apply_zero_flow_offset(
-            vh_data = vh_data,
-            zero_periods = zero_periods,
-            sensors = c("outer", "inner"),
-            methods = "HRM",
+        for (sensor in sensors) {
+          result <- sapfluxr::apply_spacing_correction(
+            vh_data = corrected_data,
+            method = "manual",
+            manual_changepoints = changepoint_dates,
+            hpv_method = "HRM",
+            sensor_position = sensor,
+            wood_properties = wood_props,
+            probe_spacing = probe_spacing,
+            measurement_time = 80,
             verbose = FALSE
           )
 
-          rv$correction_result <- list(
-            vh_corrected = result,
-            metadata = list(
-              method = "linear",
-              n_segments = length(zero_periods)
-            )
-          )
+          # Update data with corrected results for this sensor
+          corrected_data <- result$vh_corrected
         }
+
+        # Store final result
+        rv$correction_result <- result
+        rv$correction_result$vh_corrected <- corrected_data
 
         # Automatically apply corrections
         rv$corrected_vh <- rv$correction_result$vh_corrected
         rv$correction_applied <- TRUE
 
-        n_segments <- rv$correction_result$metadata$n_segments
+        # Get number of segments from changepoints
+        n_segments <- if (!is.null(changepoint_dates)) length(changepoint_dates) + 1 else 1
         method_name <- if (correction_method == "burgess") "Burgess" else "Linear Offset"
+
+        # Track spacing correction
+        if (!is.null(code_tracker)) {
+          code_tracker$add_step(
+            step_name = "Apply Spacing Correction",
+            code = sprintf(
+              'vh_corrected <- apply_spacing_correction(
+  vh_data = vh_data,
+  method = "%s",
+  probe_spacing = "%s"
+)',
+              tolower(method_name),
+              probe_spacing
+            ),
+            description = sprintf("%s correction applied with %d segment%s",
+                                 method_name, n_segments,
+                                 if (n_segments > 1) "s" else "")
+          )
+        }
+
         showNotification(
           sprintf("%s correction completed! Applied %d segment-specific correction%s to both sensors.",
                   method_name, n_segments, if (n_segments > 1) "s" else ""),
@@ -1278,38 +1564,252 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
     outputOptions(output, "has_correction_results", suspendWhenHidden = FALSE)
 
     # Segment results table
-    output$segment_results_table <- renderPrint({
+    output$segment_results_table <- DT::renderDataTable({
       req(rv$correction_result)
 
-      results <- rv$correction_result$segment_results
-
-      if (length(results) == 0) {
-        cat("No segment results available.\n")
-        return()
+      # Build segment results table with required columns
+      changepoint_dates <- if (!is.null(rv$changepoints) && length(rv$changepoints) > 0) {
+        as.Date(do.call(c, rv$changepoints))
+      } else {
+        NULL
       }
 
-      cat("SEGMENT-BY-SEGMENT CORRECTION RESULTS\n")
-      cat(strrep("=", 72), "\n\n")
+      # Calculate daily minima for baseline values using RAW data
+      vh_data <- vh_results()
 
-      for (i in seq_along(results)) {
-        seg <- results[[i]]
+      # Determine sensor and method
+      sensor <- input$detect_sensor_position %||% "outer"
+      method <- input$detect_method_filter %||% "HRM"
 
-        cat(sprintf("Segment %d of %d\n", seg$segment_id, length(results)))
-        cat(strrep("-", 72), "\n")
-        cat(sprintf("Period: %s to %s\n",
-                   format(seg$start_datetime, "%Y-%m-%d %H:%M"),
-                   format(seg$end_datetime, "%Y-%m-%d %H:%M")))
-        cat(sprintf("Observations: %d\n", seg$n_observations))
-        cat(sprintf("Baseline (Zero Vh): %.1f cm/hr\n", seg$zero_vh))
-        cat(sprintf("Mean Vh: %.2f cm/hr\n", seg$mean_vh))
-        cat(sprintf("SD: %.2f | CV: %.3f\n", seg$sd_vh, seg$cv))
-        cat(sprintf("Correction: %s\n", seg$correction_formula))
-        cat(sprintf("Severity: %s\n", toupper(seg$severity)))
-        cat("\n")
+      daily_min <- sapfluxr::calculate_daily_minima(
+        vh_data = vh_data,
+        sensor_position = sensor,
+        method = method,
+        vh_col = "Vh_cm_hr"  # Use raw column for baseline
+      )
+
+      # Get correction method name
+      correction_method <- if (!is.null(rv$correction_result$metadata$method)) {
+        rv$correction_result$metadata$method
+      } else {
+        "Spacing Correction"
       }
 
-      cat(strrep("=", 72), "\n")
+      # Create segments from changepoints
+      if (is.null(changepoint_dates) || length(changepoint_dates) == 0) {
+        # Single segment - get overall minimum
+        baseline_vh <- if (nrow(daily_min) > 0 && any(!is.na(daily_min$min_vh))) {
+          round(min(daily_min$min_vh, na.rm = TRUE), 2)
+        } else {
+          NA_real_
+        }
+
+        segment_data <- data.frame(
+          Segment = 1,
+          `Start Date` = format(min(vh_data$datetime, na.rm = TRUE), "%Y-%m-%d"),
+          `End Date` = format(max(vh_data$datetime, na.rm = TRUE), "%Y-%m-%d"),
+          `Previous Min Vh (cm/hr)` = baseline_vh,
+          `Correction Applied` = correction_method,
+          check.names = FALSE,
+          stringsAsFactors = FALSE
+        )
+      } else {
+        # Multiple segments
+        n_segments <- length(changepoint_dates) + 1
+        segment_list <- vector("list", n_segments)
+
+        for (i in 1:n_segments) {
+          start_date <- if (i == 1) {
+            as.Date(min(vh_data$datetime, na.rm = TRUE))
+          } else {
+            changepoint_dates[i-1]
+          }
+
+          end_date <- if (i == n_segments) {
+            as.Date(max(vh_data$datetime, na.rm = TRUE))
+          } else {
+            changepoint_dates[i]
+          }
+
+          # Get daily min for this segment
+          segment_daily <- daily_min[
+            daily_min$date >= start_date &
+            daily_min$date <= end_date,
+          ]
+
+          baseline_vh <- if (nrow(segment_daily) > 0 && any(!is.na(segment_daily$min_vh))) {
+            round(min(segment_daily$min_vh, na.rm = TRUE), 2)
+          } else {
+            NA_real_
+          }
+
+          segment_list[[i]] <- data.frame(
+            Segment = i,
+            `Start Date` = format(start_date, "%Y-%m-%d"),
+            `End Date` = format(end_date, "%Y-%m-%d"),
+            `Previous Min Vh (cm/hr)` = baseline_vh,
+            `Correction Applied` = correction_method,
+            check.names = FALSE,
+            stringsAsFactors = FALSE
+          )
+        }
+
+        segment_data <- do.call(rbind, segment_list)
+      }
+
+      DT::datatable(
+        segment_data,
+        options = list(
+          pageLength = 10,
+          scrollX = TRUE,
+          dom = 't'
+        ),
+        rownames = FALSE
+      )
     })
+
+    # Pre-filtered data for spacing plot
+    spacing_plot_data <- reactive({
+      req(rv$correction_result, rv$corrected_vh)
+
+      vh_data_original <- vh_results()
+      vh_data_corrected <- rv$corrected_vh
+
+      # Get sensor and method from plot inputs (independent of changepoint detection inputs)
+      sensor <- input$plot_sensor_position_spacing %||% "outer"
+      method <- input$detect_method_filter %||% "HRM"
+
+      # Filter datasets for selected sensor and method
+      before <- vh_data_original[
+        vh_data_original$sensor_position == sensor &
+        vh_data_original$method == method,
+      ]
+
+      after <- vh_data_corrected[
+        vh_data_corrected$sensor_position == sensor &
+        vh_data_corrected$method == method,
+      ]
+
+      # Only sample if REALLY large (>50k points)
+      if (nrow(after) > 50000) {
+        sample_idx <- seq(1, nrow(after), length.out = 50000)
+        after <- after[sample_idx, ]
+      }
+      if (nrow(before) > 50000) {
+        sample_idx <- seq(1, nrow(before), length.out = 50000)
+        before <- before[sample_idx, ]
+      }
+
+      list(before = before, after = after)
+    })
+
+    # Before/After Comparison Plot - initial render with base trace only
+    output$plot_before_after <- plotly::renderPlotly({
+      req(spacing_plot_data())
+
+      plot_data <- spacing_plot_data()
+      after <- plot_data$after
+
+      # Get sensor and method from inputs
+      sensor <- input$plot_sensor_position_spacing %||% "outer"
+      method <- input$detect_method_filter %||% "HRM"
+
+      # Validate filtered data
+      if (nrow(after) == 0) {
+        stop("No data found for sensor '", sensor, "' and method '", method,
+             "'. Available sensors: ", paste(unique(after$sensor_position), collapse = ", "),
+             "; Available methods: ", paste(unique(after$method), collapse = ", "))
+      }
+
+      # Determine which corrected column to use
+      corrected_col <- if ("Vh_cm_hr_sc" %in% names(after) &&
+                          sum(!is.na(after$Vh_cm_hr_sc)) > 0) {
+        "Vh_cm_hr_sc"
+      } else if ("Vh_cm_hr" %in% names(after)) {
+        "Vh_cm_hr"
+      } else {
+        stop("No velocity column found in corrected data.")
+      }
+
+      # Create plot with ONLY the corrected trace (base layer)
+      p <- plotly::plot_ly(
+        data = after,
+        x = ~datetime,
+        y = as.formula(paste0("~", corrected_col)),
+        type = 'scatter',
+        mode = 'lines',
+        name = 'Spacing Corrected',
+        line = list(color = 'blue', width = 1.5),
+        fill = 'none',
+        hovertemplate = paste(
+          "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
+          "<b>Corrected:</b> %{y:.2f} cm/hr<br>",
+          "<extra></extra>"
+        )
+      )
+
+      # Layout
+      p <- p %>%
+        plotly::layout(
+          title = sprintf("Spacing Correction: Before vs After (%s, %s)",
+                         toupper(sensor), method),
+          xaxis = list(title = "Date", showgrid = TRUE, gridcolor = "lightgray"),
+          yaxis = list(title = "Vh (cm/hr)", showgrid = TRUE, gridcolor = "lightgray"),
+          legend = list(x = 0.02, y = 0.98),
+          hovermode = 'closest',
+          uirevision = 'spacing_plot'
+        )
+
+      p
+    })
+
+    # Use plotlyProxy to add/remove raw data overlay (preserves zoom)
+    # Trigger on BOTH checkbox change AND sensor position change
+    observe({
+      req(spacing_plot_data())
+
+      plot_data <- spacing_plot_data()
+      after <- plot_data$after
+      before <- plot_data$before
+
+      # First, try to remove any existing raw data trace
+      tryCatch({
+        plotly::plotlyProxy("plot_before_after", session) %>%
+          plotly::plotlyProxyInvoke("deleteTraces", list(1))
+      }, error = function(e) {
+        # Ignore error if trace doesn't exist
+      })
+
+      # Then add it back if checkbox is ticked
+      if (isTRUE(input$show_raw_overlay)) {
+        raw_col <- if ("Vh_cm_hr_raw" %in% names(after)) {
+          "Vh_cm_hr_raw"
+        } else {
+          "Vh_cm_hr"
+        }
+
+        raw_data <- if ("Vh_cm_hr_raw" %in% names(after)) after else before
+
+        plotly::plotlyProxy("plot_before_after", session) %>%
+          plotly::plotlyProxyInvoke(
+            "addTraces",
+            list(
+              x = raw_data$datetime,
+              y = raw_data[[raw_col]],
+              type = "scatter",
+              mode = "lines",
+              name = "Raw Data",
+              line = list(color = "red", width = 1),
+              fill = "none",
+              hovertemplate = paste(
+                "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
+                "<b>Raw:</b> %{y:.2f} cm/hr<br>",
+                "<extra></extra>"
+              )
+            )
+          )
+      }
+    }) %>% bindEvent(input$show_raw_overlay, input$plot_sensor_position_spacing)
 
     # Correction summary
     output$correction_summary <- renderPrint({

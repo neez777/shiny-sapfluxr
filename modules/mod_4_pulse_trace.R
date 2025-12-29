@@ -392,9 +392,12 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
               cat("  Using default HRM window: 60-100s\n")
             } else {
               # Columns exist, try to get values
-              hrm_result <- results[results$pulse_id == pulse_id &
-                                    results$method == "HRM" &
-                                    results$sensor_position == position, ]
+        hrm_result <- results[!is.na(results$pulse_id) &
+                              !is.na(results$method) &
+                              !is.na(results$sensor_position) &
+                              results$pulse_id == pulse_id &
+                              results$method == "HRM" &
+                              results$sensor_position == position, ]
 
               if (nrow(hrm_result) > 0) {
                 window_start <- hrm_result$hrm_window_start_sec[1]
@@ -543,9 +546,35 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
         if (!is.null(vh_results)) {
           results <- vh_results()
           if (!is.null(results) && nrow(results) > 0) {
-            hrmxa_result <- results[results$pulse_id == pulse_id &
+            
+            cat("\n=== HRMXa Window Lookup Debug ===\n")
+            cat("  Looking for pulse_id:", pulse_id, "  type:", class(pulse_id), "\n")
+            cat("  Sensor position:", position, "\n")
+            cat("  Total rows in results:", nrow(results), "\n")
+            
+            # Check what pulse_ids are available
+            available_pulses <- unique(results$pulse_id)
+            cat("  Available pulse_ids (first 10):", paste(head(available_pulses, 10), collapse=", "), "\n")
+            cat("  Pulse_id type in results:", class(results$pulse_id), "\n")
+            
+            # Check for HRMXa method
+            hrmxa_rows <- results[results$method == "HRMXa", ]
+            cat("  Total HRMXa rows:", nrow(hrmxa_rows), "\n")
+            
+            if (nrow(hrmxa_rows) > 0) {
+              cat("  HRMXa pulse_ids:", paste(unique(hrmxa_rows$pulse_id), collapse=", "), "\n")
+              cat("  HRMXa positions:", paste(unique(hrmxa_rows$sensor_position), collapse=", "), "\n")
+            }
+            
+            # Try the filter - exclude NA rows explicitly
+            hrmxa_result <- results[!is.na(results$pulse_id) &
+                                    !is.na(results$method) &
+                                    !is.na(results$sensor_position) &
+                                    results$pulse_id == pulse_id &
                                     results$method == "HRMXa" &
                                     results$sensor_position == position, ]
+            
+            cat("  Filtered rows for this pulse:", nrow(hrmxa_result), "\n")
 
             if (nrow(hrmxa_result) > 0 &&
                 "hrmxa_window_start_sec" %in% names(results) &&
@@ -557,11 +586,19 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
               if (!is.na(window_start) && !is.na(window_end)) {
                 hrm_start <- window_start
                 hrm_end <- window_end
-                cat("  Using HRMXa window from results:", hrm_start, "-", hrm_end, "s\n")
+                cat("  ✓ Using HRMXa window from results:", hrm_start, "-", hrm_end, "s\n")
               } else {
-                cat("  WARNING: HRMXa window values are NA - using defaults (60-100s)\n")
+                cat("  ✗ WARNING: HRMXa window values are NA - using defaults (60-100s)\n")
               }
+            } else {
+              if (nrow(hrmxa_result) == 0) {
+                cat("  ✗ WARNING: No matching HRMXa rows found for this pulse/position\n")
+              } else {
+                cat("  ✗ WARNING: Window columns not found in results\n")
+              }
+              cat("  → Falling back to HRM defaults (60-100s)\n")
             }
+            cat("=== End Debug ===\n\n")
           }
         }
 
@@ -693,11 +730,29 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
         if (!is.null(vh_results)) {
           results <- vh_results()
           if (!is.null(results) && nrow(results) > 0) {
-            cat("\nHRMXb Window Debug:\n")
+            
+            cat("\n=== HRMXb Window Lookup Debug ===\n")
+            cat("  Looking for pulse_id:", pulse_id, "  type:", class(pulse_id), "\n")
+            cat("  Sensor position:", position, "\n")
+            
+            # Check for HRMXb method
+            hrmxb_rows <- results[results$method == "HRMXb", ]
+            cat("  Total HRMXb rows:", nrow(hrmxb_rows), "\n")
+            
+            if (nrow(hrmxb_rows) > 0) {
+              cat("  HRMXb pulse_ids:", paste(unique(hrmxb_rows$pulse_id), collapse=", "), "\n")
+              cat("  HRMXb positions:", paste(unique(hrmxb_rows$sensor_position), collapse=", "), "\n")
+            }
 
-            hrmxb_result <- results[results$pulse_id == pulse_id &
+            # Try the filter - exclude NA rows explicitly
+            hrmxb_result <- results[!is.na(results$pulse_id) &
+                                    !is.na(results$method) &
+                                    !is.na(results$sensor_position) &
+                                    results$pulse_id == pulse_id &
                                     results$method == "HRMXb" &
                                     results$sensor_position == position, ]
+
+            cat("  Filtered rows for this pulse:", nrow(hrmxb_result), "\n")
 
             if (nrow(hrmxb_result) > 0 &&
                 "hrmxb_downstream_start_sec" %in% names(results) &&
@@ -716,13 +771,19 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
                 downstream_end <- ds_end
                 upstream_start <- us_start
                 upstream_end <- us_end
-                cat("  Using HRMXb windows from results\n")
+                cat("  ✓ Using HRMXb windows from results\n")
               } else {
-                cat("  WARNING: HRMXb window values are NA - using defaults (60-100s)\n")
+                cat("  ✗ WARNING: HRMXb window values are NA - using defaults (60-100s)\n")
               }
             } else {
-              cat("  No HRMXb results or columns missing - using defaults\n")
+              if (nrow(hrmxb_result) == 0) {
+                cat("  ✗ WARNING: No matching HRMXb rows found for this pulse/position\n")
+              } else {
+                cat("  ✗ WARNING: Window columns not found in results\n")
+              }
+              cat("  → Falling back to defaults (60-100s)\n")
             }
+            cat("=== End Debug ===\n\n")
           }
         }
 

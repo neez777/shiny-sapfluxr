@@ -206,7 +206,7 @@ package_available <- function(pkg) {
   requireNamespace(pkg, quietly = TRUE)
 }
 
-# Probe Visualization Functions ----
+# Probe Visualisation Functions ----
 
 #' Validate Probe and Tree Configuration
 #'
@@ -239,7 +239,7 @@ validate_probe_tree_config <- function(probe_config, wood_properties) {
       0
     }
 
-    # Convert to cm for visualization
+    # Convert to cm for visualisation
     probe_diameter_cm <- probe_diameter_mm / 10
     probe_length_cm <- probe_length_mm / 10
     spacer_thickness_cm <- spacer_thickness_mm / 10

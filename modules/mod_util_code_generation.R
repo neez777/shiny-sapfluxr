@@ -255,15 +255,20 @@ codeGenerationServer <- function(id) {
 
     # Initialize code tracker
     tracker <- CodeTracker$new()
+    
+    # Reactive trigger to force UI updates when R6 object changes
+    trigger <- reactiveVal(0)
 
     # Step count (for conditional UI)
     output$step_count <- reactive({
+      trigger() # Depend on trigger
       length(tracker$steps)
     })
     outputOptions(output, "step_count", suspendWhenHidden = FALSE)
 
     # Steps summary
     output$steps_summary <- renderText({
+      trigger() # Depend on trigger
       if (length(tracker$steps) == 0) {
         return("No steps recorded yet.")
       }
@@ -277,11 +282,13 @@ codeGenerationServer <- function(id) {
 
     # Generated code
     output$generated_code <- renderText({
+      trigger() # Depend on trigger
       tracker$generate_script()
     })
 
     # Steps breakdown
     output$steps_breakdown <- renderUI({
+      trigger() # Depend on trigger
       if (length(tracker$steps) == 0) {
         return(p(em("No steps recorded.")))
       }
@@ -312,6 +319,7 @@ codeGenerationServer <- function(id) {
     # Clear steps
     observeEvent(input$clear_steps, {
       tracker$clear()
+      trigger(trigger() + 1) # Trigger update
       showNotification("All analysis steps cleared", type = "message")
     })
 
@@ -358,6 +366,7 @@ codeGenerationServer <- function(id) {
       tracker = tracker,
       add_step = function(step_name, code, description = NULL, params = list()) {
         tracker$add_step(step_name, code, description, params)
+        trigger(isolate(trigger()) + 1) # Trigger update
       }
     ))
   })

@@ -35,7 +35,13 @@ source("modules/mod_tools_probe.R")
 source("modules/mod_tools_wood.R")
 source("modules/utils.R")
 source("modules/mod_5b_corrections_wound.R")
-source("modules/mod_6_calibration_sdma.R")
+source("modules/mod_6a_calibration.R")
+source("modules/mod_6b_calibration_validation.R")
+source("modules/mod_7_sdma.R")
+source("modules/mod_7b_sdma_validation.R")
+source("modules/mod_8_flux_density.R")
+source("modules/mod_9_aggregation.R")
+source("modules/mod_util_code_generation.R")
 
 # Increase file upload size limit
 # Default is 5MB - we need to handle large sap flow data files (100s of MB)
@@ -124,12 +130,21 @@ ui <- tagList(
           menuSubItem("Spacing Correction", tabName = "corrections", icon = icon("ruler-horizontal")),
           menuSubItem("Wound Correction", tabName = "wound_correction", icon = icon("bandage"))
         ),
-        menuItem("6. Calibration & sDMA", tabName = "calibration_sdma", icon = icon("balance-scale")),
-        menuItem("7. Visualise (Corrected)", tabName = "visualise_corrected", icon = icon("chart-area")),
+        menuItem("6. Method Calibration", icon = icon("ruler-combined"),
+          menuSubItem("Calibration Parameters", tabName = "calibration", icon = icon("sliders-h")),
+          menuSubItem("Calibration Validation", tabName = "calibration_validation", icon = icon("check-circle"))
+        ),
+        menuItem("7. Selectable DMA", icon = icon("exchange-alt"),
+          menuSubItem("sDMA Calculation", tabName = "sdma", icon = icon("calculator")),
+          menuSubItem("sDMA Validation", tabName = "sdma_validation", icon = icon("chart-line"))
+        ),
+        menuItem("8. Flux Density", tabName = "flux_density", icon = icon("tint")),
+        menuItem("9. Visualise (Aggregated)", tabName = "aggregation", icon = icon("chart-bar")),
         tags$hr(style = "margin: 10px 0; border-color: #555;"),
         menuItem("Tools", icon = icon("wrench"),
           menuSubItem("Probe Configuration", tabName = "tool_probe", icon = icon("ruler")),
-          menuSubItem("Wood Properties", tabName = "tool_wood", icon = icon("tree"))
+          menuSubItem("Wood Properties", tabName = "tool_wood", icon = icon("tree")),
+          menuSubItem("Code Generator", tabName = "code_generation", icon = icon("code"))
         ),
         tags$hr(style = "margin: 10px 0; border-color: #555;")
       ),
@@ -229,7 +244,7 @@ ui <- tagList(
 
         fluidRow(
           column(
-            width = 7,
+            width = 6,
             box(
               width = NULL,
               title = "Upload Heat Pulse Data",
@@ -237,20 +252,10 @@ ui <- tagList(
               solidHeader = TRUE,
 
               dataUploadUI("data_upload")
-            ),
-            box(
-              width = NULL,
-              title = "Upload Weather Data (Optional)",
-              status = "info",
-              solidHeader = TRUE,
-              collapsible = TRUE,
-              collapsed = TRUE,
-
-              weatherUploadUI("weather_upload")
             )
           ),
           column(
-            width = 5,
+            width = 6,
             box(
               width = NULL,
               title = "Clock Drift Correction (Optional)",
@@ -270,6 +275,16 @@ ui <- tagList(
               collapsed = TRUE,
 
               dataTrimUI("clock_drift")
+            ),
+            box(
+              width = NULL,
+              title = "Upload Weather Data (Optional)",
+              status = "warning",
+              solidHeader = TRUE,
+              collapsible = TRUE,
+              collapsed = TRUE,
+
+              weatherUploadUI("weather_upload")
             )
           )
         ),
@@ -317,7 +332,7 @@ ui <- tagList(
       # Tab 5: Corrections ----
       tabItem(
         tabName = "corrections",
-        h2("Spacing Correction & Thermal Diffusivity Calibration"),
+        h2("Spacing Correction"),
 
         correctionsUI("corrections")
       ),
@@ -331,15 +346,61 @@ ui <- tagList(
         woundCorrectionUI("wound_correction")
       ),
 
-      # Tab 6: Calibration & sDMA ----
+      # Tab 6a: Calibration ----
       tabItem(
-        tabName = "calibration_sdma",
-        h2("Method Calibration & sDMA"),
-        p(class = "text-muted", "Calibrate secondary methods to a primary method and apply Selectable Dual Method Approach (sDMA)."),
+        tabName = "calibration",
+        h2("Method Calibration"),
+        p(class = "text-muted", "Calibrate secondary methods to a primary method using linear regression."),
 
-        calibrationSdmaUI("calibration_sdma")
+        calibrationUI("calibration")
       ),
-      # Tab 7: Visualise Corrected ----
+
+      # Tab 6b: Calibration Validation ----
+      tabItem(
+        tabName = "calibration_validation",
+        h2("Calibration Validation"),
+        p(class = "text-muted", "Verify the quality of method calibration by comparing raw vs. calibrated velocities against the HRM baseline."),
+
+        calibrationValidationUI("calibration_validation")
+      ),
+
+      # Tab 7a: sDMA Calculation ----
+      tabItem(
+        tabName = "sdma",
+        h2("Selectable DMA (sDMA) Method Switching"),
+        p(class = "text-muted", "Apply Selectable Dual Method Approach (sDMA) to switch between calibrated methods based on recalculated Peclet numbers and flow conditions."),
+
+        sdmaUI("sdma")
+      ),
+
+      # Tab 7b: sDMA Validation ----
+      tabItem(
+        tabName = "sdma_validation",
+        h2("sDMA Validation - Interactive Time Series"),
+        p(class = "text-muted", "Compare HRM baseline, calibrated secondary methods, and sDMA results in an interactive time series plot."),
+
+        sdmaValidationUI("sdma_validation")
+      ),
+
+      # Tab 8: Flux Density ----
+      tabItem(
+        tabName = "flux_density",
+        h2("Sap Flux Density Conversion"),
+        p(class = "text-muted", "Convert corrected heat pulse velocity (Vh) to sap flux density (Jv) using wood-specific conversion factors."),
+
+        fluxDensityUI("flux_density")
+      ),
+
+      # Tab 9: Aggregation ----
+      tabItem(
+        tabName = "aggregation",
+        h2("Temporal Aggregation & Tree Water Use"),
+        p(class = "text-muted", "Aggregate flux density data to daily/hourly summaries and calculate whole tree water use."),
+
+        aggregationUI("aggregation")
+      ),
+
+      # Additional: Visualise Corrected ----
       tabItem(
         tabName = "visualise_corrected",
         h2("Interactive Visualisation - Corrected HPV"),
@@ -368,6 +429,15 @@ ui <- tagList(
         p(class = "text-muted", "Create or edit wood properties YAML files for use in sap flow analysis workflows."),
 
         toolWoodUI("tool_wood")
+      ),
+
+      # Tool: Code Generation ----
+      tabItem(
+        tabName = "code_generation",
+        h2("Reproducible Code Generation"),
+        p(class = "text-muted", "Generate executable R scripts that reproduce your Shiny analysis workflow using sapfluxr functions."),
+
+        codeGenerationUI("code_generation")
       )
     )
   )
@@ -376,6 +446,9 @@ ui <- tagList(
 
 # Server ----
 server <- function(input, output, session) {
+
+  # Initialize code tracker FIRST (other modules will use this)
+  code_tracker <- codeGenerationServer("code_generation")
 
   # Reactive values to store data across modules
   rv <- reactiveValues(
@@ -387,11 +460,12 @@ server <- function(input, output, session) {
     vh_results = NULL,
     weather_data = NULL,
     weather_vpd = NULL,
-    daily_vpd = NULL
+    daily_vpd = NULL,
+    flux_data = NULL
   )
 
   # Module: Data Upload
-  uploaded_data <- dataUploadServer("data_upload")
+  uploaded_data <- dataUploadServer("data_upload", code_tracker = code_tracker)
 
   # Store uploaded data
   observe({
@@ -423,7 +497,7 @@ server <- function(input, output, session) {
   })
 
   # Module: Configuration
-  configs <- configServer("config", reactive(rv$corrected_data))
+  configs <- configServer("config", reactive(rv$corrected_data), code_tracker = code_tracker)
 
   # Store configurations
   observe({
@@ -439,16 +513,17 @@ server <- function(input, output, session) {
     "methods",
     heat_pulse_data = reactive(rv$corrected_data),
     probe_config = configs$probe_config,
-    wood_properties = configs$wood_properties
+    wood_properties = configs$wood_properties,
+    code_tracker = code_tracker
   )
 
-  # Store results and pre-compute splits for visualization
+  # Store results and pre-compute splits for visualisation
   observe({
     req(vh_results())
 
     cat("\n")
     cat("=======================================================================\n")
-    cat("PRE-COMPUTING DATA SPLITS FOR VISUALIZATION\n")
+    cat("PRE-COMPUTING DATA SPLITS FOR VISUALISATION\n")
     cat("=======================================================================\n")
 
     rv$vh_results <- vh_results()
@@ -482,11 +557,11 @@ server <- function(input, output, session) {
                   method, sensor, format(n_rows, big.mark = ",")))
     }
     cat("=======================================================================\n\n")
-    cat("Data ready for visualization! Navigate to Tab 4 when ready.\n\n")
+    cat("Data ready for visualisation! Navigate to Tab 4 when ready.\n\n")
   })
 
   # Module: Visualise Raw (Tab 4) - Always shows uncorrected data
-  selected_pulse_id_raw <- plotTimeseriesServer("plot_timeseries_raw", vh_results, reactive(rv$daily_vpd))
+  selected_pulse_id_raw <- plotTimeseriesServer("plot_timeseries_raw", vh_results, reactive(rv$daily_vpd), reactive(rv$weather_vpd))
   pulseTraceServer("pulse_trace_raw", reactive(rv$corrected_data), selected_pulse_id_raw, vh_results)
 
   # Module: Corrections (Tab 5) - Spacing Correction & k Estimation
@@ -503,25 +578,104 @@ server <- function(input, output, session) {
     probe_config = configs$probe_config,
     wood_properties = configs$wood_properties,
     calc_methods = reactive(rv$calc_methods),
-    daily_vpd = reactive(rv$daily_vpd)
+    daily_vpd = reactive(rv$daily_vpd),
+    weather_vpd = reactive(rv$weather_vpd),
+    code_tracker = code_tracker
   )
   # Module: Wound Correction (Tab 5b) - Apply wound corrections
   wound_module <- woundCorrectionServer(
     "wound_correction",
     vh_data = corrected_vh,
     wood_properties = configs$wood_properties,
-    probe_config = configs$probe_config
+    probe_config = configs$probe_config,
+    code_tracker = code_tracker
   )
 
-  # Module: Calibration & sDMA (Tab 6) - Calibrate methods and apply sDMA
-  vh_calibrated_sdma <- calibrationSdmaServer(
-    "calibration_sdma",
+  # Module: Calibration (Tab 6a)
+  calibration_results <- calibrationServer(
+    "calibration",
     vh_corrected = reactive({
       wound_data <- wound_module$wound_corrected_data()
       if (!is.null(wound_data)) wound_data else corrected_vh()
     }),
-    code_tracker = NULL  # TODO: Integrate code tracker if needed
+    code_tracker = code_tracker,
+    active_tab = reactive(input$sidebar),
+    wound_module = wound_module  # Pass wound module to detect when correction is applied
   )
+
+  # Module: Calibration Validation (Tab 6b)
+  calibrationValidationServer(
+    "calibration_validation",
+    vh_raw = reactive({
+      # Get raw data before calibration
+      wound_data <- wound_module$wound_corrected_data()
+      if (!is.null(wound_data)) wound_data else corrected_vh()
+    }),
+    vh_calibrated = calibration_results$vh_transformed,  # Use transformed (long format) data
+    weather_data = reactive(rv$weather_data),
+    code_tracker = code_tracker
+  )
+
+  # Module: sDMA (Tab 7a)
+  sdma_results <- sdmaServer(
+    "sdma",
+    vh_calibrated = calibration_results$vh_transformed,  # Use transformed (long format)
+    primary_method = calibration_results$primary_method,
+    probe_config = reactive(rv$probe_config),
+    wood_properties = reactive(rv$wood_properties),
+    code_tracker = code_tracker
+  )
+
+  # Module: sDMA Validation (Tab 7b)
+  sdmaValidationServer(
+    "sdma_validation",
+    vh_hrm_peclet = reactive({
+      # Get wound-corrected or spacing-corrected HRM baseline with Peclet
+      wound_data <- wound_module$wound_corrected_data()
+      if (!is.null(wound_data)) wound_data else corrected_vh()
+    }),
+    vh_calibrated = calibration_results$vh_transformed,
+    vh_sdma = reactive(sdma_results$vh_sdma()),
+    code_tracker = code_tracker
+  )
+
+  # Consolidate results for downstream use
+  # If sDMA applied, use it. Else if calibration applied, use it. Else use wound/spacing corrected.
+  vh_calibrated_sdma <- reactive({
+    if (!is.null(sdma_results$vh_sdma())) {
+      return(sdma_results$vh_sdma())
+    }
+    calibration_results$vh_calibrated()
+  })
+
+  # Module: Flux Density (Tab 8)
+  flux_results <- fluxDensityServer(
+    "flux_density",
+    vh_raw = reactive(rv$vh_results),
+    vh_spacing_corrected = reactive(corrected_vh()),
+    vh_wound_corrected = reactive({
+      # Use calibrated data if available (but not sDMA), otherwise wound corrected
+      if (!is.null(calibration_results$vh_transformed()) && is.null(sdma_results$vh_sdma())) {
+        return(calibration_results$vh_transformed())
+      }
+      wound_module$wound_corrected_data()
+    }),
+    vh_sdma = reactive(sdma_results$vh_sdma()),
+    wood_properties = reactive(rv$wood_properties)
+  )
+
+  # Store flux data
+  observe({
+    rv$flux_data <- flux_results$flux_data()
+  })
+
+  # Module: Aggregation (Tab 9)
+  aggregationServer(
+    "aggregation",
+    flux_density_data = reactive(rv$flux_data),
+    code_tracker = code_tracker
+  )
+
   # Fallback data flow: use calibrated data if available, else wound corrected, else spacing corrected
   final_vh <- reactive({
     # Priority 1: Calibrated/sDMA data
@@ -537,10 +691,8 @@ server <- function(input, output, session) {
     corrected_vh()
   })
 
-
-
-  # Module: Visualise Corrected (Tab 7) - Shows corrected data
-  selected_pulse_id_corrected <- plotTimeseriesServer("plot_timeseries_corrected", final_vh, reactive(rv$daily_vpd))
+  # Module: Visualise Corrected (Tab 8) - Shows corrected data
+  selected_pulse_id_corrected <- plotTimeseriesServer("plot_timeseries_corrected", final_vh, reactive(rv$daily_vpd), reactive(rv$weather_vpd))
   pulseTraceServer("pulse_trace_corrected", reactive(rv$corrected_data), selected_pulse_id_corrected, final_vh)
 
   # Data Summary Output

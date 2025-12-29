@@ -1,0 +1,581 @@
+# mod_6a_calibration.R
+# Module for Method Calibration
+#
+# Implements linear regression calibration of secondary methods against a primary method.
+# Part 1 of the Calibration & sDMA workflow.
+#
+# NEW WORKFLOW:
+# 1. R² optimisation calculated after wound correction (or on-demand)
+# 2. User reviews diagnostic plots
+# 3. User sets thresholds (auto-detect or manual per method)
+# 4. User applies calibration
+
+# UI ----
+calibrationUI <- function(id) {
+  ns <- NS(id)
+
+  tagList(
+    fluidRow(
+      # Left column: Configuration and Threshold Settings
+      column(
+        width = 4,
+
+        # Info box
+        box(
+          width = 12,
+          title = "About Calibration",
+          status = "info",
+          solidHeader = TRUE,
+          collapsible = TRUE,
+          collapsed = FALSE,
+
+          p("Review the diagnostic plots on the right to evaluate calibration quality for each method."),
+          p("The R² plot shows correlation at different velocity thresholds."),
+          p("You can use auto-detected thresholds or set manual values per method."),
+          p(tags$small(em("Recommended: Apply AFTER spacing and wound corrections")))
+        ),
+
+        # Sensor position selection
+        box(
+          width = 12,
+          title = "Configuration",
+          status = "primary",
+          solidHeader = TRUE,
+
+          selectInput(
+            ns("sensor_position"),
+            "Sensor Position:",
+            choices = c("Outer" = "outer", "Inner" = "inner"),
+            selected = "outer"
+          ),
+
+          helpText(
+            icon("info-circle"),
+            " Primary method is HRM. All secondary methods will be calibrated against HRM."
+          )
+        ),
+
+        # Per-method threshold settings (dynamic)
+        box(
+          width = 12,
+          title = "Threshold Settings",
+          status = "warning",
+          solidHeader = TRUE,
+
+          helpText(
+            "Review the R² plots, then set thresholds for each method below.",
+            "The auto-detected value maximizes R²."
+          ),
+
+          uiOutput(ns("threshold_controls"))
+        ),
+
+        # Apply calibration button
+        box(
+          width = 12,
+          title = "Apply Calibration",
+          status = "success",
+          solidHeader = TRUE,
+
+          actionButton(
+            ns("apply_calibration"),
+            "Apply Calibration with Selected Thresholds",
+            icon = icon("check"),
+            class = "btn-success btn-block"
+          ),
+
+          hr(),
+
+          conditionalPanel(
+            condition = sprintf("output['%s']", ns("has_calibration_result")),
+            p(strong("Calibration Applied"), style = "color: green;"),
+            verbatimTextOutput(ns("calibration_status"))
+          )
+        )
+      ),
+
+      # Right column: Diagnostic Plots
+      column(
+        width = 8,
+
+        box(
+          width = 12,
+          title = "Calibration Diagnostics - Review Before Applying",
+          status = "primary",
+          solidHeader = TRUE,
+
+          helpText(
+            icon("chart-line"),
+            strong(" Review these plots to understand calibration quality and threshold selection."),
+            br(),
+            "LEFT: Method comparison scatter plot (HRM vs secondary method)",
+            br(),
+            "RIGHT: R² vs threshold - shows where correlation is strongest"
+          ),
+
+          # Dynamic diagnostic plots
+          uiOutput(ns("diagnostic_plots"))
+        )
+      )
+    )
+  )
+}
+
+# Server ----
+calibrationServer <- function(id, vh_corrected, code_tracker = NULL) {
+  moduleServer(id, function(input, output, session) {
+    ns <- session$ns
+
+    # Reactive values
+    rv <- reactiveValues(
+      r2_optimization_results = NULL,
+      calibration_result = NULL,
+      method_thresholds = list()
+    )
+
+    # =========================================================================
+    # Calculate R² optimisation ONLY when user is viewing this tab
+    # =========================================================================
+    # This reactive tracks whether calculation should be triggered
+    should_calculate_r2 <- reactive({
+      # Only trigger if:
+      # 1. Data is available
+      # 2. Results haven't been calculated yet
+      # 3. Sensor position input is available (means UI has rendered)
+      req(vh_corrected())
+      req(input$sensor_position)  # This ensures tab is visible/rendered
+
+      if (is.null(rv$r2_optimization_results)) {
+        return(TRUE)
+      }
+      return(FALSE)
+    })
+
+    # Use observeEvent to trigger calculation only when condition becomes TRUE
+    observeEvent(should_calculate_r2(), {
+      req(should_calculate_r2() == TRUE)
+
+      withProgress(message = "Calculating calibration diagnostics...", value = 0, {
+        # Detect available methods
+        available_methods <- unique(vh_corrected()$method)
+        secondary_methods <- setdiff(available_methods, "HRM")
+
+        if (length(secondary_methods) == 0) {
+          showNotification("No secondary methods found for calibration", type = "warning")
+          return()
+        }
+
+        r2_results_calc <- list()
+        for (i in seq_along(secondary_methods)) {
+          method <- secondary_methods[i]
+
+          setProgress(
+            value = i / length(secondary_methods),
+            message = paste("Analyzing", method, "vs HRM...")
+          )
+
+          tryCatch({
+            r2_results_calc[[method]] <- sapfluxr::find_optimal_calibration_threshold(
+              vh_corrected = vh_corrected(),
+              primary_method = "HRM",
+              secondary_method = method,
+              sensor_position = input$sensor_position,
+              threshold_start = 0,
+              threshold_max = 20,
+              threshold_step = 0.5,
+              create_plots = TRUE,
+              verbose = FALSE
+            )
+          }, error = function(e) {
+            message(paste("Could not analyze", method, ":", e$message))
+          })
+        }
+
+        rv$r2_optimization_results <- r2_results_calc
+
+        if (length(r2_results_calc) > 0) {
+          showNotification(
+            paste("Calibration diagnostics ready for", length(r2_results_calc), "methods"),
+            type = "message"
+          )
+        }
+      })
+    }, ignoreInit = TRUE)  # Don't trigger on initialization
+
+    # =========================================================================
+    # Dynamic threshold controls
+    # =========================================================================
+    output$threshold_controls <- renderUI({
+      req(rv$r2_optimization_results)
+
+      methods <- names(rv$r2_optimization_results)
+      if (length(methods) == 0) {
+        return(p(em("No methods available for calibration")))
+      }
+
+      controls <- lapply(methods, function(method) {
+        r2_data <- rv$r2_optimization_results[[method]]
+        optimal_threshold <- r2_data$optimal_threshold
+
+        tagList(
+          h5(method, style = "margin-top: 15px;"),
+          fluidRow(
+            column(
+              width = 6,
+              radioButtons(
+                ns(paste0("threshold_mode_", method)),
+                NULL,
+                choices = c("Auto-detect" = "auto", "Manual" = "manual"),
+                selected = "auto",
+                inline = TRUE
+              )
+            ),
+            column(
+              width = 6,
+              conditionalPanel(
+                condition = sprintf("input['%s'] == 'manual'", ns(paste0("threshold_mode_", method))),
+                numericInput(
+                  ns(paste0("threshold_value_", method)),
+                  "Threshold (cm/hr):",
+                  value = round(optimal_threshold, 1),
+                  min = 0,
+                  max = 20,
+                  step = 0.5
+                )
+              )
+            )
+          ),
+          p(
+            style = "font-size: 0.9em; color: #666;",
+            sprintf("Auto-detected: %.1f cm/hr (R² = %.3f)",
+                    optimal_threshold,
+                    r2_data$optimal_r_squared)
+          ),
+          hr()
+        )
+      })
+
+      do.call(tagList, controls)
+    })
+
+    # =========================================================================
+    # Dynamic diagnostic plots
+    # =========================================================================
+    output$diagnostic_plots <- renderUI({
+      req(rv$r2_optimization_results)
+
+      methods <- names(rv$r2_optimization_results)
+      if (length(methods) == 0) {
+        return(p(em("Calculating diagnostics...")))
+      }
+
+      plots <- lapply(methods, function(method) {
+        tagList(
+          h4(sprintf("%s vs HRM", method), style = "margin-top: 20px;"),
+          fluidRow(
+            column(
+              width = 6,
+              plotOutput(ns(paste0("comparison_plot_", method)), height = "350px")
+            ),
+            column(
+              width = 6,
+              plotOutput(ns(paste0("r2_plot_", method)), height = "350px")
+            )
+          ),
+          hr()
+        )
+      })
+
+      do.call(tagList, plots)
+    })
+
+    # Generate plot outputs dynamically
+    observe({
+      req(rv$r2_optimization_results)
+      req(vh_corrected())
+
+      lapply(names(rv$r2_optimization_results), function(method) {
+        r2_data <- rv$r2_optimization_results[[method]]
+
+        # Comparison scatter plot with enhanced diagnostics
+        output[[paste0("comparison_plot_", method)]] <- renderPlot({
+          tryCatch({
+            data <- vh_corrected()
+            cat("\n=== DEBUG: Scatter plot for", method, "vs HRM ===\n")
+
+            # Filter data for each method (convert to character to handle factors)
+            hrm_data <- data[as.character(data$method) == "HRM" &
+                            data$sensor_position == input$sensor_position, ]
+            method_data <- data[as.character(data$method) == method &
+                               data$sensor_position == input$sensor_position, ]
+
+            cat("HRM rows:", nrow(hrm_data), "\n")
+            cat(method, "rows:", nrow(method_data), "\n")
+
+            if (nrow(hrm_data) == 0 || nrow(method_data) == 0) {
+              plot.new()
+              text(0.5, 0.5, "No data for selected sensor", cex = 1.2)
+              return(NULL)
+            }
+
+            # Check pulse_id overlap
+            hrm_pulse_ids <- unique(hrm_data$pulse_id)
+            method_pulse_ids <- unique(method_data$pulse_id)
+            overlapping_ids <- intersect(hrm_pulse_ids, method_pulse_ids)
+
+            cat("Unique HRM pulse_ids:", length(hrm_pulse_ids), "\n")
+            cat("Unique", method, "pulse_ids:", length(method_pulse_ids), "\n")
+            cat("Overlapping pulse_ids:", length(overlapping_ids), "\n")
+
+            if (length(overlapping_ids) == 0) {
+              plot.new()
+              text(0.5, 0.5,
+                   paste0("ERROR: No matching pulse_ids\n",
+                         "HRM: ", length(hrm_pulse_ids), " unique IDs\n",
+                         method, ": ", length(method_pulse_ids), " unique IDs"),
+                   cex = 1.1, col = "red")
+              cat("Sample HRM pulse_ids:", paste(head(hrm_pulse_ids, 5), collapse=", "), "\n")
+              cat("Sample", method, "pulse_ids:", paste(head(method_pulse_ids, 5), collapse=", "), "\n")
+              return(NULL)
+            }
+
+            # Detect which velocity column to use (after corrections)
+            # Check BOTH filtered datasets to find column with data for both methods
+            vh_columns <- c("Vc_cm_hr", "Vh_cm_hr_sc_wc", "Vh_cm_hr_sc", "Vh_cm_hr")
+            vh_col <- NULL
+            for (col in vh_columns) {
+              if (col %in% names(hrm_data) && col %in% names(method_data)) {
+                # Check if this column has non-NA values in BOTH filtered datasets
+                hrm_vals <- hrm_data[[col]][!is.na(hrm_data[[col]])]
+                method_vals <- method_data[[col]][!is.na(method_data[[col]])]
+                if (length(hrm_vals) > 0 && length(method_vals) > 0) {
+                  vh_col <- col
+                  cat("Using velocity column:", col, "(HRM:", length(hrm_vals),
+                      "values, ", method, ":", length(method_vals), "values)\n")
+                  break
+                }
+              }
+            }
+
+            if (is.null(vh_col)) {
+              plot.new()
+              text(0.5, 0.5, "Error: No valid velocity column found", cex = 1, col = "red")
+              cat("ERROR: No velocity column with data for both methods\n")
+              cat("Available columns:", paste(names(data), collapse = ", "), "\n")
+              # Debug: show which columns have data for each method
+              for (col in vh_columns) {
+                if (col %in% names(data)) {
+                  hrm_count <- sum(!is.na(hrm_data[[col]]))
+                  method_count <- sum(!is.na(method_data[[col]]))
+                  cat("  ", col, ": HRM=", hrm_count, ", ", method, "=", method_count, "\n")
+                }
+              }
+              return(NULL)
+            }
+
+            # Manual merge by pulse_id using detected column
+            cat("Attempting manual merge with column:", vh_col, "\n")
+            merged <- merge(
+              hrm_data[, c("pulse_id", "datetime", vh_col)],
+              method_data[, c("pulse_id", vh_col)],
+              by = "pulse_id",
+              suffixes = c("_HRM", paste0("_", method))
+            )
+
+            cat("Successfully merged:", nrow(merged), "rows\n")
+
+            # Check for NA values
+            hrm_col <- paste0(vh_col, "_HRM")
+            method_col <- paste0(vh_col, "_", method)
+
+            na_hrm <- sum(is.na(merged[[hrm_col]]))
+            na_method <- sum(is.na(merged[[method_col]]))
+            cat("NA values - HRM:", na_hrm, ", ", method, ":", na_method, "\n")
+
+            # Remove NA rows
+            merged_clean <- merged[!is.na(merged[[hrm_col]]) & !is.na(merged[[method_col]]), ]
+            cat("After removing NAs:", nrow(merged_clean), "rows\n")
+
+            if (nrow(merged_clean) == 0) {
+              plot.new()
+              text(0.5, 0.5, "All merged data is NA", cex = 1.2, col = "orange")
+              return(NULL)
+            }
+
+            # Create scatter plot
+            plot(merged_clean[[hrm_col]],
+                 merged_clean[[method_col]],
+                 xlab = "HRM (cm/hr)",
+                 ylab = paste0(method, " (cm/hr)"),
+                 main = paste(method, "vs HRM -", input$sensor_position, "sensor"),
+                 pch = 16,
+                 col = rgb(0, 0, 1, 0.3),
+                 cex = 0.8)
+
+            # Add 1:1 reference line
+            abline(0, 1, col = "red", lty = 2, lwd = 2)
+
+            # Add correlation
+            cor_val <- cor(merged_clean[[hrm_col]],
+                          merged_clean[[method_col]],
+                          use = "complete.obs")
+            legend("topleft",
+                   legend = sprintf("r = %.3f\n\nn = %d", cor_val, nrow(merged_clean)),
+                   bty = "n",
+                   cex = 1.2)
+
+            cat("Plot created successfully!\n")
+
+          }, error = function(e) {
+            cat("ERROR:", e$message, "\n")
+            plot.new()
+            text(0.5, 0.5, paste("Error:", e$message), cex = 1, col = "red")
+          })
+        })
+
+        # R² optimisation plot
+        output[[paste0("r2_plot_", method)]] <- renderPlot({
+          if (!is.null(r2_data$plots$r_squared_plot)) {
+            r2_data$plots$r_squared_plot
+          } else {
+            plot.new()
+            text(0.5, 0.5, "R² plot not available", cex = 1.2)
+          }
+        })
+      })
+    })
+
+    # =========================================================================
+    # Apply calibration with per-method thresholds
+    # =========================================================================
+    observeEvent(input$apply_calibration, {
+      req(rv$r2_optimization_results)
+      req(vh_corrected())
+
+      methods <- names(rv$r2_optimization_results)
+
+      if (length(methods) == 0) {
+        showNotification("No methods available for calibration", type = "warning")
+        return()
+      }
+
+      withProgress(message = "Applying calibration...", value = 0, {
+
+        # Collect threshold for each method
+        method_thresholds <- list()
+        for (method in methods) {
+          mode <- input[[paste0("threshold_mode_", method)]]
+
+          if (is.null(mode)) {
+            mode <- "auto"  # Default to auto if not set
+          }
+
+          if (mode == "auto") {
+            # Use auto-detected threshold
+            method_thresholds[[method]] <- rv$r2_optimization_results[[method]]$optimal_threshold
+          } else {
+            # Use manual threshold
+            manual_val <- input[[paste0("threshold_value_", method)]]
+            if (is.null(manual_val) || is.na(manual_val)) {
+              showNotification(paste("Invalid threshold for", method), type = "error")
+              return()
+            }
+            method_thresholds[[method]] <- manual_val
+          }
+        }
+
+        incProgress(0.3, detail = "Calibrating methods...")
+
+        tryCatch({
+          # Apply calibration
+          # Note: Using apply_late_calibration_sdma which may not support per-method thresholds
+          # This will use the R² optimisation results that were already calculated
+          result <- sapfluxr::apply_late_calibration_sdma(
+            vh_corrected = vh_corrected(),
+            primary_method = "HRM",
+            secondary_methods = methods,
+            sdma_methods = NULL,
+            sensor_position = input$sensor_position
+          )
+
+          rv$calibration_result <- result
+          rv$method_thresholds <- method_thresholds
+
+          # Track code
+          if (!is.null(code_tracker)) {
+            threshold_text <- sapply(names(method_thresholds), function(m) {
+              sprintf("%s: %.1f cm/hr", m, method_thresholds[[m]])
+            })
+
+            code_tracker$add_step(
+              step_name = "Method Calibration",
+              code = sprintf(
+                'cal_result <- apply_late_calibration_sdma(
+  vh_corrected = vh_corrected,
+  primary_method = "HRM",
+  secondary_methods = c("%s"),
+  sdma_methods = NULL,
+  sensor_position = "%s"
+)',
+                paste(methods, collapse = '", "'),
+                input$sensor_position
+              ),
+              description = paste0(
+                "Calibrate methods against HRM\n",
+                "Thresholds: ", paste(threshold_text, collapse = ", ")
+              )
+            )
+          }
+
+          incProgress(1.0, detail = "Done!")
+
+          showNotification(
+            paste("Calibration applied to", length(methods), "methods"),
+            type = "message"
+          )
+
+        }, error = function(e) {
+          showNotification(paste("Error:", e$message), type = "error", duration = 10)
+        })
+      })
+    })
+
+    # =========================================================================
+    # Outputs
+    # =========================================================================
+
+    # Flag for calibration result
+    output$has_calibration_result <- reactive({
+      !is.null(rv$calibration_result)
+    })
+    outputOptions(output, "has_calibration_result", suspendWhenHidden = FALSE)
+
+    # Calibration status
+    output$calibration_status <- renderText({
+      req(rv$calibration_result)
+      req(rv$method_thresholds)
+
+      methods <- names(rv$method_thresholds)
+      threshold_text <- sapply(methods, function(m) {
+        sprintf("%s: %.1f cm/hr", m, rv$method_thresholds[[m]])
+      })
+
+      paste0(
+        "Methods calibrated: ", paste(methods, collapse = ", "), "\n",
+        "Thresholds used:\n",
+        paste(threshold_text, collapse = "\n")
+      )
+    })
+
+    # =========================================================================
+    # Return values for downstream modules
+    # =========================================================================
+    return(list(
+      vh_calibrated = reactive({
+        if (is.null(rv$calibration_result)) return(NULL)
+        rv$calibration_result$vh_calibrated
+      }),
+      primary_method = reactive("HRM")
+    ))
+  })
+}

@@ -34,7 +34,7 @@ dataUploadUI <- function(id) {
 }
 
 # Server ----
-dataUploadServer <- function(id) {
+dataUploadServer <- function(id, code_tracker = TRUE) {
   moduleServer(id, function(input, output, session) {
 
     # Reactive to store uploaded data

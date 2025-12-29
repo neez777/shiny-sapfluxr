@@ -1,6 +1,6 @@
 #' Helper functions for notifications using SweetAlert
 #'
-#' These functions provide consistent notification behavior across the app
+#' These functions provide consistent notification behaviour across the app
 
 #' Show success notification with auto-close
 notify_success <- function(session, title, text, timer = 3000) {

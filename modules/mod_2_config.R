@@ -160,7 +160,7 @@ configUI <- function(id) {
 }
 
 # Server ----
-configServer <- function(id, heat_pulse_data = NULL) {
+configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
   moduleServer(id, function(input, output, session) {
 
     # Reactive values
@@ -173,7 +173,7 @@ configServer <- function(id, heat_pulse_data = NULL) {
     # Sync the tool's config with our wood_properties reactive
     observe({
       req(input$wood_mode)
-      
+
       if (input$wood_mode %in% c("manual", "upload")) {
         # When using tool, sync its config
         tool_config <- wood_tool_return$config()
@@ -1045,11 +1045,11 @@ configServer <- function(id, heat_pulse_data = NULL) {
               style = "margin-bottom: 10px;",
               icon("check-circle"),
               tags$strong(" Derived properties calculated"),
-              if (!is.null(config$derived_properties$sap_flux_conversion_factor) &&
-                  !is.na(config$derived_properties$sap_flux_conversion_factor)) {
-                tags$span(style = "margin-left: 10px;",
-                         sprintf("(Z factor: %.4f)", config$derived_properties$sap_flux_conversion_factor))
-              }
+#              if (!is.null(config$derived_properties$sap_flux_conversion_factor) &&
+#                  !is.na(config$derived_properties$sap_flux_conversion_factor)) {
+#                tags$span(style = "margin-left: 10px;",
+#                         sprintf("(Z factor: %.4f)", config$derived_properties$sap_flux_conversion_factor))
+#              }
             )
           } else {
             div(
@@ -1123,22 +1123,22 @@ configServer <- function(id, heat_pulse_data = NULL) {
               }
             )
           )
-        ),
+#        ),
 
-        hr(),
-        downloadButton(
-          ns("download_wood_yaml"),
-          "Export to YAML",
-          icon = icon("download"),
-          class = "btn-sm btn-primary",
-          style = "width: 100%;"
+#        hr(),
+#        downloadButton(
+#          ns("download_wood_yaml"),
+#          "Export to YAML",
+#          icon = icon("download"),
+#          class = "btn-sm btn-primary",
+#          style = "width: 100%;"
         )
       )
     })
 
     # Probe Visualisation ----
 
-    # Get current probe config for visualization (includes manual entry)
+    # Get current probe config for visualisation (includes manual entry)
     current_probe_config <- reactive({
       if (input$probe_mode == "manual") {
         # Return a minimal list structure with values from manual inputs
@@ -1169,7 +1169,7 @@ configServer <- function(id, heat_pulse_data = NULL) {
       }
     })
 
-    # Get current wood properties for visualization (includes manual entry)
+    # Get current wood properties for visualisation (includes manual entry)
     current_wood_properties <- reactive({
 
       # Always use the stored wood_properties() from the sync observer

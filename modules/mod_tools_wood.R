@@ -97,7 +97,7 @@ toolWoodUI <- function(id) {
               condition = sprintf("input['%s'] == 'method1'", ns("wood_input_method")),
 
               p(class = "help-text",
-                "Measure fresh weight immediately after sampling, then oven-dry at 105°C."),
+                "Measure fresh weight immediately after sampling, then oven-dry until weight is stable."),
 
               numericInput(ns("fresh_weight_g"),
                           "Fresh Weight (g):",
@@ -249,7 +249,7 @@ toolWoodUI <- function(id) {
 
               numericInput(ns("wound_final_diameter_mm"),
                           "Final Wound Diameter (mm):",
-                          value = NULL, min = 2.0, max = 10.0, step = 0.1),
+                          value = NULL, min = 1.0, max = 10.0, step = 0.1),
 
             ),
 
@@ -379,7 +379,7 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
           heat_pulse_data
         }
       }, error = function(e) NULL)
-      
+
       # Extract filename if available
       if (!is.null(hp_data) && !is.null(hp_data$metadata$file_name)) {
         file_example <- hp_data$metadata$file_name
@@ -388,7 +388,7 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
         file_example <- "SX99X999.txt"
         config_example <- "SX99X999_wood.yaml"
       }
-      
+
       p(class = "help-text",
         strong("Tip: "),
         "Save your configuration with a descriptive name matching your heat pulse data file for easy recognition ",

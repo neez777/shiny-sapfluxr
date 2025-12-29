@@ -1,4 +1,4 @@
-#' Time Series Visualization Module
+#' Time Series Visualisation Module
 #'
 #' Shiny module for interactive plotly time series of HPV results
 #'
@@ -285,7 +285,7 @@ plotTimeseriesUI <- function(id) {
 }
 
 # Server ----
-plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL)) {
+plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), weather_vpd = reactive(NULL)) {
   moduleServer(id, function(input, output, session) {
 
     # Store current axis ranges
@@ -767,7 +767,7 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL)) {
         cat("Filtered for cleaning:", nrow(data_to_clean), "rows\n\n")
 
         # Apply interpolation to filtered subset
-        cat("Applying interpolation (C++ optimized)...\n")
+        cat("Applying interpolation (C++ optimised)...\n")
         timing_clean <- system.time({
           cleaned <- sapfluxr::filter_and_interpolate_vh(
             vh_flagged = data_to_clean,
@@ -1334,39 +1334,35 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL)) {
 
       # Add VPD overlay if enabled
       if (input$show_vpd) {
-        vpd_data <- daily_vpd()
-        
+        vpd_data <- weather_vpd()
+
         if (!is.null(vpd_data) && nrow(vpd_data) > 0) {
-          # VPD data is daily, need to match with filtered datetime range
           # Get date range from filtered data
           date_range <- range(data$datetime, na.rm = TRUE)
-          
+
           # Filter VPD to match plot range
+          # Ensure both use POSIXct for comparison
           vpd_filtered <- vpd_data %>%
-            dplyr::filter(date >= as.Date(date_range[1]) & date <= as.Date(date_range[2]))
-          
+            dplyr::filter(datetime >= date_range[1] & datetime <= date_range[2])
+
           if (nrow(vpd_filtered) > 0) {
             # Add VPD trace
             p <- p %>%
               add_trace(
                 data = vpd_filtered,
-                x = ~date,
-                y = ~mean_vpd,
+                x = ~datetime,
+                y = ~vpd_kpa,
                 type = "scatter",
-                mode = "lines+markers",
+                mode = "lines",  # Lines only for high-res data
                 name = "VPD (kPa)",
                 line = list(
                   color = "orange",
-                  width = 2
-                ),
-                marker = list(
-                  size = 6,
-                  color = "orange"
+                  width = 1.5
                 ),
                 yaxis = "y2",
                 hovertemplate = paste0(
                   "<b>VPD</b><br>",
-                  "Date: %{x|%Y-%m-%d}<br>",
+                  "Time: %{x}<br>",
                   "VPD: %{y:.2f} kPa<br>",
                   "<extra></extra>"
                 )
@@ -1407,7 +1403,7 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL)) {
       # Apply layout - conditionally add yaxis2 for Peclet or VPD
       use_secondary_axis <- FALSE
       secondary_axis_title <- ""
-      
+
       # Check for Peclet
       if (input$show_peclet) {
         full_data <- vh_results()
@@ -1419,10 +1415,10 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL)) {
           }
         }
       }
-      
+
       # Check for VPD (only if Peclet not already selected)
       if (!use_secondary_axis && input$show_vpd) {
-        vpd_data <- daily_vpd()
+        vpd_data <- weather_vpd()
         if (!is.null(vpd_data) && nrow(vpd_data) > 0) {
           use_secondary_axis <- TRUE
           secondary_axis_title <- "VPD (kPa)"
@@ -1766,7 +1762,7 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL)) {
       }
     })
 
-    
+
     # Return the selected pulse ID reactive
     return(selected_pulse_id)
   })
