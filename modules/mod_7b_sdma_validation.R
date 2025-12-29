@@ -156,17 +156,26 @@ sdmaValidationServer <- function(id,
     output$method_checkboxes <- renderUI({
       req(vh_calibrated())
 
-      # Get all unique methods from calibrated data
-      methods <- unique(vh_calibrated()$method)
-      methods <- methods[!is.na(methods)]
+      # Get all unique methods - must match the labels used in the plot!
+      methods <- c()
 
-      # Add sDMA if available (exclude HRM and NA - sDMA only shows secondary methods)
+      # HRM (from corrected data)
+      if (!is.null(vh_hrm_peclet())) {
+        methods <- c(methods, "HRM (Corrected)")
+      }
+
+      # Calibrated secondary methods
+      cal_methods <- unique(vh_calibrated()$method)
+      cal_methods <- cal_methods[!is.na(cal_methods) & cal_methods != "HRM"]
+      if (length(cal_methods) > 0) {
+        methods <- c(methods, paste0(cal_methods, " (Calibrated)"))
+      }
+
+      # Add sDMA combinations (these already have the right format)
       if (!is.null(vh_sdma()) && nrow(vh_sdma()) > 0) {
-        sdma_sources <- unique(vh_sdma()$sdma_source)
-        # Filter out HRM and NA - sDMA should only show secondary methods
-        sdma_sources <- sdma_sources[!sdma_sources %in% c("HRM", "NA") & !is.na(sdma_sources)]
-        if (length(sdma_sources) > 0) {
-          sdma_methods <- paste0("sDMA: ", sdma_sources)
+        sdma_methods <- unique(vh_sdma()$method)
+        sdma_methods <- sdma_methods[!is.na(sdma_methods)]
+        if (length(sdma_methods) > 0) {
           methods <- c(methods, sdma_methods)
         }
       }
@@ -218,19 +227,18 @@ sdmaValidationServer <- function(id,
         all_data$calibrated <- cal_data
       }
 
-      # Add sDMA results (always included, exclude HRM and NA)
+      # Add sDMA results (always included)
+      # Note: We plot the sDMA COMBINATION (e.g., "sDMA:MHR") as a continuous trace
+      # regardless of whether HRM or the secondary method was used at each point
       if (!is.null(vh_sdma()) && nrow(vh_sdma()) > 0) {
         sdma_data <- vh_sdma() %>%
           dplyr::filter(
             !is.na(datetime),
             !is.na(Vh_sdma),
-            sensor_position %in% input$sensor_position,
-            !sdma_source %in% c("HRM", "NA"),  # Exclude HRM and NA
-            !is.na(sdma_source)
+            sensor_position %in% input$sensor_position
           ) %>%
-          dplyr::select(datetime, pulse_id, sensor_position, combination, sdma_source, Vh_sdma) %>%
+          dplyr::select(datetime, pulse_id, sensor_position, method, Vh_sdma) %>%
           dplyr::mutate(
-            method = paste0("sDMA: ", sdma_source),
             Vh_cm_hr = Vh_sdma,
             data_type = "sdma"
           ) %>%
@@ -366,12 +374,13 @@ sdmaValidationServer <- function(id,
             hovermode = "closest",
             showlegend = input$show_legend,
             legend = list(
-              orientation = "v",
-              x = 1.02,
-              y = 1,
-              xanchor = "left"
+              orientation = "h",  # Horizontal legend
+              x = 0.5,
+              y = -0.15,
+              xanchor = "center",
+              yanchor = "top"
             ),
-            margin = list(l = 70, r = 200, t = 60, b = 60),
+            margin = list(l = 70, r = 70, t = 60, b = 120),  # More space at bottom for legend
             uirevision = "static"  # Preserve zoom when plot updates
           )
 

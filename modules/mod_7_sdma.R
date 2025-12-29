@@ -317,60 +317,46 @@ sdmaServer <- function(id, vh_calibrated, primary_method = reactive("HRM"), prob
           all_results <- list()
           result_counter <- 0
 
-          # Get calibrated data once
-          vh_calibrated_data <- vh_calibrated()
+          # Prepare data for parked sDMA function
+          # Step 1: Get HRM data with recalculated Peclet numbers
+          hrm_data <- rv$vh_with_peclet %>%
+            dplyr::select(datetime, pulse_id, sensor_position, method,
+                         Vh_cm_hr, hrm_peclet_number = Pe_corrected)
 
-          # Loop through all combinations
-          for (sensor in sensors) {
-            for (method in methods) {
-              result_counter <- result_counter + 1
-              incProgress(
-                amount = 0.7 / n_combinations,
-                detail = paste0("Processing ", sensor, " / ", method, " (", result_counter, "/", n_combinations, ")")
-              )
+          # Step 2: Get calibrated secondary methods
+          vh_calibrated_data <- vh_calibrated() %>%
+            dplyr::filter(
+              sensor_position %in% sensors,
+              method %in% methods
+            ) %>%
+            dplyr::select(datetime, pulse_id, sensor_position, method, Vh_cm_hr)
 
-              # Get Peclet-recalculated HRM data for this sensor
-              hrm_data <- rv$vh_with_peclet %>%
-                dplyr::filter(sensor_position == sensor) %>%
-                dplyr::select(datetime, pulse_id, sensor_position, method,
-                             Vh_cm_hr, hrm_peclet_number = Pe_corrected)
+          # Step 3: Combine HRM and secondary methods into one dataset
+          vh_combined <- dplyr::bind_rows(hrm_data, vh_calibrated_data)
 
-              # Filter secondary method from calibrated data
-              secondary_data <- vh_calibrated_data %>%
-                dplyr::filter(
-                  sensor_position == sensor,
-                  method == method
-                ) %>%
-                dplyr::select(datetime, pulse_id, sensor_position, method, Vh_cm_hr)
+          # Step 4: Use parked sDMA function (vectorized, no loops!)
+          incProgress(0.3, detail = "Applying sDMA switching...")
 
-              # Combine HRM and secondary
-              combined_data <- dplyr::bind_rows(hrm_data, secondary_data)
+          vh_sdma_result <- sapfluxr::apply_sdma_processing(
+            vh_results = vh_combined,
+            secondary_method = methods,
+            peclet_threshold = input$peclet_threshold,
+            skip_low_peclet = FALSE,
+            show_progress = FALSE
+          )
 
-              # Apply sDMA switching
-              sdma_result <- sapfluxr::apply_sdma_switching(
-                data = combined_data,
-                primary = primary_method(),
-                secondary = method,
-                mode = "peclet",
-                threshold = input$peclet_threshold,
-                calibrate = FALSE,  # Already calibrated in Tab 6
-                sensor_position = sensor,
-                velocity_col = "Vh_cm_hr",
-                peclet_col = "hrm_peclet_number",
-                verbose = FALSE
-              )
+          # Step 5: Extract only sDMA results and add combination column
+          rv$vh_sdma <- vh_sdma_result %>%
+            dplyr::filter(grepl("^sDMA:", method)) %>%
+            dplyr::mutate(
+              combination = paste0(sensor_position, "_",
+                                 gsub("^sDMA:", "", method)),
+              sdma_source = selected_method,
+              Vh_sdma = Vh_cm_hr
+            )
 
-              # Add combination identifier
-              sdma_result$combination <- paste0(sensor, "_", method)
-
-              # Store result
-              all_results[[paste0(sensor, "_", method)]] <- sdma_result
-            }
-          }
-
-          # Combine all results
-          rv$vh_sdma <- dplyr::bind_rows(all_results)
-          rv$sdma_results <- all_results
+          # Store individual results for compatibility
+          all_results <- split(rv$vh_sdma, rv$vh_sdma$combination)
 
           # === DIAGNOSTIC OUTPUT ===
           cat("\n")
@@ -402,25 +388,34 @@ sdmaServer <- function(id, vh_calibrated, primary_method = reactive("HRM"), prob
             code_tracker$add_step(
               step_name = "Apply sDMA Switching",
               code = sprintf(
-                '# Apply sDMA for %d sensor/method combinations
+                '# Apply sDMA switching using parked function
 # Sensors: %s
 # Methods: %s
 # Peclet threshold: %.2f
 
-all_results <- list()
-for (sensor in c(%s)) {
-  for (method in c(%s)) {
-    # ... (sDMA switching logic)
-    all_results[[paste0(sensor, "_", method)]] <- sdma_result
-  }
-}
-vh_sdma <- dplyr::bind_rows(all_results)',
-                n_combinations,
+# Combine HRM with recalculated Peclet and calibrated secondary methods
+vh_combined <- dplyr::bind_rows(
+  hrm_data,
+  vh_calibrated_data
+)
+
+# Apply sDMA switching (vectorized, no loops!)
+vh_sdma_result <- sapfluxr::apply_sdma_processing(
+  vh_results = vh_combined,
+  secondary_method = c(%s),
+  peclet_threshold = %.2f,
+  skip_low_peclet = FALSE,
+  show_progress = TRUE
+)
+
+# Extract sDMA results
+vh_sdma <- vh_sdma_result %%>%%
+  dplyr::filter(grepl("^sDMA:", method))',
                 paste(sensors, collapse = ", "),
                 paste(methods, collapse = ", "),
                 input$peclet_threshold,
-                paste0('"', paste(sensors, collapse = '", "'), '"'),
-                paste0('"', paste(methods, collapse = '", "'), '"')
+                paste0('"', paste(methods, collapse = '", "'), '"'),
+                input$peclet_threshold
               ),
               description = sprintf(
                 "Apply sDMA switching to %d combinations (Pe = %.1f)",
