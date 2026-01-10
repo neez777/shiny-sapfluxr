@@ -93,6 +93,18 @@ dataUploadServer <- function(id, code_tracker = TRUE) {
         # Store data
         heat_pulse_data(data)
 
+        # Track code generation
+        if (!isTRUE(code_tracker)) {
+          code_tracker$add_step(
+            step_name = "Load Heat Pulse Data",
+            code = sprintf('# Load heat pulse data\nheat_pulse_data <- sapfluxr::read_heat_pulse_data(\n  file_path = "%s"\n)', input$file$name),
+            description = sprintf("Imported %s (%d pulses, format: %s)",
+                                 input$file$name,
+                                 data$metadata$n_pulses,
+                                 data$metadata$format)
+          )
+        }
+
         # Show success message with auto-close
         pulse_msg <- if (!is.null(data$metadata$n_pulses)) {
           paste("Successfully loaded", data$metadata$n_pulses, "pulses")

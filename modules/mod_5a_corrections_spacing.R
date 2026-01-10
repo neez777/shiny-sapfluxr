@@ -34,6 +34,9 @@ correctionsUI <- function(id) {
           p(tags$small(em("Based on Burgess et al. (2001) with PELT changepoint detection")))
         ),
 
+        # Heartwood warning (dynamic - shown only if inner sensor is in heartwood)
+        uiOutput(ns("heartwood_warning")),
+
         # Changepoint definition with tabbed interface
         box(
           width = 12,
@@ -50,7 +53,150 @@ correctionsUI <- function(id) {
             id = ns("changepoint_tabs"),
             type = "tabs",
 
-            # Tab 1: Stable VPD
+            # Tab 1: Dual-Criterion (VPD + vh stable) - RECOMMENDED DEFAULT
+            tabPanel(
+              "Dual-Criterion ⭐",
+              br(),
+
+              div(class = "alert alert-info",
+                icon("star"),
+                strong(" Recommended Method"),
+                br(),
+                "Detects changepoints when ", strong("BOTH"), " VPD ", strong("AND"), " sap flow are stable during pre-dawn periods. This dual-criterion approach eliminates false positives from stem refilling and provides higher confidence in baseline detection."
+              ),
+
+              # Check if both weather and vh data are available
+              conditionalPanel(
+                condition = "output.weather_data_available == false",
+                ns = ns,
+                div(class = "alert alert-warning",
+                  icon("exclamation-triangle"),
+                  strong(" Weather data required"),
+                  br(),
+                  "Please upload weather data in Tab 1 and calculate VPD before using this method."
+                )
+              ),
+
+              conditionalPanel(
+                condition = "output.weather_data_available == true",
+                ns = ns,
+
+                h5("VPD Stability Criteria"),
+
+                # VPD Threshold (Mean)
+                sliderInput(
+                  ns("dual_vpd_threshold"),
+                  HTML('Mean VPD Threshold (kPa) <span style="color: #999; cursor: help;" title="Maximum mean VPD during pre-dawn. Lower = more conservative."><i class="fa fa-circle-question"></i></span>'),
+                  min = 0.1,
+                  max = 1.5,
+                  value = 0.5,
+                  step = 0.05
+                ),
+
+                # VPD Stability Threshold (SD)
+                sliderInput(
+                  ns("dual_vpd_stability"),
+                  HTML('VPD Stability (SD kPa) <span style="color: #999; cursor: help;" title="Maximum standard deviation of VPD. Lower = more stable required."><i class="fa fa-circle-question"></i></span>'),
+                  min = 0.01,
+                  max = 0.5,
+                  value = 0.1,
+                  step = 0.01
+                ),
+
+                hr(),
+                h5("Sap Flow Stability Criteria"),
+
+                # vh Threshold (Mean)
+                sliderInput(
+                  ns("dual_vh_threshold"),
+                  HTML('Mean Sap Flow Threshold (cm/hr) <span style="color: #999; cursor: help;" title="Maximum mean sap flow during pre-dawn. Species-specific: Conifers ~1.0, Hardwoods ~2.5"><i class="fa fa-circle-question"></i></span>'),
+                  min = 0.5,
+                  max = 5.0,
+                  value = 2.0,
+                  step = 0.1
+                ),
+
+                # vh Stability Threshold (SD)
+                sliderInput(
+                  ns("dual_vh_stability"),
+                  HTML('Sap Flow Stability (SD cm/hr) <span style="color: #999; cursor: help;" title="Maximum standard deviation of sap flow. Lower = flatter baseline required."><i class="fa fa-circle-question"></i></span>'),
+                  min = 0.1,
+                  max = 2.0,
+                  value = 0.5,
+                  step = 0.1
+                ),
+
+                hr(),
+                h5("Detection Settings"),
+
+                # Pre-dawn window as time range slider
+                sliderInput(
+                  ns("dual_predawn_window"),
+                  HTML('Pre-dawn Window <span style="color: #999; cursor: help;" title="Time range to analyse for stability (default: 02:00 to 06:00)."><i class="fa fa-circle-question"></i></span>'),
+                  min = 0,
+                  max = 23,
+                  value = c(2, 6),
+                  step = 1,
+                  post = ":00"
+                ),
+
+                # Minimum segment days
+                numericInput(
+                  ns("dual_min_segment_days"),
+                  HTML('Min Spacing (days) <span style="color: #999; cursor: help;" title="Minimum days between changepoints."><i class="fa fa-circle-question"></i></span>'),
+                  value = 7,
+                  min = 1,
+                  max = 30
+                ),
+
+                # Sensor for vh detection
+                selectInput(
+                  ns("dual_sensor_position"),
+                  HTML('Sensor Position <span style="color: #999; cursor: help;" title="Which sensor to use for sap flow stability detection."><i class="fa fa-circle-question"></i></span>'),
+                  choices = c("Outer" = "outer", "Inner" = "inner"),
+                  selected = "outer"
+                ),
+
+                # Method for vh detection
+                selectInput(
+                  ns("dual_method_filter"),
+                  HTML('Method <span style="color: #999; cursor: help;" title="HPV calculation method to use for sap flow detection."><i class="fa fa-circle-question"></i></span>'),
+                  choices = c("HRM" = "HRM", "MHR" = "MHR"),
+                  selected = "HRM"
+                ),
+
+                br(),
+
+                # Run detection button
+                actionButton(
+                  ns("detect_dual_stable_changepoints"),
+                  "Run Dual-Criterion Detection",
+                  icon = icon("check-double"),
+                  class = "btn-primary",
+                  width = "100%"
+                ),
+
+                br(), br(),
+
+                # Results display
+                conditionalPanel(
+                  condition = sprintf("output['%s']", ns("dual_stable_changepoints_detected")),
+                  h5("Detected Dual-Stable Changepoints:"),
+                  helpText(icon("info-circle"), " Changepoints where ", strong("BOTH"), " VPD and sap flow are stable. Shown as ", tags$span(style = "color: purple;", "purple dotted lines"), " on plot."),
+                  uiOutput(ns("detected_dual_stable_changepoints_list")),
+                  br(),
+                  actionButton(
+                    ns("add_detected_dual_stable_changepoints"),
+                    "Add All Dual-Criterion Changepoints",
+                    icon = icon("check"),
+                    class = "btn-success",
+                    width = "100%"
+                  )
+                )
+              )
+            ),
+
+            # Tab 2: Stable VPD
             tabPanel(
               "Stable VPD",
               br(),
@@ -374,9 +520,53 @@ correctionsUI <- function(id) {
           status = "success",
           solidHeader = TRUE,
 
+          h5("Baseline Correction Method"),
+          radioButtons(
+            ns("baseline_method"),
+            NULL,
+            choices = c(
+              "Segment Minimum (Step-wise)" = "segment_minimum",
+              "Gradient Interpolation (Smooth)" = "gradient"
+            ),
+            selected = "segment_minimum",
+            inline = FALSE
+          ),
+
+          helpText(
+            tags$strong("Segment Minimum:"), " Traditional approach - uses minimum value in each segment between changepoints. Creates step-wise corrections.", tags$br(),
+            tags$strong("Gradient Interpolation:"), " Advanced - linearly interpolates between changepoint values for smooth, continuous correction. Eliminates artificial jumps. ",
+            tags$span(
+              style = "color: #ff6b6b; cursor: help;",
+              title = "IMPORTANT: Gradient method can only be scientifically applied between the first and last changepoints, where empirical evidence exists. Data before the first changepoint and after the last changepoint lack empirical support and should be excluded from analysis. This conservative approach ensures all corrections are evidence-based. For full dataset coverage, use Segment Minimum method instead.",
+              icon("exclamation-triangle"),
+              tags$strong(" Use with Caution")
+            )
+          ),
+
+          # Conditional warning for gradient method
+          conditionalPanel(
+            condition = sprintf("input['%s'] == 'gradient'", ns("baseline_method")),
+            div(
+              class = "alert alert-warning",
+              style = "margin-top: 10px; margin-bottom: 10px;",
+              icon("exclamation-triangle"),
+              tags$strong(" Edge Period Limitation"), tags$br(),
+              "Gradient interpolation requires empirical baseline values. Only data ",
+              tags$strong("between the first and last changepoints"),
+              " can be scientifically corrected.", tags$br(), tags$br(),
+              tags$strong("Data outside this range:"), tags$br(),
+              "• Before first changepoint: No empirical support", tags$br(),
+              "• After last changepoint: No empirical support", tags$br(), tags$br(),
+              tags$em("Recommendation: Exclude edge periods or use Segment Minimum method for full dataset coverage.")
+            )
+          ),
+
+          hr(),
+
+          h5("Burgess Correction Method"),
           radioButtons(
             ns("correction_method"),
-            "Correction Method:",
+            NULL,
             choices = c(
               "Burgess (Physics-based, HRM only)" = "burgess",
               "Linear Offset (Empirical, all methods)" = "linear"
@@ -445,7 +635,14 @@ correctionsUI <- function(id) {
             )
           ),
 
-          plotly::plotlyOutput(ns("plot_changepoints"), height = "500px"),
+          # Warning when gradient overlay is hidden due to sensor/method mismatch
+          uiOutput(ns("gradient_mismatch_warning")),
+
+          shinycssloaders::withSpinner(
+            plotly::plotlyOutput(ns("plot_changepoints"), height = "500px"),
+            type = 6,
+            color = "#3c8dbc"
+          ),
 
           br(),
           p(class = "text-muted", tags$small(
@@ -495,7 +692,11 @@ correctionsUI <- function(id) {
                   )
                 ),
 
-                plotly::plotlyOutput(ns("plot_before_after"), height = "500px")
+                shinycssloaders::withSpinner(
+                  plotly::plotlyOutput(ns("plot_before_after"), height = "500px"),
+                  type = 6,
+                  color = "#3c8dbc"
+                )
               ),
 
               tabPanel(
@@ -529,10 +730,50 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
       detected_result = NULL,  # Changepoint detection result (PELT)
       vpd_detected_result = NULL,  # VPD changepoint detection result
       stable_vpd_detected_result = NULL,  # Stable VPD changepoint detection result
+      dual_stable_detected_result = NULL,  # Dual-criterion (VPD + vh) detection result
       correction_result = NULL,  # Spacing correction result
       corrected_vh = NULL,
       correction_applied = FALSE
     )
+
+    # Heartwood warning output
+    output$heartwood_warning <- renderUI({
+      req(wood_properties(), probe_config())
+
+      # Validate probe/tree configuration to get tissue information
+      validation <- validate_probe_tree_config(
+        probe_config = probe_config(),
+        wood_properties = wood_properties()
+      )
+
+      # Check if inner sensor is in heartwood
+      if (!is.null(validation$inner_tissue) && validation$inner_tissue == "heartwood") {
+        box(
+          width = 12,
+          title = NULL,
+          status = "warning",
+          solidHeader = FALSE,
+
+          div(
+            style = "padding: 10px;",
+            p(
+              icon("exclamation-triangle", class = "fa-lg"),
+              strong(" Attention:"),
+              " Based on your sapwood depth and probe geometry, the",
+              strong(" Inner Sensor"),
+              " is located in the heartwood."
+            ),
+            tags$ul(
+              tags$li("Heartwood records zero flow and is not active in sap transport"),
+              tags$li("Inner sensor data does not require spacing correction or calibration"),
+              tags$li("Can be used as a continuous zero-flow reference")
+            )
+          )
+        )
+      } else {
+        NULL  # No warning if not in heartwood
+      }
+    })
 
     # Initialize settings from configuration
     observe({
@@ -1237,6 +1478,245 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
     })
 
     # ==================================================================
+    # DUAL-CRITERION (VPD + vh) CHANGEPOINT DETECTION
+    # ==================================================================
+
+    # Dual-criterion changepoint detection
+    observeEvent(input$detect_dual_stable_changepoints, {
+      req(weather_vpd(), vh_results())
+
+      # Get raw weather data (hourly/sub-hourly)
+      weather_data <- weather_vpd()
+      vh_data <- vh_results()
+
+      # Show waiter
+      waiter <- waiter::Waiter$new(
+        html = waiter::spin_fading_circles(),
+        color = waiter::transparent(0.5)
+      )
+      waiter$show()
+
+      tryCatch({
+        # Validate predawn window
+        if (length(input$dual_predawn_window) == 0) {
+          stop("Please select at least one hour for the pre-dawn window.")
+        }
+
+        # Convert slider range (start, end) to c(start, end) format expected by find_dual_stable_periods
+        predawn_range <- as.numeric(input$dual_predawn_window)
+
+        # Get sensor and method
+        sensor <- input$dual_sensor_position %||% "outer"
+        method <- input$dual_method_filter %||% "HRM"
+
+        # Filter vh_data to selected sensor and method
+        vh_filtered <- vh_data %>%
+          dplyr::filter(sensor_position == sensor, method == method)
+
+        # Get vh column name
+        vh_col <- "Vh_cm_hr"
+
+        # Detect dual-stable periods using new function
+        dual_stable_result <- sapfluxr::find_dual_stable_periods(
+          vh_data = vh_filtered,
+          weather_data = weather_data,
+          vh_col = vh_col,
+          vpd_col = "vpd_kpa",
+          predawn_window = predawn_range,
+          vpd_threshold = input$dual_vpd_threshold,
+          vpd_stability = input$dual_vpd_stability,
+          vh_threshold = input$dual_vh_threshold,
+          vh_stability = input$dual_vh_stability,
+          min_n_points = 4,
+          min_segment_days = input$dual_min_segment_days,
+          max_changepoints = NULL
+        )
+
+        # Hide waiter
+        waiter$hide()
+
+        if (length(dual_stable_result$dual_stable_dates) == 0) {
+          # No dual-stable periods detected
+          if (!is.null(rv$dual_stable_detected_result)) {
+            rv$dual_stable_detected_result <- NULL
+          }
+
+          # Get diagnostic counts
+          n_vpd <- dual_stable_result$vpd_results$n_dates_selected
+          n_vh <- dual_stable_result$vh_results$n_dates_selected
+
+          showNotification(
+            sprintf("No dual-stable periods found. VPD-stable: %d, vh-stable: %d. Try relaxing thresholds.",
+                   n_vpd, n_vh),
+            type = "warning",
+            duration = 5
+          )
+        } else {
+          # Update detected results AND store which sensor/method was used
+          rv$dual_stable_detected_result <- dual_stable_result
+          rv$dual_stable_detected_result$detection_sensor <- sensor
+          rv$dual_stable_detected_result$detection_method <- method
+
+          showNotification(
+            sprintf("Detected %d dual-stable period(s) with %d changepoint(s) using %s sensor, %s method",
+                   length(dual_stable_result$dual_stable_dates),
+                   nrow(dual_stable_result$changepoints),
+                   toupper(sensor), method),
+            type = "message",
+            duration = 5
+          )
+        }
+
+      }, error = function(e) {
+        waiter$hide()
+        showNotification(
+          paste("Error detecting dual-stable periods:", e$message),
+          type = "error",
+          duration = 10
+        )
+        rv$dual_stable_detected_result <- NULL
+      })
+    })
+
+    # Show/hide dual-stable detected changepoints output
+    output$dual_stable_changepoints_detected <- reactive({
+      !is.null(rv$dual_stable_detected_result) && nrow(rv$dual_stable_detected_result$changepoints) > 0
+    })
+    outputOptions(output, "dual_stable_changepoints_detected", suspendWhenHidden = FALSE)
+
+    # Display dual-stable detected changepoints with individual add buttons
+    output$detected_dual_stable_changepoints_list <- renderUI({
+      req(rv$dual_stable_detected_result, vh_results())
+
+      cpts <- rv$dual_stable_detected_result$changepoints
+
+      if (nrow(cpts) == 0) return(NULL)
+
+      # Create summary
+      n_vpd <- rv$dual_stable_detected_result$vpd_results$n_dates_selected
+      n_vh <- rv$dual_stable_detected_result$vh_results$n_dates_selected
+      n_dual <- nrow(cpts)
+
+      # Calculate edge periods
+      vh_data <- vh_results()
+      data_start <- min(vh_data$datetime, na.rm = TRUE)
+      data_end <- max(vh_data$datetime, na.rm = TRUE)
+      first_cp <- min(cpts$timestamp)
+      last_cp <- max(cpts$timestamp)
+
+      edge_before_days <- as.numeric(difftime(first_cp, data_start, units = "days"))
+      edge_after_days <- as.numeric(difftime(data_end, last_cp, units = "days"))
+      correctable_days <- as.numeric(difftime(last_cp, first_cp, units = "days"))
+      total_days <- as.numeric(difftime(data_end, data_start, units = "days"))
+
+      edge_total_days <- edge_before_days + edge_after_days
+      edge_pct <- round(100 * edge_total_days / total_days, 1)
+      correctable_pct <- round(100 * correctable_days / total_days, 1)
+
+      # Create list of changepoints with add buttons
+      tagList(
+        tags$p(
+          style = "background-color: #f8f9fa; padding: 10px; border-radius: 5px;",
+          tags$strong("Detection Summary:"), tags$br(),
+          sprintf("VPD-stable dates: %d | vh-stable dates: %d | DUAL-stable: %d", n_vpd, n_vh, n_dual)
+        ),
+
+        # Edge period warning
+        div(
+          style = "background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 10px; margin-top: 10px; margin-bottom: 10px;",
+          icon("exclamation-triangle", style = "color: #856404;"),
+          tags$strong(" Edge Period Analysis", style = "color: #856404;"), tags$br(),
+          tags$small(
+            sprintf("Before first CP: %.1f days (%.1f%%)", edge_before_days, 100 * edge_before_days / total_days), tags$br(),
+            sprintf("Between changepoints: %.1f days (%.1f%%) ", correctable_days, correctable_pct),
+            tags$span(style = "color: #28a745;", icon("check"), " Gradient-correctable"), tags$br(),
+            sprintf("After last CP: %.1f days (%.1f%%)", edge_after_days, 100 * edge_after_days / total_days), tags$br(),
+            tags$strong(sprintf("Total edge exclusion: %.1f days (%.1f%%)", edge_total_days, edge_pct))
+          )
+        ),
+
+        br(),
+        lapply(seq_len(nrow(cpts)), function(i) {
+          div(
+            style = "margin-bottom: 5px;",
+            actionButton(
+              session$ns(paste0("add_dual_cp_", i)),
+              label = NULL,
+              icon = icon("plus"),
+              class = "btn-xs btn-success",
+              style = "padding: 2px 6px; margin-right: 8px;"
+            ),
+            tags$span(
+              sprintf("%s @ %s (vh: %.3f cm/hr)",
+                     format(cpts$date[i], "%Y-%m-%d"),
+                     format(cpts$timestamp[i], "%H:%M"),
+                     cpts$vh_value[i]),
+              style = "font-family: monospace;"
+            )
+          )
+        })
+      )
+    })
+
+    # Handle individual add button clicks for dual-stable detected changepoints
+    observe({
+      req(rv$dual_stable_detected_result)
+
+      cpts <- rv$dual_stable_detected_result$changepoints
+
+      # Create observers for each individual add button
+      lapply(seq_len(nrow(cpts)), function(i) {
+        btn_id <- paste0("add_dual_cp_", i)
+        observeEvent(input[[btn_id]], {
+          # Use the exact timestamp from changepoints (already POSIXct)
+          cp_posix <- cpts$timestamp[i]
+
+          # Add to changepoints list
+          rv$changepoints <- c(rv$changepoints, list(cp_posix))
+
+          # Sort chronologically
+          rv$changepoints <- rv$changepoints[order(sapply(rv$changepoints, as.numeric))]
+
+          showNotification(
+            sprintf("Added dual-stable changepoint: %s", format(cp_posix, "%Y-%m-%d %H:%M")),
+            type = "message",
+            duration = 3
+          )
+        }, ignoreInit = TRUE)
+      })
+    })
+
+    # Add all dual-stable detected changepoints to the list
+    observeEvent(input$add_detected_dual_stable_changepoints, {
+      req(rv$dual_stable_detected_result)
+
+      cpts <- rv$dual_stable_detected_result$changepoints
+
+      if (nrow(cpts) == 0) {
+        showNotification("No dual-stable changepoints to add", type = "warning")
+        return()
+      }
+
+      # Use exact timestamps from changepoints (already POSIXct)
+      cpts_posix <- as.list(cpts$timestamp)
+
+      # Add to existing changepoints
+      rv$changepoints <- c(rv$changepoints, cpts_posix)
+
+      # Sort chronologically
+      rv$changepoints <- rv$changepoints[order(sapply(rv$changepoints, as.numeric))]
+
+      showNotification(
+        sprintf("Added %d dual-stable changepoint(s) to the list", nrow(cpts)),
+        type = "message",
+        duration = 5
+      )
+
+      # Clear detected results after adding
+      # rv$dual_stable_detected_result <- NULL  # Keep results for plot
+    })
+
+    # ==================================================================
     # CACHED DAILY MINIMA CALCULATION
     # ==================================================================
 
@@ -1283,6 +1763,12 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
 
       # Depend on VPD overlay checkbox
       input$show_vpd_overlay
+
+      # Depend on baseline method selection to show gradient overlay
+      input$baseline_method
+
+      # Depend on dual-stable results for gradient visualization
+      rv$dual_stable_detected_result
 
       # Debug: Track when plot re-renders
       start_time <- Sys.time()
@@ -1373,6 +1859,91 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
 
           incProgress(0.2, detail = "Finalizing")
 
+          # Add gradient overlay if gradient method is selected and dual-stable results exist
+          baseline_method <- input$baseline_method %||% "segment_minimum"
+
+          if (baseline_method == "gradient" && !is.null(rv$dual_stable_detected_result)) {
+            dual_results <- rv$dual_stable_detected_result
+
+            # Check if displayed sensor/method matches detection sensor/method
+            detection_sensor <- dual_results$detection_sensor %||% "outer"
+            detection_method <- dual_results$detection_method %||% "HRM"
+
+            # Only show gradient overlay if sensor/method match
+            if (display_sensor == detection_sensor && method == detection_method) {
+              if (!is.null(dual_results$changepoints) && nrow(dual_results$changepoints) > 0) {
+                changepoints_df <- dual_results$changepoints
+
+              # Calculate gradient interpolation for visualization
+              # Extend to edges of data range
+              date_range <- range(daily_min$date, na.rm = TRUE)
+
+              # Create extended changepoint data for plotting (including edges)
+              gradient_data <- data.frame(
+                datetime = c(
+                  as.POSIXct(paste(date_range[1], "00:00:00")),
+                  changepoints_df$timestamp,
+                  as.POSIXct(paste(date_range[2], "23:59:59"))
+                ),
+                vh_value = c(
+                  changepoints_df$vh_value[1],  # Extend first value to start
+                  changepoints_df$vh_value,
+                  changepoints_df$vh_value[nrow(changepoints_df)]  # Extend last value to end
+                )
+              )
+
+              # Add gradient line to plot
+              p <- p %>%
+                plotly::add_lines(
+                  data = gradient_data,
+                  x = ~datetime,
+                  y = ~vh_value,
+                  name = "Gradient Baseline",
+                  line = list(
+                    color = "purple",
+                    width = 2,
+                    dash = "solid"
+                  ),
+                  hovertemplate = paste(
+                    "<b>Gradient Baseline</b><br>",
+                    "Date: %{x|%Y-%m-%d %H:%M}<br>",
+                    "Offset: %{y:.3f} cm/hr<br>",
+                    "<extra></extra>"
+                  ),
+                  showlegend = TRUE
+                )
+
+              # Add points at changepoints
+              p <- p %>%
+                plotly::add_markers(
+                  data = changepoints_df,
+                  x = ~timestamp,
+                  y = ~vh_value,
+                  name = "Gradient Anchors",
+                  marker = list(
+                    color = "purple",
+                    size = 8,
+                    symbol = "diamond"
+                  ),
+                  hovertemplate = paste(
+                    "<b>Gradient Anchor</b><br>",
+                    "Date: %{x|%Y-%m-%d %H:%M}<br>",
+                    "vh: %{y:.3f} cm/hr<br>",
+                    "<extra></extra>"
+                  ),
+                  showlegend = TRUE
+                )
+              }  # Close changepoints check
+            } else {
+              # Sensor/method mismatch - add note to plot
+              message(sprintf(
+                "Gradient overlay hidden: Detection used %s sensor (%s method), but plot shows %s sensor (%s method)",
+                toupper(detection_sensor), detection_method,
+                toupper(display_sensor), method
+              ))
+            }  # Close sensor/method match check
+          }  # Close gradient method check
+
           end_time <- Sys.time()
           elapsed <- as.numeric(difftime(end_time, start_time, units = "secs"))
           message(sprintf("=== PLOT RENDER COMPLETE: %.2f seconds ===", elapsed))
@@ -1393,6 +1964,49 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
           plotly::plotly_empty(source = "changepoint_plot") %>% plotly::event_register("plotly_click")
         })
       })
+    })
+
+    # Render warning when gradient overlay is hidden due to sensor/method mismatch
+    output$gradient_mismatch_warning <- renderUI({
+      # Check if gradient method is selected
+      baseline_method <- input$baseline_method %||% "segment_minimum"
+
+      if (baseline_method == "gradient" && !is.null(rv$dual_stable_detected_result)) {
+        dual_results <- rv$dual_stable_detected_result
+
+        # Get detection parameters
+        detection_sensor <- dual_results$detection_sensor %||% "outer"
+        detection_method <- dual_results$detection_method %||% "HRM"
+
+        # Get display parameters
+        display_sensor <- input$display_sensor %||% "outer"
+        method <- input$detect_method_filter %||% "HRM"
+
+        # Check for mismatch
+        if (display_sensor != detection_sensor || method != detection_method) {
+          div(
+            class = "alert alert-warning",
+            style = "margin-top: 10px; margin-bottom: 10px;",
+            icon("exclamation-triangle"),
+            tags$strong(" Gradient Overlay Hidden"), br(),
+            sprintf(
+              "Dual-criterion detection used %s sensor (%s method), but plot displays %s sensor (%s method). ",
+              toupper(detection_sensor), detection_method,
+              toupper(display_sensor), method
+            ),
+            tags$strong(
+              sprintf(
+                "Change plot to %s sensor and %s method to see gradient overlay.",
+                toupper(detection_sensor), detection_method
+              )
+            )
+          )
+        } else {
+          NULL  # No warning if match
+        }
+      } else {
+        NULL  # No warning if not gradient method
+      }
     })
 
     # Handle plot click events to populate manual changepoint date
@@ -1486,41 +2100,116 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
                paste(capture.output(str(probe_spacing)), collapse = " "))
         }
 
-        # FIX: Use the unified spacing correction interface
-        # This ensures Vh_cm_hr_sc column is properly created
-        # Need to apply to both sensors sequentially
+        # Check baseline correction method
+        baseline_method <- input$baseline_method %||% "segment_minimum"
 
-        corrected_data <- vh_data
-        sensors <- c("outer", "inner")
+        # Apply correction based on baseline method selection
+        if (baseline_method == "gradient" && !is.null(rv$dual_stable_detected_result)) {
+          # ===== GRADIENT INTERPOLATION METHOD =====
+          # Uses dual-criterion changepoints with exact timestamps and vh values
 
-        for (sensor in sensors) {
-          result <- sapfluxr::apply_spacing_correction(
-            vh_data = corrected_data,
-            method = "manual",
-            manual_changepoints = changepoint_dates,
-            hpv_method = "HRM",
-            sensor_position = sensor,
-            wood_properties = wood_props,
-            probe_spacing = probe_spacing,
-            measurement_time = 80,
-            verbose = FALSE
+          changepoints_df <- rv$dual_stable_detected_result$changepoints
+
+          if (nrow(changepoints_df) == 0) {
+            stop("No dual-criterion changepoints available for gradient correction. Please run Dual-Criterion detection first.")
+          }
+
+          corrected_data <- vh_data
+          sensors <- c("outer", "inner")
+          methods <- c("HRM", "MHR")
+
+          # Apply gradient correction to each sensor-method combination
+          for (sensor in sensors) {
+            for (method in methods) {
+              # Filter to this sensor-method
+              sensor_method_data <- corrected_data %>%
+                dplyr::filter(sensor_position == sensor, method == method)
+
+              if (nrow(sensor_method_data) > 0) {
+                # Construct vh column name
+                vh_col <- "Vh_cm_hr"
+
+                # Apply gradient correction
+                corrected_sensor <- sapfluxr::apply_gradient_offset_correction(
+                  vh_data = sensor_method_data,
+                  changepoints = changepoints_df,
+                  vh_col = vh_col,
+                  new_col_suffix = "_gradient_corrected",
+                  edge_handling = "extend"
+                )
+
+                # Update Vh_cm_hr with corrected values
+                corrected_sensor$Vh_cm_hr <- corrected_sensor[[paste0(vh_col, "_gradient_corrected")]]
+                corrected_sensor$spacing_correction_applied <- TRUE
+
+                # Merge back into main data
+                # Remove this sensor-method from corrected_data
+                corrected_data <- corrected_data %>%
+                  dplyr::filter(!(sensor_position == sensor & method == method))
+
+                # Add corrected version
+                corrected_data <- dplyr::bind_rows(corrected_data, corrected_sensor)
+              }
+            }
+          }
+
+          # Sort by datetime
+          corrected_data <- corrected_data %>% dplyr::arrange(datetime)
+
+          # Create metadata for result
+          result <- list(
+            vh_corrected = corrected_data,
+            method_used = "gradient",
+            changepoints = changepoints_df$date,
+            metadata = list(
+              sensor_position = "both",
+              method = "gradient_interpolation",
+              k_assumed = k_value,
+              probe_spacing = probe_spacing,
+              n_segments = nrow(changepoints_df) + 1,
+              n_changepoints = nrow(changepoints_df),
+              changepoints = changepoints_df$date,
+              date_applied = Sys.time(),
+              approach = "Gradient Interpolation (Linear)"
+            )
           )
 
-          # Update data with corrected results for this sensor
-          corrected_data <- result$vh_corrected
+          n_segments <- nrow(changepoints_df) + 1
+          method_name <- "Gradient Interpolation"
+
+        } else {
+          # ===== SEGMENT MINIMUM METHOD (Default/Traditional) =====
+          # Uses step-wise correction with segment minima
+
+          corrected_data <- vh_data
+          sensors <- c("outer", "inner")
+
+          for (sensor in sensors) {
+            result <- sapfluxr::apply_spacing_correction(
+              vh_data = corrected_data,
+              method = "manual",
+              manual_changepoints = changepoint_dates,
+              hpv_method = "HRM",
+              sensor_position = sensor,
+              wood_properties = wood_props,
+              probe_spacing = probe_spacing,
+              measurement_time = 80,
+              verbose = FALSE
+            )
+
+            # Update data with corrected results for this sensor
+            corrected_data <- result$vh_corrected
+          }
+
+          result$vh_corrected <- corrected_data
+          n_segments <- if (!is.null(changepoint_dates)) length(changepoint_dates) + 1 else 1
+          method_name <- if (correction_method == "burgess") "Burgess" else "Linear Offset"
         }
 
         # Store final result
         rv$correction_result <- result
-        rv$correction_result$vh_corrected <- corrected_data
-
-        # Automatically apply corrections
         rv$corrected_vh <- rv$correction_result$vh_corrected
         rv$correction_applied <- TRUE
-
-        # Get number of segments from changepoints
-        n_segments <- if (!is.null(changepoint_dates)) length(changepoint_dates) + 1 else 1
-        method_name <- if (correction_method == "burgess") "Burgess" else "Linear Offset"
 
         # Track spacing correction
         if (!is.null(code_tracker)) {
@@ -1598,8 +2287,8 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
       # Create segments from changepoints
       if (is.null(changepoint_dates) || length(changepoint_dates) == 0) {
         # Single segment - get overall minimum
-        baseline_vh <- if (nrow(daily_min) > 0 && any(!is.na(daily_min$min_vh))) {
-          round(min(daily_min$min_vh, na.rm = TRUE), 2)
+        baseline_vh <- if (nrow(daily_min) > 0 && any(!is.na(daily_min$min_value))) {
+          round(min(daily_min$min_value, na.rm = TRUE), 2)
         } else {
           NA_real_
         }
@@ -1637,8 +2326,8 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
             daily_min$date <= end_date,
           ]
 
-          baseline_vh <- if (nrow(segment_daily) > 0 && any(!is.na(segment_daily$min_vh))) {
-            round(min(segment_daily$min_vh, na.rm = TRUE), 2)
+          baseline_vh <- if (nrow(segment_daily) > 0 && any(!is.na(segment_daily$min_value))) {
+            round(min(segment_daily$min_value, na.rm = TRUE), 2)
           } else {
             NA_real_
           }

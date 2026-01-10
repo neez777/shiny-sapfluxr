@@ -327,6 +327,58 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties, co
         # Store results
         vh_results(results)
 
+        # Track code generation
+        if (!isTRUE(code_tracker)) {
+          # Build quality control parameters code
+          qc_params <- c()
+          if (input$qc_check_illogical) {
+            qc_params <- c(qc_params,
+                          sprintf("  check_illogical = TRUE"),
+                          sprintf("  hard_max_vh = %g", input$qc_hard_max_vh))
+          }
+          if (input$qc_flag_negative) {
+            qc_params <- c(qc_params, "  flag_negative = TRUE")
+          }
+          if (input$qc_detect_outliers) {
+            qc_params <- c(qc_params,
+                          sprintf("  detect_outliers = TRUE"),
+                          sprintf("  rolling_window = %d", input$qc_rolling_window),
+                          sprintf("  rolling_threshold = %g", input$qc_rolling_threshold))
+          }
+          if (input$qc_detect_rate_of_change) {
+            qc_params <- c(qc_params,
+                          sprintf("  detect_rate_of_change = TRUE"),
+                          sprintf("  max_change_cm_hr = %g", input$qc_max_change_cm_hr))
+          }
+
+          qc_code <- if (length(qc_params) > 0) {
+            sprintf("\n\n# Apply quality control\nvh_results <- sapfluxr::flag_vh_quality(\n  vh_results,\n%s\n)",
+                   paste(qc_params, collapse = ",\n"))
+          } else {
+            ""
+          }
+
+          code_tracker$add_step(
+            step_name = "Calculate Heat Pulse Velocity",
+            code = sprintf(
+              paste0(
+                '# Calculate heat pulse velocity\n',
+                'vh_results <- sapfluxr::calc_heat_pulse_velocity(\n',
+                '  heat_pulse_data = heat_pulse_data,\n',
+                '  methods = c(%s),\n',
+                '  probe_config = probe_config,\n',
+                '  wood_properties = wood_properties\n',
+                ')%s'
+              ),
+              paste0('"', input$methods, '"', collapse = ", "),
+              qc_code
+            ),
+            description = sprintf("Calculated %s for %d measurements with quality control",
+                                 paste(input$methods, collapse = ", "),
+                                 nrow(results))
+          )
+        }
+
         # Show success with auto-close
         shinyWidgets::sendSweetAlert(
           session = session,

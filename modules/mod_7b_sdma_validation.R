@@ -201,7 +201,10 @@ sdmaValidationServer <- function(id,
       # Add HRM baseline (always included)
       if (!is.null(vh_hrm_peclet())) {
         hrm_data <- vh_hrm_peclet() %>%
-          dplyr::filter(sensor_position %in% input$sensor_position) %>%
+          dplyr::filter(
+            method == "HRM",  # Only select HRM rows (data contains all methods in long format)
+            sensor_position %in% input$sensor_position
+          ) %>%
           dplyr::select(datetime, pulse_id, sensor_position, Vh_cm_hr) %>%
           dplyr::mutate(
             method = "HRM (Corrected)",
@@ -215,7 +218,7 @@ sdmaValidationServer <- function(id,
       if (!is.null(vh_calibrated())) {
         cal_data <- vh_calibrated() %>%
           dplyr::filter(
-            method != "HRM",
+            method != "HRM",  # Exclude HRM (already shown as baseline)
             sensor_position %in% input$sensor_position
           ) %>%
           dplyr::select(datetime, pulse_id, sensor_position, method, Vh_cm_hr) %>%
@@ -315,46 +318,61 @@ sdmaValidationServer <- function(id,
         # Create plot
         p <- plotly::plot_ly()
 
+        # Create traces for each method AND sensor_position combination
         for (m in unique(data$method)) {
-          method_data <- data %>% dplyr::filter(method == m)
+          for (s in unique(data$sensor_position)) {
+            method_sensor_data <- data %>%
+              dplyr::filter(method == m, sensor_position == s) %>%
+              dplyr::arrange(datetime)  # Ensure sorted by datetime
 
-          # Determine line width based on data type
-          line_width <- if (grepl("sDMA", m)) {
-            2.5  # Thick for sDMA
-          } else if (grepl("HRM.*Corrected", m)) {
-            2.0  # Medium for HRM baseline
-          } else {
-            1.5  # Normal for calibrated methods
-          }
+            if (nrow(method_sensor_data) == 0) next
 
-          # Get color
-          color <- if (m %in% names(method_colors)) {
-            method_colors[[m]]
-          } else {
-            NULL
-          }
+            # Determine line width based on data type
+            line_width <- if (grepl("sDMA", m)) {
+              2.5  # Thick for sDMA
+            } else if (grepl("HRM.*Corrected", m)) {
+              2.0  # Medium for HRM baseline
+            } else {
+              1.5  # Normal for calibrated methods
+            }
 
-          # Determine mode
-          mode <- if (input$show_points) "lines+markers" else "lines"
+            # Get color
+            color <- if (m %in% names(method_colors)) {
+              method_colors[[m]]
+            } else {
+              NULL
+            }
 
-          p <- p %>%
-            plotly::add_trace(
-              data = method_data,
-              x = ~datetime,
-              y = ~Vh_cm_hr,
-              type = "scatter",
-              mode = mode,
-              name = m,
-              line = if (!is.null(color)) list(width = line_width, color = color) else list(width = line_width),
-              marker = if (input$show_points) list(size = 4) else NULL,
-              connectgaps = FALSE,  # Don't connect across gaps in time series
-              hovertemplate = paste(
-                "<b>Time:</b> %{x|%Y-%m-%d %H:%M}<br>",
-                "<b>Velocity:</b> %{y:.2f} cm/hr<br>",
-                "<b>Method:</b>", m, "<br>",
-                "<extra></extra>"
+            # Determine mode
+            mode <- if (input$show_points) "lines+markers" else "lines"
+
+            # Create trace name
+            trace_name <- if (length(unique(data$sensor_position)) > 1) {
+              paste0(m, " (", toupper(s), ")")
+            } else {
+              m
+            }
+
+            p <- p %>%
+              plotly::add_trace(
+                data = method_sensor_data,
+                x = ~datetime,
+                y = ~Vh_cm_hr,
+                type = "scatter",
+                mode = mode,
+                name = trace_name,
+                line = if (!is.null(color)) list(width = line_width, color = color) else list(width = line_width),
+                marker = if (input$show_points) list(size = 4) else NULL,
+                connectgaps = FALSE,  # Don't connect across gaps in time series
+                hovertemplate = paste(
+                  "<b>Time:</b> %{x|%Y-%m-%d %H:%M}<br>",
+                  "<b>Velocity:</b> %{y:.2f} cm/hr<br>",
+                  "<b>Method:</b>", m, "<br>",
+                  "<b>Sensor:</b>", toupper(s), "<br>",
+                  "<extra></extra>"
+                )
               )
-            )
+          }
         }
 
         # Layout

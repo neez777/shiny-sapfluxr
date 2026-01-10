@@ -254,7 +254,11 @@ plotTimeseriesUI <- function(id) {
           status = "success",
           solidHeader = TRUE,
 
-          plotly::plotlyOutput(ns("timeseries_plot"), height = "600px")
+          shinycssloaders::withSpinner(
+            plotly::plotlyOutput(ns("timeseries_plot"), height = "600px"),
+            type = 6,
+            color = "#3c8dbc"
+          )
         )
 ,
 

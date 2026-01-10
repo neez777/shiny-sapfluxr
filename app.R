@@ -40,6 +40,7 @@ source("modules/mod_6b_calibration_validation.R")
 source("modules/mod_7_sdma.R")
 source("modules/mod_7b_sdma_validation.R")
 source("modules/mod_8_flux_density.R")
+source("modules/mod_8b_flux_validation.R")
 source("modules/mod_9_aggregation.R")
 source("modules/mod_util_code_generation.R")
 
@@ -138,8 +139,11 @@ ui <- tagList(
           menuSubItem("sDMA Calculation", tabName = "sdma", icon = icon("calculator")),
           menuSubItem("sDMA Validation", tabName = "sdma_validation", icon = icon("chart-line"))
         ),
-        menuItem("8. Flux Density", tabName = "flux_density", icon = icon("tint")),
-        menuItem("9. Visualise (Aggregated)", tabName = "aggregation", icon = icon("chart-bar")),
+        menuItem("8. Flux Density", icon = icon("tint"),
+          menuSubItem("Conversion & Integration", tabName = "flux_density", icon = icon("calculator")),
+          menuSubItem("Flux & Water Use Validation", tabName = "flux_validation", icon = icon("chart-line"))
+        ),
+        menuItem("9. Temporal Aggregation", tabName = "aggregation", icon = icon("chart-bar")),
         tags$hr(style = "margin: 10px 0; border-color: #555;"),
         menuItem("Tools", icon = icon("wrench"),
           menuSubItem("Probe Configuration", tabName = "tool_probe", icon = icon("ruler")),
@@ -385,17 +389,26 @@ ui <- tagList(
       # Tab 8: Flux Density ----
       tabItem(
         tabName = "flux_density",
-        h2("Sap Flux Density Conversion"),
-        p(class = "text-muted", "Convert corrected heat pulse velocity (Vh) to sap flux density (Jv) using wood-specific conversion factors."),
+        h2("Sap Flux Density Conversion & Tree Water Use"),
+        p(class = "text-muted", "Convert corrected heat pulse velocity (Vh) to sap flux density (Jv) and integrate across sapwood area for whole-tree water use."),
 
         fluxDensityUI("flux_density")
       ),
 
-      # Tab 9: Aggregation ----
+      # Tab 8b: Flux & Water Use Validation ----
+      tabItem(
+        tabName = "flux_validation",
+        h2("Flux Density & Water Use Validation"),
+        p(class = "text-muted", "Interactive visualization of flux density and tree water use results with filtering and time range controls."),
+
+        fluxValidationUI("flux_validation")
+      ),
+
+      # Tab 9: Temporal Aggregation ----
       tabItem(
         tabName = "aggregation",
-        h2("Temporal Aggregation & Tree Water Use"),
-        p(class = "text-muted", "Aggregate flux density data to daily/hourly summaries and calculate whole tree water use."),
+        h2("Temporal Aggregation"),
+        p(class = "text-muted", "Aggregate flux density data to daily/weekly/hourly summaries for temporal analysis."),
 
         aggregationUI("aggregation")
       ),
@@ -598,6 +611,8 @@ server <- function(input, output, session) {
       wound_data <- wound_module$wound_corrected_data()
       if (!is.null(wound_data)) wound_data else corrected_vh()
     }),
+    wood_properties = configs$wood_properties,
+    probe_config = configs$probe_config,
     code_tracker = code_tracker,
     active_tab = reactive(input$sidebar),
     wound_module = wound_module  # Pass wound module to detect when correction is applied
@@ -661,13 +676,23 @@ server <- function(input, output, session) {
       wound_module$wound_corrected_data()
     }),
     vh_sdma = reactive(sdma_results$vh_sdma()),
-    wood_properties = reactive(rv$wood_properties)
+    wood_properties = reactive(rv$wood_properties),
+    code_tracker = code_tracker
   )
 
   # Store flux data
   observe({
     rv$flux_data <- flux_results$flux_data()
   })
+
+  # Module: Flux & Water Use Validation (Tab 8b)
+  fluxValidationServer(
+    "flux_validation",
+    flux_data = flux_results$flux_data,
+    tree_water_use_data = flux_results$tree_water_use_data,
+    tree_dimensions = flux_results$tree_dimensions,
+    code_tracker = code_tracker
+  )
 
   # Module: Aggregation (Tab 9)
   aggregationServer(

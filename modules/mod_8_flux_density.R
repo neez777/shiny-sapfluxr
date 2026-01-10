@@ -28,7 +28,8 @@ fluxDensityUI <- function(id) {
           tags$ul(
             tags$li(strong("Formula:"), " Jv = Z × Vh"),
             tags$li(strong("Z factor:"), " Wood-specific conversion factor calculated from wood properties"),
-            tags$li(strong("Units:"), " cm³/cm²/hr (equivalent to cm/hr sap velocity)")
+            tags$li(strong("Units:"), " cm³/cm²/hr (equivalent to cm/hr sap velocity)"),
+            tags$li(strong("Sensors:"), " Conversion applied to all sensor positions (inner + outer) for radial integration")
           ),
           p(tags$small(em("Based on Burgess et al. (2001) after Barrett et al. (1995)"))),
 
@@ -39,8 +40,8 @@ fluxDensityUI <- function(id) {
             tags$li("Calculate raw heat pulse velocity (Vh)"),
             tags$li("Apply spacing correction"),
             tags$li("Apply wound correction (optional)"),
-            tags$li("Convert to sap flux density (Jv)"),
-            tags$li("Scale to tree-level water use")
+            tags$li("Convert to sap flux density (Jv) - all sensors"),
+            tags$li("Integrate across sapwood area → tree-level water use")
           )
         ),
 
@@ -61,13 +62,10 @@ fluxDensityUI <- function(id) {
 
           hr(),
 
-          h5("Select Sensor Position:"),
-          radioButtons(
-            ns("sensor_position"),
-            NULL,
-            choices = c("Outer" = "outer", "Inner" = "inner"),
-            selected = "outer",
-            inline = TRUE
+          helpText(
+            icon("info-circle"),
+            " Flux density will be calculated for all available sensor positions (inner and outer).",
+            " Both sensors are required for radial integration across the sapwood."
           ),
 
           # Data availability status
@@ -211,142 +209,39 @@ fluxDensityUI <- function(id) {
         )
       ),
 
-      # Right column: Results and Visualisation
+      # Right column: Results Summary
       column(
         width = 8,
 
-        # Tree water use time series plot (Q)
+        # Step 1: Flux Density Conversion Summary
         box(
           width = 12,
-          title = "Tree Water Use Time Series (Q)",
-          status = "success",
+          title = "1. Flux Density Conversion Summary",
+          status = "primary",
           solidHeader = TRUE,
           collapsible = TRUE,
           collapsed = FALSE,
 
           conditionalPanel(
-            condition = sprintf("!output['%s']", ns("has_tree_water_use")),
-            p(em("No tree water use data yet. Calculate Q to see results."))
-          ),
-
-          conditionalPanel(
-            condition = sprintf("output['%s']", ns("has_tree_water_use")),
-
-            helpText("Whole-tree water use integrated across sapwood area. Hover for details, click-drag to zoom."),
-
-            tabsetPanel(
-              tabPanel(
-                "Hourly (L/hr)",
-                br(),
-                plotly::plotlyOutput(ns("tree_water_use_plot_hourly"), height = "400px")
-              ),
-              tabPanel(
-                "Daily (L/day)",
-                br(),
-                plotly::plotlyOutput(ns("tree_water_use_plot_daily"), height = "400px")
-              )
-            )
-          )
-        ),
-
-        # Flux density time series plot (Jv)
-        box(
-          width = 12,
-          title = "Sap Flux Density Time Series (Jv)",
-          status = "info",
-          solidHeader = TRUE,
-          collapsible = TRUE,
-          collapsed = TRUE,
-
-          conditionalPanel(
             condition = sprintf("!output['%s']", ns("has_flux_results")),
-            p(em("No flux density data yet. Convert velocity data to see results."))
+            p(em("No flux density data yet. Click 'Convert to Sap Flux Density (Jv)' to begin."))
           ),
 
           conditionalPanel(
             condition = sprintf("output['%s']", ns("has_flux_results")),
 
-            helpText("Interactive plot of sap flux density over time for all selected methods. Hover for details, click-drag to zoom."),
+            verbatimTextOutput(ns("flux_statistics")),
 
-            plotly::plotlyOutput(ns("flux_timeseries_plot"), height = "500px")
-          )
-        ),
+            hr(),
 
-        # Velocity vs Flux comparison
-        box(
-          width = 12,
-          title = "Velocity vs Flux Density Comparison",
-          status = "primary",
-          solidHeader = TRUE,
-          collapsible = TRUE,
-          collapsed = TRUE,
-
-          conditionalPanel(
-            condition = sprintf("!output['%s']", ns("has_flux_results")),
-            p(em("No flux density data yet."))
-          ),
-
-          conditionalPanel(
-            condition = sprintf("output['%s']", ns("has_flux_results")),
-
-            helpText("Compare heat pulse velocity (Vh) with sap flux density (Jv) to visualize the conversion."),
-
-            plotly::plotlyOutput(ns("velocity_vs_flux_plot"), height = "400px")
-          )
-        ),
-
-        # Conversion summary and statistics
-        box(
-          width = 12,
-          title = "Conversion Summary",
-          status = "success",
-          solidHeader = TRUE,
-          collapsible = TRUE,
-
-          conditionalPanel(
-            condition = sprintf("!output['%s']", ns("has_flux_results")),
-            p(em("No results yet."))
-          ),
-
-          conditionalPanel(
-            condition = sprintf("output['%s']", ns("has_flux_results")),
-
-            tabsetPanel(
-              id = ns("summary_tabs"),
-
-              tabPanel(
-                "Statistics",
-                br(),
-                verbatimTextOutput(ns("flux_statistics"))
-              ),
-
-              tabPanel(
-                "Daily Totals",
-                br(),
-                helpText("Daily sap flux totals integrated over 24-hour periods."),
-                plotly::plotlyOutput(ns("daily_flux_plot"), height = "400px")
-              )
-            )
-          )
-        ),
-
-        # Active flux conversion status
-        box(
-          width = 12,
-          title = "Active Conversion Status",
-          status = "success",
-          solidHeader = TRUE,
-
-          conditionalPanel(
-            condition = sprintf("!output['%s']", ns("has_flux_results")),
-            p(em("No flux density conversion applied."))
-          ),
-
-          conditionalPanel(
-            condition = sprintf("output['%s']", ns("has_flux_results")),
-
-            p("Flux density conversion is active:"),
-            verbatimTextOutput(ns("flux_status")),
+            p(
+              icon("arrow-right"),
+              " Flux density conversion is complete.",
+              strong(" Proceed to calculate tree water use (Q) below,"),
+              " or go to ",
+              strong("Tab 8b: Flux Density Validation"),
+              " to explore interactive plots."
+            ),
 
             hr(),
 
@@ -354,9 +249,63 @@ fluxDensityUI <- function(id) {
               ns("reset_flux"),
               "Clear Flux Conversion",
               icon = icon("undo"),
-              class = "btn-warning",
-              width = "100%"
+              class = "btn-warning btn-sm",
+              style = "width: 100%;"
             )
+          )
+        ),
+
+        # Step 2: Tree Water Use Summary
+        box(
+          width = 12,
+          title = "2. Tree Water Use Summary",
+          status = "success",
+          solidHeader = TRUE,
+          collapsible = TRUE,
+          collapsed = FALSE,
+
+          conditionalPanel(
+            condition = sprintf("!output['%s']", ns("has_tree_water_use")),
+            p(em("No tree water use data yet. Convert flux density first, then click 'Calculate Tree Water Use (Q)'."))
+          ),
+
+          conditionalPanel(
+            condition = sprintf("output['%s']", ns("has_tree_water_use")),
+
+            verbatimTextOutput(ns("tree_water_use_summary")),
+
+            hr(),
+
+            p(
+              icon("check-circle"),
+              " Tree water use calculation is complete.",
+              " Go to ",
+              strong("Tab 8b: Flux Density Validation"),
+              " to view interactive plots,",
+              " or proceed to ",
+              strong("Tab 9: Aggregation"),
+              " for temporal summaries."
+            )
+          )
+        ),
+
+        # Active Status Box
+        box(
+          width = 12,
+          title = "Active Conversion Status",
+          status = "info",
+          solidHeader = TRUE,
+          collapsible = TRUE,
+          collapsed = TRUE,
+
+          conditionalPanel(
+            condition = sprintf("!output['%s']", ns("has_flux_results")),
+            p(em("No conversions applied yet."))
+          ),
+
+          conditionalPanel(
+            condition = sprintf("output['%s']", ns("has_flux_results")),
+            verbatimTextOutput(ns("flux_status"))
           )
         )
       )
@@ -370,7 +319,8 @@ fluxDensityServer <- function(id,
                                vh_spacing_corrected = reactive(NULL),
                                vh_wound_corrected = reactive(NULL),
                                vh_sdma = reactive(NULL),
-                               wood_properties = reactive(NULL)) {
+                               wood_properties = reactive(NULL),
+                               code_tracker = TRUE) {
   moduleServer(id, function(input, output, session) {
 
     # Reactive values
@@ -387,80 +337,110 @@ fluxDensityServer <- function(id,
 
     # Reactive: Consolidate all available velocity data
     all_velocity_data <- reactive({
-      # Priority order: sDMA > wound > spacing > raw
+      # Combine ALL available datasets (not just highest priority)
+      # This allows users to select from corrected, sDMA, wound, etc.
+
+      all_datasets <- list()
+
+      # Add sDMA data if available
       if (!is.null(vh_sdma()) && nrow(vh_sdma()) > 0) {
-        data <- vh_sdma()
-        # Add data_source column if not present
-        if (!"data_source" %in% names(data)) {
-          data$data_source <- "sDMA"
-        }
-        return(data)
-      } else if (!is.null(vh_wound_corrected()) && nrow(vh_wound_corrected()) > 0) {
-        data <- vh_wound_corrected()
-        if (!"data_source" %in% names(data)) {
-          data$data_source <- "wound"
-        }
-        return(data)
-      } else if (!is.null(vh_spacing_corrected()) && nrow(vh_spacing_corrected()) > 0) {
-        data <- vh_spacing_corrected()
-        if (!"data_source" %in% names(data)) {
-          data$data_source <- "spacing"
-        }
-        return(data)
-      } else if (!is.null(vh_raw()) && nrow(vh_raw()) > 0) {
-        data <- vh_raw()
-        if (!"data_source" %in% names(data)) {
-          data$data_source <- "raw"
-        }
-        return(data)
+        sdma_data <- vh_sdma()
+        sdma_data$data_source <- "sDMA"
+        all_datasets$sdma <- sdma_data
       }
-      return(NULL)
+
+      # Add wound corrected data if available
+      if (!is.null(vh_wound_corrected()) && nrow(vh_wound_corrected()) > 0) {
+        wound_data <- vh_wound_corrected()
+        wound_data$data_source <- "wound_corrected"
+        all_datasets$wound <- wound_data
+      }
+
+      # Add spacing corrected data if available
+      if (!is.null(vh_spacing_corrected()) && nrow(vh_spacing_corrected()) > 0) {
+        spacing_data <- vh_spacing_corrected()
+        spacing_data$data_source <- "spacing_corrected"
+        all_datasets$spacing <- spacing_data
+      }
+
+      # Add raw data if available
+      if (!is.null(vh_raw()) && nrow(vh_raw()) > 0) {
+        raw_data <- vh_raw()
+        raw_data$data_source <- "raw"
+        all_datasets$raw <- raw_data
+      }
+
+      if (length(all_datasets) == 0) {
+        return(NULL)
+      }
+
+      # Return list of all available datasets
+      return(all_datasets)
     })
 
     # Dynamic method checkboxes based on available data
     output$method_checkboxes <- renderUI({
-      data <- all_velocity_data()
+      datasets <- all_velocity_data()
 
-      if (is.null(data)) {
+      if (is.null(datasets) || length(datasets) == 0) {
         return(p(style = "color: #999;", "No velocity data available"))
       }
 
-      # Extract available methods
-      if ("combination" %in% names(data) && "sdma_source" %in% names(data)) {
-        # sDMA data - create method options from combination and sdma_source
-        # Filter out HRM and NA - sDMA should only show secondary methods
-        method_options <- data %>%
-          dplyr::distinct(combination, sdma_source) %>%
-          dplyr::filter(!sdma_source %in% c("HRM", "NA"), !is.na(sdma_source)) %>%
-          dplyr::mutate(
-            method_label = paste0("sDMA: ", sdma_source, " (", combination, ")")
-          ) %>%
-          dplyr::pull(method_label)
+      # Extract available methods from all datasets
+      all_method_choices <- list()
 
-        method_values <- data %>%
-          dplyr::distinct(combination, sdma_source) %>%
-          dplyr::filter(!sdma_source %in% c("HRM", "NA"), !is.na(sdma_source)) %>%
-          dplyr::mutate(
-            method_value = paste0(combination, ":", sdma_source)
-          ) %>%
-          dplyr::pull(method_value)
+      for (source_name in names(datasets)) {
+        data <- datasets[[source_name]]
+        data_source_label <- data$data_source[1]
 
-        names(method_values) <- method_options
-      } else if ("method" %in% names(data)) {
-        # Regular data - use method column
-        methods <- unique(data$method)
-        methods <- methods[!is.na(methods)]
-        method_values <- methods
-        names(method_values) <- methods
-      } else {
+        if ("combination" %in% names(data) && "method" %in% names(data)) {
+          # sDMA data - extract secondary method from combination
+          # Format: "outer_MHR" or "inner_MHR" -> extract "MHR"
+          # We want to show just "sDMA: MHR" (not split by sensor or source)
+
+          # Extract unique secondary methods from combination strings
+          combinations <- unique(data$combination)
+          secondary_methods <- unique(gsub("^(outer|inner)_", "", combinations))
+
+          for (sec_method in secondary_methods) {
+            method_label <- paste0("sDMA: ", sec_method)
+            method_value <- paste0("sdma:", sec_method)
+            # For checkboxGroupInput: names are labels (what user sees), values are what gets returned
+            all_method_choices[[method_label]] <- method_value
+          }
+
+        } else if ("method" %in% names(data)) {
+          # Regular data - use method column
+          methods <- unique(data$method)
+          methods <- methods[!is.na(methods)]
+
+          for (m in methods) {
+            # Create unique identifier including source
+            if (data_source_label == "spacing_corrected") {
+              method_label <- paste0(m, " (Spacing Corrected)")
+              method_value <- paste0("corrected:", m)
+            } else if (data_source_label == "wound_corrected") {
+              method_label <- paste0(m, " (Spacing and Wound Corrected)")
+              method_value <- paste0("wound:", m)
+            } else {
+              method_label <- paste0(m, " (", data_source_label, ")")
+              method_value <- paste0(data_source_label, ":", m)
+            }
+            # For checkboxGroupInput: names are labels (what user sees), values are what gets returned
+            all_method_choices[[method_label]] <- method_value
+          }
+        }
+      }
+
+      if (length(all_method_choices) == 0) {
         return(p(style = "color: #999;", "No method information available"))
       }
 
       checkboxGroupInput(
         session$ns("methods_selected"),
         NULL,
-        choices = method_values,
-        selected = method_values[1]
+        choices = all_method_choices,
+        selected = all_method_choices[[1]]  # Select first value, not first label
       )
     })
 
@@ -524,20 +504,21 @@ fluxDensityServer <- function(id,
       has_wound <- !is.null(vh_wound_corrected()) && nrow(vh_wound_corrected()) > 0
       has_sdma <- !is.null(vh_sdma()) && nrow(vh_sdma()) > 0
 
-      data_source <- if (has_sdma) {
-        "sDMA"
-      } else if (has_wound) {
-        "Wound-Corrected"
-      } else if (has_spacing) {
-        "Spacing-Corrected"
-      } else if (has_raw) {
-        "Raw HPV"
+      # List all available sources
+      available_sources <- c()
+      if (has_sdma) available_sources <- c(available_sources, "sDMA")
+      if (has_wound) available_sources <- c(available_sources, "Wound-Corrected")
+      if (has_spacing) available_sources <- c(available_sources, "Spacing-Corrected")
+      if (has_raw) available_sources <- c(available_sources, "Raw HPV")
+
+      data_source <- if (length(available_sources) > 0) {
+        paste(available_sources, collapse = ", ")
       } else {
         "None"
       }
 
       status_items <- tagList(
-        h5("Active Data Source:"),
+        h5("Available Data Sources:"),
         p(strong(data_source), style = "color: #3c8dbc; font-size: 1.1em;"),
 
         h5("Data Pipeline Status:"),
@@ -568,59 +549,98 @@ fluxDensityServer <- function(id,
     observeEvent(input$convert_to_flux, {
       req(wood_properties())
       req(input$methods_selected)
-      req(input$sensor_position)
 
       withProgress(message = "Converting to sap flux density...", {
 
         tryCatch({
-          # Get the consolidated velocity data
-          all_data <- all_velocity_data()
+          # Get all available datasets
+          all_datasets <- all_velocity_data()
 
-          if (is.null(all_data) || nrow(all_data) == 0) {
+          if (is.null(all_datasets) || length(all_datasets) == 0) {
             showNotification("No velocity data available", type = "error")
             return()
           }
 
-          # Filter by selected sensor position
-          vh_data <- all_data %>%
-            dplyr::filter(sensor_position == input$sensor_position)
+          # Collect data for each selected method
+          vh_data_list <- list()
 
-          # Filter by selected methods
-          if ("combination" %in% names(vh_data) && "sdma_source" %in% names(vh_data)) {
-            # sDMA data - filter by combination:sdma_source
-            selected_filters <- input$methods_selected
+          for (method_selection in input$methods_selected) {
+            # Parse method selection (format: "source:method" or "sdma:secondary_method")
+            parts <- strsplit(method_selection, ":")[[1]]
 
-            # Parse the method selection (format: "combination:sdma_source")
-            filter_list <- lapply(selected_filters, function(x) {
-              parts <- strsplit(x, ":")[[1]]
-              list(combination = parts[1], sdma_source = parts[2])
-            })
+            if (parts[1] == "sdma") {
+              # sDMA data: format is "sdma:secondary_method" (e.g., "sdma:MHR")
+              # Get ALL sensors for this sDMA variant
+              secondary_method <- parts[2]
 
-            # Apply filters
-            vh_data <- vh_data %>%
-              dplyr::filter(
-                purrr::map2_lgl(combination, sdma_source, function(comb, source) {
-                  any(purrr::map_lgl(filter_list, function(f) {
-                    f$combination == comb && f$sdma_source == source
-                  }))
-                })
-              )
+              sdma_data <- all_datasets$sdma
+              if (!is.null(sdma_data)) {
+                # Filter by secondary method (matches combinations like "outer_MHR", "inner_MHR")
+                # Don't filter by sdma_source - that's internal to sDMA
+                filtered <- sdma_data %>%
+                  dplyr::filter(
+                    grepl(paste0("_", secondary_method, "$"), combination)
+                  ) %>%
+                  dplyr::mutate(
+                    Vh_for_conversion = Vh_sdma,
+                    method_label = paste0("sDMA: ", secondary_method)
+                  )
 
-            # Use Vh_sdma column for sDMA data
-            velocity_col <- "Vh_sdma"
-          } else if ("method" %in% names(vh_data)) {
-            # Regular data - filter by method
-            vh_data <- vh_data %>%
-              dplyr::filter(method %in% input$methods_selected)
+                if (nrow(filtered) > 0) {
+                  vh_data_list[[method_selection]] <- filtered
+                }
+              }
 
-            velocity_col <- "Vh_cm_hr"
-          } else {
-            showNotification("Data structure not recognised", type = "error")
+            } else {
+              # Regular data: format is "source:method"
+              source_type <- parts[1]
+              method_name <- parts[2]
+
+              # Find corresponding dataset
+              data <- if (source_type == "corrected") {
+                all_datasets$spacing
+              } else if (source_type == "wound") {
+                all_datasets$wound
+              } else if (source_type == "raw") {
+                all_datasets$raw
+              } else {
+                all_datasets[[source_type]]
+              }
+
+              if (!is.null(data) && "method" %in% names(data)) {
+                # Get ALL sensors (don't filter by sensor_position)
+                filtered <- data %>%
+                  dplyr::filter(
+                    method == method_name
+                  ) %>%
+                  dplyr::mutate(
+                    Vh_for_conversion = Vh_cm_hr,
+                    method_label = if (source_type == "corrected") {
+                      paste0(method_name, " (Spacing Corrected)")
+                    } else if (source_type == "wound") {
+                      paste0(method_name, " (Spacing and Wound Corrected)")
+                    } else {
+                      paste0(method_name, " (", source_type, ")")
+                    }
+                  )
+
+                if (nrow(filtered) > 0) {
+                  vh_data_list[[method_selection]] <- filtered
+                }
+              }
+            }
+          }
+
+          if (length(vh_data_list) == 0) {
+            showNotification("No data for selected methods", type = "warning")
             return()
           }
 
+          # Combine all selected data
+          vh_data <- dplyr::bind_rows(vh_data_list)
+
           if (nrow(vh_data) == 0) {
-            showNotification("No data for selected methods and sensor position", type = "warning")
+            showNotification("No data after filtering", type = "warning")
             return()
           }
 
@@ -630,19 +650,42 @@ fluxDensityServer <- function(id,
           # Convert using sapfluxr function
           flux_data <- vh_data
           flux_data$Jv_cm3_cm2_hr <- sapfluxr::calc_sap_flux_density(
-            Vh = vh_data[[velocity_col]],
+            Vh = vh_data$Vh_for_conversion,
             wood_properties = wood
           )
 
+          # Get sensor positions in the data
+          sensors_used <- unique(flux_data$sensor_position)
+
           rv$flux_data <- flux_data
-          rv$velocity_source_used <- flux_data$data_source[1]  # Get from data
+          rv$velocity_source_used <- paste(unique(flux_data$data_source), collapse = ", ")
           rv$methods_used <- input$methods_selected
-          rv$sensor_position_used <- input$sensor_position
+          rv$sensor_position_used <- paste(sensors_used, collapse = ", ")
           rv$conversion_timestamp <- Sys.time()
 
+          # Code generation
+          if (!isTRUE(code_tracker)) {
+            methods_str <- paste0('"', input$methods_selected, '"', collapse = ", ")
+            code_tracker$add_step(
+              step_name = "Convert to Sap Flux Density",
+              code = sprintf(
+                paste0(
+                  '# Convert heat pulse velocity to sap flux density\n',
+                  'flux_data <- sapfluxr::convert_vh_to_flux_density(\n',
+                  '  vh_data = velocity_data,  # Use corrected velocity data\n',
+                  '  wood_properties = wood_properties,\n',
+                  '  methods = c(%s)\n',
+                  ')'
+                ),
+                methods_str
+              ),
+              description = sprintf("Converted %d method(s) to flux density", length(input$methods_selected))
+            )
+          }
+
           showNotification(
-            sprintf("Flux density conversion successful! %d methods, %s sensor, %d records",
-                    length(input$methods_selected), input$sensor_position, nrow(flux_data)),
+            sprintf("Flux density conversion successful! %d method(s), %s sensor(s), %d records",
+                    length(input$methods_selected), paste(sensors_used, collapse = "+"), nrow(flux_data)),
             type = "message"
           )
 
@@ -670,13 +713,15 @@ fluxDensityServer <- function(id,
           flux_with_dims$sapwood_depth <- input$sapwood_depth_cm
           flux_with_dims$bark_thickness <- input$bark_thickness_cm
 
-          # Apply sap flux integration
-          wood <- wood_properties()
+          # Apply sap flux integration across sapwood area
+          # This integrates flux density from all sensor positions (inner + outer)
+          # using the selected integration method (weighted average or uniform)
           tree_water_use_data <- sapfluxr::apply_sap_flux_integration(
             flux_data = flux_with_dims,
-            wood_properties = wood,
-            integration_method = input$integration_method,
-            verbose = FALSE
+            dbh_col = "dbh",
+            sapwood_depth_col = "sapwood_depth",
+            bark_thickness_col = "bark_thickness",
+            method = input$integration_method
           )
 
           # Store results
@@ -687,6 +732,41 @@ fluxDensityServer <- function(id,
             bark_thickness = input$bark_thickness_cm
           )
           rv$integration_timestamp <- Sys.time()
+
+          # Code generation
+          if (!isTRUE(code_tracker)) {
+            # Calculate sapwood area
+            r_outer <- (input$dbh_cm - 2 * input$bark_thickness_cm) / 2
+            r_inner <- r_outer - input$sapwood_depth_cm
+            sapwood_area <- pi * (r_outer^2 - r_inner^2)
+
+            rv$tree_dimensions$sapwood_area <- sapwood_area
+            rv$tree_dimensions$integration_method <- input$integration_method
+
+            code_tracker$add_step(
+              step_name = "Calculate Tree Water Use",
+              code = sprintf(
+                paste0(
+                  '# Calculate tree-level water use from flux density\n',
+                  'tree_water_use <- sapfluxr::apply_sap_flux_integration(\n',
+                  '  flux_data = flux_data,\n',
+                  '  dbh = %.2f,  # cm\n',
+                  '  sapwood_depth = %.2f,  # cm\n',
+                  '  bark_thickness = %.2f,  # cm\n',
+                  '  method = "%s"  # Integration method\n',
+                  ')\n',
+                  '# Sapwood area: %.2f cm²'
+                ),
+                input$dbh_cm,
+                input$sapwood_depth_cm,
+                input$bark_thickness_cm,
+                input$integration_method,
+                sapwood_area
+              ),
+              description = sprintf("Integrated flux across sapwood area (DBH: %.1f cm, Sapwood: %.1f cm, Area: %.1f cm²)",
+                                   input$dbh_cm, input$sapwood_depth_cm, sapwood_area)
+            )
+          }
 
           showNotification(
             sprintf("Tree water use calculated! DBH: %.1f cm, Sapwood depth: %.1f cm",
@@ -733,23 +813,54 @@ fluxDensityServer <- function(id,
 
       flux <- rv$flux_data
 
+      # Get method breakdown
+      if ("method_label" %in% names(flux)) {
+        method_summary <- flux %>%
+          dplyr::group_by(method_label, sensor_position) %>%
+          dplyr::summarise(
+            n = dplyr::n(),
+            mean_jv = mean(Jv_cm3_cm2_hr, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          dplyr::arrange(method_label, sensor_position)
+
+        method_text <- paste0(
+          "\nMethod Breakdown:\n",
+          paste(
+            sprintf("  %s (%s): %d points, mean = %.3f cm³/cm²/hr",
+                    method_summary$method_label,
+                    toupper(method_summary$sensor_position),
+                    method_summary$n,
+                    method_summary$mean_jv),
+            collapse = "\n"
+          ),
+          "\n"
+        )
+      } else {
+        method_text <- ""
+      }
+
       sprintf(
-        "Flux Density Conversion Summary\n\n" +
-        "Source: %s\n" +
-        "Converted: %s\n\n" +
-        "Data Points: %d\n" +
-        "Date Range: %s to %s\n\n" +
-        "Sap Flux Density (Jv) Statistics:\n" +
-        "  Mean: %.3f cm³/cm²/hr\n" +
-        "  Median: %.3f cm³/cm²/hr\n" +
-        "  Min: %.3f cm³/cm²/hr\n" +
-        "  Max: %.3f cm³/cm²/hr\n" +
-        "  SD: %.3f cm³/cm²/hr",
+        paste0(
+          "Flux Density Conversion Summary\n\n",
+          "Source: %s\n",
+          "Converted: %s\n\n",
+          "Data Points: %d\n",
+          "Date Range: %s to %s\n",
+          "%s",
+          "\nOverall Sap Flux Density (Jv) Statistics:\n",
+          "  Mean: %.3f cm³/cm²/hr\n",
+          "  Median: %.3f cm³/cm²/hr\n",
+          "  Min: %.3f cm³/cm²/hr\n",
+          "  Max: %.3f cm³/cm²/hr\n",
+          "  SD: %.3f cm³/cm²/hr"
+        ),
         rv$velocity_source_used,
         format(rv$conversion_timestamp, "%Y-%m-%d %H:%M:%S"),
         nrow(flux),
         format(min(flux$datetime), "%Y-%m-%d"),
         format(max(flux$datetime), "%Y-%m-%d"),
+        method_text,
         mean(flux$Jv_cm3_cm2_hr, na.rm = TRUE),
         median(flux$Jv_cm3_cm2_hr, na.rm = TRUE),
         min(flux$Jv_cm3_cm2_hr, na.rm = TRUE),
@@ -763,271 +874,96 @@ fluxDensityServer <- function(id,
       req(rv$flux_data)
 
       sprintf(
-        "Flux density data active (%d records)\n" +
-        "Source: %s\n" +
-        "Converted: %s",
+        paste0(
+          "Flux density data active (%d records)\n",
+          "Source: %s\n",
+          "Converted: %s"
+        ),
         nrow(rv$flux_data),
         rv$velocity_source_used,
         format(rv$conversion_timestamp, "%Y-%m-%d %H:%M:%S")
       )
     })
 
-    # Flux timeseries plot
-    output$flux_timeseries_plot <- plotly::renderPlotly({
-      req(rv$flux_data)
+    # Tree water use summary
+    output$tree_water_use_summary <- renderText({
+      req(rv$tree_water_use_data)
 
-      flux <- rv$flux_data
+      q_data <- rv$tree_water_use_data
 
-      # Sample if too many points
-      if (nrow(flux) > 10000) {
-        sample_idx <- seq(1, nrow(flux), length.out = 10000)
-        flux <- flux[sample_idx, ]
-      }
-
-      # Create plot - handle both sDMA and regular data
-      if ("combination" %in% names(flux) && "sdma_source" %in% names(flux)) {
-        # sDMA data - color by combination:sdma_source
-        flux <- flux %>%
-          dplyr::mutate(
-            trace_name = paste0(combination, ": ", sdma_source)
+      # Get method breakdown if available
+      if ("method_label" %in% names(q_data)) {
+        method_summary <- q_data %>%
+          dplyr::group_by(method_label) %>%
+          dplyr::summarise(
+            n = dplyr::n(),
+            mean_Q = mean(Q_L_hr, na.rm = TRUE),
+            total_daily = sum(Q_L_day, na.rm = TRUE),
+            .groups = "drop"
           )
 
-        fig <- plotly::plot_ly(
-          data = flux,
-          x = ~datetime,
-          y = ~Jv_cm3_cm2_hr,
-          color = ~trace_name,
-          type = "scatter",
-          mode = "lines",
-          line = list(width = 1.5),
-          hovertemplate = paste(
-            "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
-            "<b>Jv:</b> %{y:.3f} cm³/cm²/hr<br>",
-            "<b>Method:</b> %{customdata}<br>",
-            "<extra></extra>"
+        method_text <- paste0(
+          "\nMethod Breakdown:\n",
+          paste(
+            sprintf("  %s: %d points, mean = %.2f L/hr, total = %.1f L/day",
+                    method_summary$method_label,
+                    method_summary$n,
+                    method_summary$mean_Q,
+                    method_summary$total_daily),
+            collapse = "\n"
           ),
-          customdata = ~trace_name
-        )
-      } else if ("method" %in% names(flux)) {
-        # Regular data - color by method
-        fig <- plotly::plot_ly(
-          data = flux,
-          x = ~datetime,
-          y = ~Jv_cm3_cm2_hr,
-          color = ~method,
-          type = "scatter",
-          mode = "lines",
-          line = list(width = 1.5),
-          hovertemplate = paste(
-            "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
-            "<b>Jv:</b> %{y:.3f} cm³/cm²/hr<br>",
-            "<b>Method:</b> %{customdata}<br>",
-            "<extra></extra>"
-          ),
-          customdata = ~method
+          "\n"
         )
       } else {
-        # Fallback - single trace
-        fig <- plotly::plot_ly(
-          data = flux,
-          x = ~datetime,
-          y = ~Jv_cm3_cm2_hr,
-          type = "scatter",
-          mode = "lines",
-          name = "Sap Flux Density",
-          line = list(color = "darkgreen", width = 1.5),
-          hovertemplate = paste(
-            "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
-            "<b>Jv:</b> %{y:.3f} cm³/cm²/hr<br>",
-            "<extra></extra>"
-          )
-        )
+        method_text <- ""
       }
 
-      fig <- fig %>%
-        plotly::layout(
-          title = paste("Sap Flux Density -", rv$sensor_position_used, "Sensor"),
-          xaxis = list(title = "Date", showgrid = TRUE, gridcolor = "lightgray"),
-          yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)", showgrid = TRUE, gridcolor = "lightgray"),
-          hovermode = "closest",
-          legend = list(orientation = "h", y = -0.2),
-          margin = list(l = 70, r = 40, t = 60, b = 80)
-        )
-
-      return(fig)
-    })
-
-    # Velocity vs Flux comparison plot
-    output$velocity_vs_flux_plot <- plotly::renderPlotly({
-      req(rv$flux_data)
-
-      flux <- rv$flux_data
-
-      # Sample if too many points
-      if (nrow(flux) > 5000) {
-        sample_idx <- seq(1, nrow(flux), length.out = 5000)
-        flux <- flux[sample_idx, ]
-      }
-
-      # Calculate Z factor
-      Z <- mean(flux$Jv_cm3_cm2_hr / flux$Vh_cm_hr, na.rm = TRUE)
-
-      # Create scatter plot
-      fig <- plotly::plot_ly(
-        data = flux,
-        x = ~Vh_cm_hr,
-        y = ~Jv_cm3_cm2_hr,
-        type = "scatter",
-        mode = "markers",
-        marker = list(
-          color = "steelblue",
-          size = 4,
-          opacity = 0.6
+      sprintf(
+        paste0(
+          "Tree Water Use Summary\n\n",
+          "Tree Dimensions:\n",
+          "  DBH: %.2f cm\n",
+          "  Sapwood Depth: %.2f cm\n",
+          "  Sapwood Area: %.2f cm²\n\n",
+          "Integration Method: %s\n",
+          "Calculated: %s\n\n",
+          "Data Points: %d\n",
+          "Date Range: %s to %s\n",
+          "%s",
+          "\nOverall Water Use Statistics:\n",
+          "  Mean: %.3f L/hr\n",
+          "  Median: %.3f L/hr\n",
+          "  Total Daily: %.2f L/day\n",
+          "  Min: %.3f L/hr\n",
+          "  Max: %.3f L/hr"
         ),
-        hovertemplate = paste(
-          "<b>Vh:</b> %{x:.3f} cm/hr<br>",
-          "<b>Jv:</b> %{y:.3f} cm³/cm²/hr<br>",
-          "<extra></extra>"
-        )
+        rv$tree_dimensions$dbh,
+        rv$tree_dimensions$sapwood_depth,
+        rv$tree_dimensions$sapwood_area,
+        rv$tree_dimensions$integration_method,
+        format(rv$integration_timestamp, "%Y-%m-%d %H:%M:%S"),
+        nrow(q_data),
+        format(min(q_data$datetime), "%Y-%m-%d"),
+        format(max(q_data$datetime), "%Y-%m-%d"),
+        method_text,
+        mean(q_data$Q_L_hr, na.rm = TRUE),
+        median(q_data$Q_L_hr, na.rm = TRUE),
+        sum(q_data$Q_L_day, na.rm = TRUE),
+        min(q_data$Q_L_hr, na.rm = TRUE),
+        max(q_data$Q_L_hr, na.rm = TRUE)
       )
-
-      # Add reference line (Jv = Z × Vh)
-      vh_range <- range(flux$Vh_cm_hr, na.rm = TRUE)
-      fig <- fig %>%
-        plotly::add_trace(
-          x = vh_range,
-          y = vh_range * Z,
-          type = "scatter",
-          mode = "lines",
-          name = sprintf("Jv = %.4f × Vh", Z),
-          line = list(color = "darkred", width = 2, dash = "dash"),
-          hoverinfo = "skip"
-        )
-
-      fig <- fig %>%
-        plotly::layout(
-          title = "Velocity vs Flux Density",
-          xaxis = list(title = "Heat Pulse Velocity (cm/hr)", showgrid = TRUE, gridcolor = "lightgray"),
-          yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)", showgrid = TRUE, gridcolor = "lightgray"),
-          hovermode = "closest",
-          showlegend = TRUE,
-          legend = list(x = 0.02, y = 0.98),
-          margin = list(l = 70, r = 40, t = 60, b = 60)
-        )
-
-      return(fig)
     })
 
-    # Daily flux totals plot
-    output$daily_flux_plot <- plotly::renderPlotly({
-      req(rv$flux_data)
+    # ==================================================================
+    # PLOT OUTPUTS REMOVED
+    # All visualization moved to mod_8b_flux_validation.R
+    # ==================================================================
 
-      flux <- rv$flux_data
-
-      # Calculate daily totals
-      flux$date <- as.Date(flux$datetime)
-      daily_totals <- aggregate(Jv_cm3_cm2_hr ~ date, data = flux, FUN = sum, na.rm = TRUE)
-
-      fig <- plotly::plot_ly(
-        data = daily_totals,
-        x = ~date,
-        y = ~Jv_cm3_cm2_hr,
-        type = "bar",
-        marker = list(color = "darkgreen"),
-        hovertemplate = paste(
-          "<b>Date:</b> %{x|%Y-%m-%d}<br>",
-          "<b>Daily Total:</b> %{y:.2f} cm³/cm²/day<br>",
-          "<extra></extra>"
-        )
-      )
-
-      fig <- fig %>%
-        plotly::layout(
-          title = "Daily Sap Flux Totals",
-          xaxis = list(title = "Date", showgrid = FALSE),
-          yaxis = list(title = "Daily Flux (cm³/cm²/day)", showgrid = TRUE, gridcolor = "lightgray"),
-          hovermode = "closest",
-          margin = list(l = 70, r = 40, t = 60, b = 60)
-        )
-
-      return(fig)
-    })
-
-    # Tree water use - Hourly plot (L/hr)
-    output$tree_water_use_plot_hourly <- plotly::renderPlotly({
-      req(rv$tree_water_use_data)
-
-      q_data <- rv$tree_water_use_data
-
-      # Sample if too many points
-      if (nrow(q_data) > 5000) {
-        sample_idx <- seq(1, nrow(q_data), length.out = 5000)
-        q_data <- q_data[sample_idx, ]
-      }
-
-      fig <- plotly::plot_ly(
-        data = q_data,
-        x = ~datetime,
-        y = ~Q_L_hr,
-        type = "scatter",
-        mode = "lines",
-        name = "Tree Water Use",
-        line = list(color = "darkblue", width = 1.5),
-        hovertemplate = paste(
-          "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
-          "<b>Q:</b> %{y:.3f} L/hr<br>",
-          "<extra></extra>"
-        )
-      )
-
-      fig <- fig %>%
-        plotly::layout(
-          title = sprintf("Tree Water Use (DBH: %.1f cm, Sapwood: %.1f cm)",
-                         rv$tree_dimensions$dbh, rv$tree_dimensions$sapwood_depth),
-          xaxis = list(title = "Date", showgrid = TRUE, gridcolor = "lightgray"),
-          yaxis = list(title = "Water Use (L/hr)", showgrid = TRUE, gridcolor = "lightgray"),
-          hovermode = "closest",
-          margin = list(l = 70, r = 40, t = 60, b = 60)
-        )
-
-      return(fig)
-    })
-
-    # Tree water use - Daily plot (L/day)
-    output$tree_water_use_plot_daily <- plotly::renderPlotly({
-      req(rv$tree_water_use_data)
-
-      q_data <- rv$tree_water_use_data
-
-      # Calculate daily totals
-      q_data$date <- as.Date(q_data$datetime)
-      daily_totals <- aggregate(Q_L_day ~ date, data = q_data, FUN = mean, na.rm = TRUE)
-
-      fig <- plotly::plot_ly(
-        data = daily_totals,
-        x = ~date,
-        y = ~Q_L_day,
-        type = "bar",
-        marker = list(color = "darkblue"),
-        hovertemplate = paste(
-          "<b>Date:</b> %{x|%Y-%m-%d}<br>",
-          "<b>Daily Total:</b> %{y:.2f} L/day<br>",
-          "<extra></extra>"
-        )
-      )
-
-      fig <- fig %>%
-        plotly::layout(
-          title = sprintf("Daily Tree Water Use (DBH: %.1f cm)",
-                         rv$tree_dimensions$dbh),
-          xaxis = list(title = "Date", showgrid = FALSE),
-          yaxis = list(title = "Daily Water Use (L/day)", showgrid = TRUE, gridcolor = "lightgray"),
-          hovermode = "closest",
-          margin = list(l = 70, r = 40, t = 60, b = 60)
-        )
-
-      return(fig)
-    })
+    # REMOVED: flux_timeseries_plot - moved to mod_8b
+    # REMOVED: velocity_vs_flux_plot - moved to mod_8b
+    # REMOVED: daily_flux_plot - moved to mod_8b
+    # REMOVED: tree_water_use_plot_hourly - moved to mod_8b
+    # REMOVED: tree_water_use_plot_daily - moved to mod_8b
 
     # Download flux data
     output$download_flux_data <- downloadHandler(

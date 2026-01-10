@@ -35,6 +35,9 @@ calibrationUI <- function(id) {
           p(tags$small(em("Recommended: Apply AFTER spacing and wound corrections")))
         ),  # Close Info box
 
+        # Heartwood warning (dynamic - shown only if inner sensor is in heartwood)
+        uiOutput(ns("heartwood_warning")),
+
         # Sensor position selection
         box(
           width = 12,
@@ -52,19 +55,6 @@ calibrationUI <- function(id) {
           helpText(
             icon("info-circle"),
             " Primary method is HRM. All secondary methods will be calibrated against HRM."
-          ),
-
-          hr(),
-
-          checkboxInput(
-            ns("use_enhanced_analysis"),
-            HTML("<strong>Enhanced Analysis</strong> (detect non-linear patterns)"),
-            value = FALSE
-          ),
-
-          helpText(
-            icon("info-circle"),
-            " When enabled, automatically detects U-shaped residuals and fits quadratic models if needed."
           )
         ),  # Close Configuration box
 
@@ -135,7 +125,7 @@ calibrationUI <- function(id) {
 }
 
 # Server ----
-calibrationServer <- function(id, vh_corrected, code_tracker = NULL, active_tab = NULL, wound_module = NULL) {
+calibrationServer <- function(id, vh_corrected, wood_properties, probe_config = reactive(NULL), code_tracker = NULL, active_tab = NULL, wound_module = NULL) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
@@ -145,6 +135,45 @@ calibrationServer <- function(id, vh_corrected, code_tracker = NULL, active_tab 
       vh_calibrated = NULL,              # rv$vh_calibrated - unified dataset (both sensors)
       method_thresholds = list()         # rv$method_thresholds$outer[[method]], rv$method_thresholds$inner[[method]]
     )
+
+    # Heartwood warning output
+    output$heartwood_warning <- renderUI({
+      req(wood_properties(), probe_config())
+
+      # Validate probe/tree configuration to get tissue information
+      validation <- validate_probe_tree_config(
+        probe_config = probe_config(),
+        wood_properties = wood_properties()
+      )
+
+      # Check if inner sensor is in heartwood
+      if (!is.null(validation$inner_tissue) && validation$inner_tissue == "heartwood") {
+        box(
+          width = 12,
+          title = NULL,
+          status = "warning",
+          solidHeader = FALSE,
+
+          div(
+            style = "padding: 10px;",
+            p(
+              icon("exclamation-triangle", class = "fa-lg"),
+              strong(" Attention:"),
+              " Based on your sapwood depth and probe geometry, the",
+              strong(" Inner Sensor"),
+              " is located in the heartwood."
+            ),
+            tags$ul(
+              tags$li("Heartwood records zero flow and is not active in sap transport"),
+              tags$li("Inner sensor data does not require spacing correction or calibration"),
+              tags$li("Can be used as a continuous zero-flow reference")
+            )
+          )
+        )
+      } else {
+        NULL  # No warning if not in heartwood
+      }
+    })
 
     # =========================================================================
     # PROACTIVE BACKGROUND CALCULATION
@@ -276,59 +305,6 @@ calibrationServer <- function(id, vh_corrected, code_tracker = NULL, active_tab 
       calculation_status("complete")
     })
 
-    # Enhanced analysis mode toggle - recalculates with enhanced analysis
-    observeEvent(input$use_enhanced_analysis, {
-      req(input$sensor_position)
-      req(vh_corrected())
-
-      # Only react when switching TO enhanced mode (not from)
-      if (!isTRUE(input$use_enhanced_analysis)) {
-        return()
-      }
-
-      sensor <- input$sensor_position
-
-      # Skip if no results exist yet
-      if (is.null(rv$r2_optimization_results[[sensor]])) {
-        return()
-      }
-
-      showNotification(
-        "Recalculating with enhanced analysis (may detect non-linear patterns)...",
-        type = "message",
-        duration = 3
-      )
-
-      methods <- names(rv$r2_optimization_results[[sensor]])
-
-      withProgress(message = "Enhanced analysis...", value = 0, {
-        for (i in seq_along(methods)) {
-          method <- methods[i]
-
-          setProgress(
-            value = i / length(methods),
-            message = paste("Analysing", method, "with quadratic detection...")
-          )
-
-          tryCatch({
-            result <- sapfluxr::compare_methods_enhanced(
-              vh_corrected = vh_corrected(),
-              primary_method = "HRM",
-              secondary_method = method,
-              sensor_position = sensor,
-              try_quadratic = TRUE,
-              verbose = FALSE
-            )
-
-            rv$r2_optimization_results[[sensor]][[method]] <- result
-
-          }, error = function(e) {
-            message(paste("Enhanced analysis failed for", method, ":", e$message))
-          })
-        }
-      })
-    })
-
     # =========================================================================
     # Dynamic threshold controls - Grouped by METHOD, showing both sensors
     # =========================================================================
@@ -442,11 +418,19 @@ calibrationServer <- function(id, vh_corrected, code_tracker = NULL, active_tab 
           fluidRow(
             column(
               width = 6,
-              plotOutput(ns(paste0("r2_plot_", sensor, "_", method)), height = "350px")
+              shinycssloaders::withSpinner(
+                plotOutput(ns(paste0("r2_plot_", sensor, "_", method)), height = "350px"),
+                type = 6,
+                color = "#3c8dbc"
+              )
             ),
             column(
               width = 6,
-              plotOutput(ns(paste0("residuals_plot_", sensor, "_", method)), height = "350px")
+              shinycssloaders::withSpinner(
+                plotOutput(ns(paste0("residuals_plot_", sensor, "_", method)), height = "350px"),
+                type = 6,
+                color = "#3c8dbc"
+              )
             )
           ),
           hr()
@@ -487,27 +471,246 @@ calibrationServer <- function(id, vh_corrected, code_tracker = NULL, active_tab 
           })
           outputOptions(output, paste0("has_pattern_warning_", sensor, "_", method), suspendWhenHidden = FALSE)
 
-          # Segmented regression plot
-          output[[paste0("r2_plot_", sensor, "_", method)]] <- renderPlot({
-            if (!is.null(r2_data$plots$segmented_plot)) {
-              r2_data$plots$segmented_plot
-            } else if (!is.null(r2_data$plots$r_squared_plot)) {
-              # Fallback to R² plot if segmented plot not available
-              r2_data$plots$r_squared_plot
-            } else {
-              plot.new()
-              text(0.5, 0.5, "Segmented regression plot not available", cex = 1.2)
-            }
+          # Segmented regression plot - reactive to threshold changes with full recalculation
+          local({
+            sensor_local <- sensor
+            method_local <- method
+            r2_data_local <- r2_data
+
+            output[[paste0("r2_plot_", sensor_local, "_", method_local)]] <- renderPlot({
+              # Get current threshold (auto or manual)
+              mode_input <- input[[paste0("threshold_mode_", sensor_local, "_", method_local)]]
+              if (is.null(mode_input)) mode_input <- "auto"
+
+              # AUTO MODE: Use original plot
+              if (mode_input == "auto") {
+                base_plot <- if (!is.null(r2_data_local$plots$segmented_plot)) {
+                  r2_data_local$plots$segmented_plot
+                } else if (!is.null(r2_data_local$plots$r_squared_plot)) {
+                  r2_data_local$plots$r_squared_plot
+                } else {
+                  NULL
+                }
+
+                if (is.null(base_plot)) {
+                  plot.new()
+                  text(0.5, 0.5, "Segmented regression plot not available", cex = 1.2)
+                  return(invisible(NULL))
+                }
+
+                return(base_plot)
+              }
+
+              # MANUAL MODE: Recalculate with fixed breakpoint
+              manual_threshold <- input[[paste0("threshold_value_", sensor_local, "_", method_local)]]
+              if (is.null(manual_threshold)) {
+                return(NULL)
+              }
+
+              # Get merged data
+              merged_data <- r2_data_local$merged_data
+              if (is.null(merged_data) || nrow(merged_data) < 50) {
+                plot.new()
+                text(0.5, 0.5, "Insufficient data for manual calibration", cex = 1.2)
+                return(invisible(NULL))
+              }
+
+              # Fit piecewise linear regression at manual threshold
+              # Segment 1: Primary <= manual_threshold
+              segment1 <- merged_data[merged_data$Vh_cm_hr_primary <= manual_threshold, ]
+              # Segment 2: Primary > manual_threshold
+              segment2 <- merged_data[merged_data$Vh_cm_hr_primary > manual_threshold, ]
+
+              # Fit linear models for each segment if enough points
+              fitted_values <- rep(NA_real_, nrow(merged_data))
+
+              if (nrow(segment1) >= 10) {
+                lm1 <- lm(Vh_cm_hr_secondary ~ Vh_cm_hr_primary, data = segment1)
+                slope1 <- coef(lm1)[2]
+                intercept1 <- coef(lm1)[1]
+                # Predict for segment 1
+                idx1 <- merged_data$Vh_cm_hr_primary <= manual_threshold
+                fitted_values[idx1] <- predict(lm1, newdata = merged_data[idx1, ])
+              } else {
+                slope1 <- NA
+                intercept1 <- NA
+              }
+
+              if (nrow(segment2) >= 10) {
+                lm2 <- lm(Vh_cm_hr_secondary ~ Vh_cm_hr_primary, data = segment2)
+                slope2 <- coef(lm2)[2]
+                intercept2 <- coef(lm2)[1]
+                # Predict for segment 2
+                idx2 <- merged_data$Vh_cm_hr_primary > manual_threshold
+                fitted_values[idx2] <- predict(lm2, newdata = merged_data[idx2, ])
+              } else {
+                slope2 <- NA
+                intercept2 <- NA
+              }
+
+              # Calculate R² for piecewise model
+              ss_res <- sum((merged_data$Vh_cm_hr_secondary - fitted_values)^2, na.rm = TRUE)
+              ss_tot <- sum((merged_data$Vh_cm_hr_secondary - mean(merged_data$Vh_cm_hr_secondary))^2)
+              r2_manual <- 1 - (ss_res / ss_tot)
+
+              # Create plot data with fitted values
+              plot_data <- merged_data
+              plot_data$fitted <- fitted_values
+
+              # Create segmented regression plot
+              primary_method <- r2_data_local$primary_method
+              secondary_method <- r2_data_local$secondary_method
+
+              p <- ggplot2::ggplot(plot_data,
+                                   ggplot2::aes(x = Vh_cm_hr_primary, y = Vh_cm_hr_secondary)) +
+                # Data points
+                ggplot2::geom_point(alpha = 0.3, color = "grey40", size = 1.5) +
+
+                # Fitted piecewise line
+                ggplot2::geom_line(ggplot2::aes(y = fitted), color = "red", linewidth = 1.2, na.rm = TRUE) +
+
+                # 1:1 reference line
+                ggplot2::geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+                                     color = "blue", alpha = 0.5) +
+
+                # Manual breakpoint line
+                ggplot2::geom_vline(xintercept = manual_threshold, color = "darkgreen",
+                                    linetype = "dashed", linewidth = 1) +
+
+                # Annotation with statistics
+                ggplot2::annotate("text",
+                                 x = manual_threshold,
+                                 y = max(plot_data$Vh_cm_hr_secondary, na.rm = TRUE),
+                                 label = sprintf("Manual: %.1f cm/hr", manual_threshold),
+                                 hjust = -0.1, vjust = 1, color = "darkgreen", size = 4, fontface = "bold") +
+
+                ggplot2::annotate("text",
+                                 x = Inf, y = -Inf,
+                                 label = sprintf(
+                                   "R² = %.3f\nSlope before = %.3f\nSlope after = %.3f",
+                                   r2_manual,
+                                   ifelse(is.na(slope1), NA, slope1),
+                                   ifelse(is.na(slope2), NA, slope2)
+                                 ),
+                                 hjust = 1.1, vjust = -0.3, size = 3.5, color = "black") +
+
+                ggplot2::labs(
+                  title = paste("Method Comparison:", secondary_method, "vs", primary_method),
+                  subtitle = sprintf("Manual Breakpoint at %.1f cm/hr (R² = %.3f)",
+                                    manual_threshold, r2_manual),
+                  x = paste(primary_method, "Velocity (cm/hr)"),
+                  y = paste(secondary_method, "Velocity (cm/hr)")
+                ) +
+
+                ggplot2::theme_classic() +
+                ggplot2::theme(
+                  plot.title = ggplot2::element_text(face = "bold", size = 14),
+                  plot.subtitle = ggplot2::element_text(size = 11),
+                  legend.position = "bottom"
+                )
+
+              p
+            })
           })
 
-          # Residuals plot
-          output[[paste0("residuals_plot_", sensor, "_", method)]] <- renderPlot({
-            if (!is.null(r2_data$plots$residuals_plot)) {
-              r2_data$plots$residuals_plot
-            } else {
-              plot.new()
-              text(0.5, 0.5, "Residuals plot not available", cex = 1.2)
-            }
+          # Residuals plot - reactive to threshold changes
+          local({
+            sensor_local <- sensor
+            method_local <- method
+            r2_data_local <- r2_data
+
+            output[[paste0("residuals_plot_", sensor_local, "_", method_local)]] <- renderPlot({
+              # Get current threshold mode
+              mode_input <- input[[paste0("threshold_mode_", sensor_local, "_", method_local)]]
+              if (is.null(mode_input)) mode_input <- "auto"
+
+              # AUTO MODE: Use original residuals plot
+              if (mode_input == "auto") {
+                if (!is.null(r2_data_local$plots$residuals_plot)) {
+                  return(r2_data_local$plots$residuals_plot)
+                } else {
+                  plot.new()
+                  text(0.5, 0.5, "Residuals plot not available", cex = 1.2)
+                  return(invisible(NULL))
+                }
+              }
+
+              # MANUAL MODE: Recalculate residuals for manual threshold
+              manual_threshold <- input[[paste0("threshold_value_", sensor_local, "_", method_local)]]
+              if (is.null(manual_threshold)) {
+                return(NULL)
+              }
+
+              # Get merged data
+              merged_data <- r2_data_local$merged_data
+              if (is.null(merged_data) || nrow(merged_data) < 50) {
+                plot.new()
+                text(0.5, 0.5, "Insufficient data for residuals plot", cex = 1.2)
+                return(invisible(NULL))
+              }
+
+              # Fit piecewise linear regression at manual threshold (same as main plot)
+              segment1 <- merged_data[merged_data$Vh_cm_hr_primary <= manual_threshold, ]
+              segment2 <- merged_data[merged_data$Vh_cm_hr_primary > manual_threshold, ]
+
+              # Fit linear models and calculate residuals
+              fitted_values <- rep(NA_real_, nrow(merged_data))
+
+              if (nrow(segment1) >= 10) {
+                lm1 <- lm(Vh_cm_hr_secondary ~ Vh_cm_hr_primary, data = segment1)
+                idx1 <- merged_data$Vh_cm_hr_primary <= manual_threshold
+                fitted_values[idx1] <- predict(lm1, newdata = merged_data[idx1, ])
+              }
+
+              if (nrow(segment2) >= 10) {
+                lm2 <- lm(Vh_cm_hr_secondary ~ Vh_cm_hr_primary, data = segment2)
+                idx2 <- merged_data$Vh_cm_hr_primary > manual_threshold
+                fitted_values[idx2] <- predict(lm2, newdata = merged_data[idx2, ])
+              }
+
+              # Calculate residuals
+              residuals <- merged_data$Vh_cm_hr_secondary - fitted_values
+
+              # Create residuals plot data
+              plot_data <- data.frame(
+                primary = merged_data$Vh_cm_hr_primary,
+                residuals = residuals,
+                fitted = fitted_values
+              )
+
+              # Remove NA values
+              plot_data <- plot_data[!is.na(plot_data$residuals), ]
+
+              # Create residuals plot
+              primary_method <- r2_data_local$primary_method
+              secondary_method <- r2_data_local$secondary_method
+
+              p <- ggplot2::ggplot(plot_data, ggplot2::aes(x = primary, y = residuals)) +
+                ggplot2::geom_point(alpha = 0.3, color = "grey40", size = 1.5) +
+                ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+                ggplot2::geom_vline(xintercept = manual_threshold, color = "darkgreen",
+                                    linetype = "dashed", linewidth = 1) +
+                ggplot2::geom_smooth(method = "loess", se = TRUE, color = "blue", alpha = 0.2) +
+                ggplot2::annotate("text",
+                                 x = manual_threshold,
+                                 y = max(plot_data$residuals, na.rm = TRUE),
+                                 label = sprintf("Manual: %.1f cm/hr", manual_threshold),
+                                 hjust = -0.1, vjust = 1, color = "darkgreen", size = 4, fontface = "bold") +
+                ggplot2::labs(
+                  title = "Residuals Plot",
+                  subtitle = sprintf("Manual Breakpoint at %.1f cm/hr", manual_threshold),
+                  x = paste(primary_method, "Velocity (cm/hr)"),
+                  y = "Residuals (cm/hr)"
+                ) +
+                ggplot2::theme_classic() +
+                ggplot2::theme(
+                  plot.title = ggplot2::element_text(face = "bold", size = 14),
+                  plot.subtitle = ggplot2::element_text(size = 11),
+                  legend.position = "bottom"
+                )
+
+              p
+            })
           })
         })
       })

@@ -34,6 +34,12 @@ sdmaUI <- function(id) {
           p(tags$small(em("Peclet number determines the theoretical validity limit of HRM. When Pe ≥ threshold, sDMA switches to the secondary method.")))
         ),
 
+        # Heartwood warning (conditionally displayed)
+        uiOutput(ns("heartwood_warning")),
+
+        # Calibration requirement warning (conditionally displayed)
+        uiOutput(ns("calibration_warning")),
+
         # Peclet recalculation
         box(
           width = 12,
@@ -134,7 +140,11 @@ sdmaUI <- function(id) {
               tabPanel(
                 "Method Usage Summary",
                 br(),
-                plotOutput(ns("method_usage_plot"), height = "350px"),
+                shinycssloaders::withSpinner(
+                  plotOutput(ns("method_usage_plot"), height = "450px"),
+                  type = 6,
+                  color = "#3c8dbc"
+                ),
                 hr(),
                 verbatimTextOutput(ns("sdma_summary"))
               ),
@@ -143,21 +153,25 @@ sdmaUI <- function(id) {
                 "Peclet vs Velocity",
                 br(),
                 p("Visualize switching points: HRM below threshold, secondary method above."),
-                plotOutput(ns("peclet_scatter_plot"), height = "400px")
-              ),
-
-              tabPanel(
-                "Time Series",
-                br(),
-                p("View the combined sDMA velocity time series."),
-                plotly::plotlyOutput(ns("sdma_timeseries"), height = "400px")
-              ),
-
-              tabPanel(
-                "Data Table",
-                br(),
-                DT::DTOutput(ns("sdma_table"))
+                shinycssloaders::withSpinner(
+                  plotOutput(ns("peclet_scatter_plot"), height = "600px"),
+                  type = 6,
+                  color = "#3c8dbc"
+                )
               )
+
+#              tabPanel(
+#                "Time Series",
+#                br(),
+#                p("View the combined sDMA velocity time series."),
+#                plotly::plotlyOutput(ns("sdma_timeseries"), height = "400px")
+#              ),
+
+#              tabPanel(
+#                "Data Table",
+#                br(),
+#                DT::DTOutput(ns("sdma_table"))
+#              )
             )
           ),
 
@@ -210,6 +224,105 @@ sdmaServer <- function(id, vh_calibrated, primary_method = reactive("HRM"), prob
         )
       } else {
         p(style = "color: #999;", "No secondary methods available")
+      }
+    })
+
+    # Heartwood warning output
+    output$heartwood_warning <- renderUI({
+      req(wood_properties(), probe_config())
+
+      # Validate probe/tree configuration to get tissue information
+      validation <- validate_probe_tree_config(
+        probe_config = probe_config(),
+        wood_properties = wood_properties()
+      )
+
+      # Check if inner sensor is in heartwood
+      if (!is.null(validation$inner_tissue) && validation$inner_tissue == "heartwood") {
+        box(
+          width = 12,
+          title = NULL,
+          status = "warning",
+          solidHeader = FALSE,
+
+          div(
+            style = "padding: 10px;",
+            p(
+              icon("exclamation-triangle", class = "fa-lg"),
+              strong(" Attention:"),
+              " Based on your sapwood depth and probe geometry, the",
+              strong(" Inner Sensor"),
+              " is located in the heartwood."
+            ),
+            tags$ul(
+              tags$li("Heartwood records zero flow and is not active in sap transport"),
+              tags$li("Inner sensor data does not require spacing correction or calibration"),
+              tags$li("Can be used as a continuous zero-flow reference")
+            )
+          )
+        )
+      } else {
+        NULL  # No warning if not in heartwood
+      }
+    })
+
+    # Calibration requirement warning output
+    output$calibration_warning <- renderUI({
+      # Check if calibration data is available
+      vh_data <- vh_calibrated()
+
+      # If no calibration data or it's empty, show warning
+      if (is.null(vh_data) || (is.data.frame(vh_data) && nrow(vh_data) == 0)) {
+        box(
+          width = 12,
+          title = NULL,
+          status = "danger",
+          solidHeader = FALSE,
+
+          div(
+            style = "padding: 10px;",
+            p(
+              icon("exclamation-circle", class = "fa-lg"),
+              strong(" Calibration Required"),
+              " - sDMA requires calibrated velocity data."
+            ),
+            tags$ul(
+              tags$li(strong("sDMA cannot proceed"), " without calibrated secondary methods (MHR, HRMXa, HRMXb, etc.)"),
+              tags$li("Please complete ", strong("Method Calibration (Tab 6a)"), " first"),
+              tags$li("Method calibration creates a unified dataset with all methods available for switching"),
+              tags$li(em("Note: If you only need HRM data, you can skip sDMA and proceed directly to flux conversion"))
+            )
+          )
+        )
+      } else {
+        # Check if secondary methods exist (not just HRM)
+        available_methods <- unique(vh_data$method)
+        secondary_methods <- setdiff(available_methods, "HRM")
+
+        if (length(secondary_methods) == 0) {
+          box(
+            width = 12,
+            title = NULL,
+            status = "warning",
+            solidHeader = FALSE,
+
+            div(
+              style = "padding: 10px;",
+              p(
+                icon("exclamation-triangle", class = "fa-lg"),
+                strong(" No Secondary Methods Available")
+              ),
+              tags$ul(
+                tags$li("Only HRM data is available in the calibrated dataset"),
+                tags$li("sDMA requires at least one secondary method (MHR, HRMXa, HRMXb, etc.)"),
+                tags$li("Please ensure secondary methods were calculated and calibrated in Tab 6a"),
+                tags$li(em("If you only need HRM, you can skip sDMA and proceed to flux conversion"))
+              )
+            )
+          )
+        } else {
+          NULL  # Calibration data exists and has secondary methods
+        }
       }
     })
 

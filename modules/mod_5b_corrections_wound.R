@@ -32,6 +32,9 @@ woundCorrectionUI <- function(id) {
           p(tags$small(em("Based on Burgess et al. (2001) and ICT International Appendix 23.1")))
         ),
 
+        # Heartwood warning (dynamic - shown only if inner sensor is in heartwood)
+        uiOutput(ns("heartwood_warning")),
+
         # Initial installation info
         box(
           width = 12,
@@ -175,7 +178,11 @@ woundCorrectionUI <- function(id) {
 
           conditionalPanel(
             condition = sprintf("output['%s']", ns("has_temporal_wound_tracking")),
-            plotly::plotlyOutput(ns("wound_diameter_plot"), height = "400px")
+            shinycssloaders::withSpinner(
+              plotly::plotlyOutput(ns("wound_diameter_plot"), height = "400px"),
+              type = 6,
+              color = "#3c8dbc"
+            )
           )
         ),
 
@@ -227,7 +234,11 @@ woundCorrectionUI <- function(id) {
                   )
                 ),
 
-                plotly::plotlyOutput(ns("wound_correction_comparison"), height = "500px")
+                shinycssloaders::withSpinner(
+                  plotly::plotlyOutput(ns("wound_correction_comparison"), height = "500px"),
+                  type = 6,
+                  color = "#3c8dbc"
+                )
               ),
 
               tabPanel(
@@ -300,6 +311,45 @@ woundCorrectionServer <- function(id,
       initial_date = NULL,
       initial_wound_mm = NULL
     )
+
+    # Heartwood warning output
+    output$heartwood_warning <- renderUI({
+      req(wood_properties(), probe_config())
+
+      # Validate probe/tree configuration to get tissue information
+      validation <- validate_probe_tree_config(
+        probe_config = probe_config(),
+        wood_properties = wood_properties()
+      )
+
+      # Check if inner sensor is in heartwood
+      if (!is.null(validation$inner_tissue) && validation$inner_tissue == "heartwood") {
+        box(
+          width = 12,
+          title = NULL,
+          status = "warning",
+          solidHeader = FALSE,
+
+          div(
+            style = "padding: 10px;",
+            p(
+              icon("exclamation-triangle", class = "fa-lg"),
+              strong(" Attention:"),
+              " Based on your sapwood depth and probe geometry, the",
+              strong(" Inner Sensor"),
+              " is located in the heartwood."
+            ),
+            tags$ul(
+              tags$li("Heartwood records zero flow and is not active in sap transport"),
+              tags$li("Inner sensor data does not require wound correction"),
+              tags$li("Can be used as a continuous zero-flow reference")
+            )
+          )
+        )
+      } else {
+        NULL  # No warning if not in heartwood
+      }
+    })
 
     # Calculate initial installation info when data loads
     observe({

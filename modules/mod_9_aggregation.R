@@ -51,16 +51,6 @@ aggregationUI <- function(id) {
 
           hr(),
 
-          h5("Sensor Position"),
-          checkboxGroupInput(
-            ns("sensor_position"),
-            NULL,
-            choices = c("Inner" = "inner", "Outer" = "outer"),
-            selected = c("inner", "outer")
-          ),
-
-          hr(),
-
           h5("Plot Type"),
           radioButtons(
             ns("plot_type"),
@@ -80,63 +70,6 @@ aggregationUI <- function(id) {
             "Calculate Aggregation",
             icon = icon("calculator"),
             class = "btn-primary btn-block"
-          )
-        ),
-
-        # Tree water use box
-        box(
-          width = NULL,
-          title = "Whole Tree Water Use",
-          status = "success",
-          solidHeader = TRUE,
-          collapsible = TRUE,
-          collapsed = FALSE,
-
-          helpText("Calculate tree-level water use from flux density and sapwood area"),
-
-          numericInput(
-            ns("sapwood_area"),
-            "Sapwood Area (cm²):",
-            value = 100,
-            min = 1,
-            max = 10000,
-            step = 10
-          ),
-
-          helpText("Or calculate from DBH and sapwood depth:"),
-
-          numericInput(
-            ns("dbh"),
-            "DBH (cm):",
-            value = NULL,
-            min = 1,
-            max = 200,
-            step = 1
-          ),
-
-          numericInput(
-            ns("sapwood_depth"),
-            "Sapwood Depth (cm):",
-            value = NULL,
-            min = 0.1,
-            max = 50,
-            step = 0.5
-          ),
-
-          actionButton(
-            ns("calculate_sapwood_area"),
-            "Calculate from DBH",
-            icon = icon("tree"),
-            class = "btn-success btn-block"
-          ),
-
-          hr(),
-
-          actionButton(
-            ns("calculate_water_use"),
-            "Calculate Tree Water Use",
-            icon = icon("droplet"),
-            class = "btn-success btn-block"
           )
         ),
 
@@ -171,22 +104,6 @@ aggregationUI <- function(id) {
           )
         ),
 
-        # Tree water use plot
-        box(
-          width = NULL,
-          title = "Whole Tree Water Use",
-          status = "success",
-          solidHeader = TRUE,
-          collapsible = TRUE,
-          collapsed = TRUE,
-
-          shinycssloaders::withSpinner(
-            plotly::plotlyOutput(ns("water_use_plot"), height = "500px"),
-            type = 6,
-            color = "#00a65a"
-          )
-        ),
-
         # Data table
         box(
           width = NULL,
@@ -206,21 +123,22 @@ aggregationUI <- function(id) {
 # Server ----
 aggregationServer <- function(id,
                                flux_density_data,
-                               code_tracker = NULL) {
+                               code_tracker = TRUE) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
     # Reactive: Aggregated data
-    aggregated_data <- eventReactive(input$calculate_aggregation, {
+    # Re-calculates when button clicked OR when aggregation settings change
+    aggregated_data <- reactive({
+      # Require button to be clicked at least once
+      req(input$calculate_aggregation > 0)
       req(flux_density_data())
 
-      data <- flux_density_data()
+      # Make reactive to these inputs so plot updates when changed
+      req(input$aggregation_period)
+      req(input$aggregation_function)
 
-      # Filter by sensor position
-      if (!is.null(input$sensor_position) && length(input$sensor_position) > 0) {
-        data <- data %>%
-          dplyr::filter(sensor_position %in% input$sensor_position)
-      }
+      data <- flux_density_data()
 
       # Determine aggregation period
       if (input$aggregation_period == "hourly") {
@@ -243,62 +161,27 @@ aggregationServer <- function(id,
                          "min" = min,
                          mean)
 
-      # Aggregate
-      aggregated <- data %>%
-        dplyr::group_by(period, sensor_position) %>%
-        dplyr::summarise(
-          flux_density = agg_func(flux_density, na.rm = TRUE),
-          n_points = dplyr::n(),
-          .groups = "drop"
-        )
+      # Aggregate across all sensors and methods
+      # Group by period and method_label if available
+      if ("method_label" %in% names(data)) {
+        aggregated <- data %>%
+          dplyr::group_by(period, method_label) %>%
+          dplyr::summarise(
+            flux_density = agg_func(Jv_cm3_cm2_hr, na.rm = TRUE),
+            n_points = dplyr::n(),
+            .groups = "drop"
+          )
+      } else {
+        aggregated <- data %>%
+          dplyr::group_by(period) %>%
+          dplyr::summarise(
+            flux_density = agg_func(Jv_cm3_cm2_hr, na.rm = TRUE),
+            n_points = dplyr::n(),
+            .groups = "drop"
+          )
+      }
 
       return(aggregated)
-    })
-
-    # Reactive: Sapwood area calculation
-    observeEvent(input$calculate_sapwood_area, {
-      req(input$dbh, input$sapwood_depth)
-
-      # Calculate sapwood area from DBH and sapwood depth
-      # Sapwood area = π × [(DBH/2)² - (DBH/2 - sapwood_depth)²]
-      r_outer <- input$dbh / 2
-      r_inner <- r_outer - input$sapwood_depth
-
-      sapwood_area <- pi * (r_outer^2 - r_inner^2)
-
-      updateNumericInput(session, "sapwood_area", value = round(sapwood_area, 2))
-
-      shinyWidgets::sendSweetAlert(
-        session = session,
-        title = "Sapwood Area Calculated",
-        text = sprintf("Sapwood area: %.2f cm²", sapwood_area),
-        type = "success"
-      )
-    })
-
-    # Reactive: Tree water use data
-    water_use_data <- eventReactive(input$calculate_water_use, {
-      req(aggregated_data(), input$sapwood_area)
-
-      data <- aggregated_data()
-      sapwood_area <- input$sapwood_area
-
-      # Calculate water use (L/period)
-      # Flux density is in g/cm²/hr
-      # Water use = flux_density × sapwood_area × time_period / 1000 (to convert g to L)
-
-      time_multiplier <- switch(input$aggregation_period,
-                                "hourly" = 1,
-                                "daily" = 24,
-                                "weekly" = 24 * 7,
-                                1)
-
-      water_use <- data %>%
-        dplyr::mutate(
-          water_use_L = (flux_density * sapwood_area * time_multiplier) / 1000
-        )
-
-      return(water_use)
     })
 
     # Aggregation plot
@@ -319,88 +202,96 @@ aggregationServer <- function(id,
       }
 
       # Create plot based on plot type
+      # Color by method_label if available
+      has_method_label <- "method_label" %in% names(data)
+
       if (input$plot_type == "timeseries") {
-        p <- plotly::plot_ly(data,
-                             x = ~period,
-                             y = ~flux_density,
-                             color = ~sensor_position,
-                             type = 'scatter',
-                             mode = 'lines+markers') %>%
+        if (has_method_label) {
+          p <- plotly::plot_ly(data,
+                               x = ~period,
+                               y = ~flux_density,
+                               color = ~method_label,
+                               type = 'scatter',
+                               mode = 'lines+markers')
+        } else {
+          p <- plotly::plot_ly(data,
+                               x = ~period,
+                               y = ~flux_density,
+                               type = 'scatter',
+                               mode = 'lines+markers',
+                               marker = list(color = 'steelblue'))
+        }
+
+        p <- p %>%
           plotly::layout(
             title = paste0(tools::toTitleCase(input$aggregation_period), " ",
                            tools::toTitleCase(input$aggregation_function),
                            " Flux Density"),
             xaxis = list(title = "Time Period"),
-            yaxis = list(title = "Flux Density (g/cm²/hr)"),
-            hovermode = 'x unified'
+            yaxis = list(title = "Flux Density (cm³/cm²/hr)"),
+            hovermode = 'x unified',
+            legend = list(orientation = "h", y = -0.15)
           )
       } else if (input$plot_type == "bar") {
-        p <- plotly::plot_ly(data,
-                             x = ~period,
-                             y = ~flux_density,
-                             color = ~sensor_position,
-                             type = 'bar') %>%
+        if (has_method_label) {
+          p <- plotly::plot_ly(data,
+                               x = ~period,
+                               y = ~flux_density,
+                               color = ~method_label,
+                               type = 'bar')
+        } else {
+          p <- plotly::plot_ly(data,
+                               x = ~period,
+                               y = ~flux_density,
+                               type = 'bar',
+                               marker = list(color = 'steelblue'))
+        }
+
+        p <- p %>%
           plotly::layout(
             title = paste0(tools::toTitleCase(input$aggregation_period), " ",
                            tools::toTitleCase(input$aggregation_function),
                            " Flux Density"),
             xaxis = list(title = "Time Period"),
-            yaxis = list(title = "Flux Density (g/cm²/hr)"),
-            barmode = 'group'
+            yaxis = list(title = "Flux Density (cm³/cm²/hr)"),
+            barmode = 'group',
+            legend = list(orientation = "h", y = -0.15)
           )
       } else {
-        # Heatmap
-        p <- plotly::plot_ly(
-          data,
-          x = ~period,
-          y = ~sensor_position,
-          z = ~flux_density,
-          type = 'heatmap',
-          colorscale = 'Viridis'
-        ) %>%
-          plotly::layout(
-            title = paste0(tools::toTitleCase(input$aggregation_period), " ",
-                           "Flux Density Heatmap"),
-            xaxis = list(title = "Time Period"),
-            yaxis = list(title = "Sensor Position")
-          )
-      }
-
-      return(p)
-    })
-
-    # Water use plot
-    output$water_use_plot <- plotly::renderPlotly({
-      req(water_use_data())
-
-      data <- water_use_data()
-
-      if (nrow(data) == 0) {
-        return(
-          plotly::plot_ly() %>%
+        # Heatmap - use method if available, otherwise just show flux_density over time
+        if (has_method_label) {
+          p <- plotly::plot_ly(
+            data,
+            x = ~period,
+            y = ~method_label,
+            z = ~flux_density,
+            type = 'heatmap',
+            colorscale = 'Viridis'
+          ) %>%
             plotly::layout(
-              title = "No data to display",
+              title = paste0(tools::toTitleCase(input$aggregation_period), " ",
+                             "Flux Density Heatmap"),
               xaxis = list(title = "Time Period"),
-              yaxis = list(title = "Water Use (L)")
+              yaxis = list(title = "Method")
             )
-        )
+        } else {
+          # Simplified heatmap for single method
+          p <- plotly::plot_ly(
+            data,
+            x = ~period,
+            y = 1,
+            z = ~flux_density,
+            type = 'heatmap',
+            colorscale = 'Viridis'
+          ) %>%
+            plotly::layout(
+              title = paste0(tools::toTitleCase(input$aggregation_period), " ",
+                             "Flux Density Over Time"),
+              xaxis = list(title = "Time Period"),
+              yaxis = list(title = "", showticklabels = FALSE)
+            )
+        }
       }
-
-      p <- plotly::plot_ly(data,
-                           x = ~period,
-                           y = ~water_use_L,
-                           color = ~sensor_position,
-                           type = 'scatter',
-                           mode = 'lines+markers',
-                           fill = 'tozeroy') %>%
-        plotly::layout(
-          title = paste0("Whole Tree Water Use (",
-                         tools::toTitleCase(input$aggregation_period), ")"),
-          xaxis = list(title = "Time Period"),
-          yaxis = list(title = paste0("Water Use (L/",
-                                       input$aggregation_period, ")")),
-          hovermode = 'x unified'
-        )
 
       return(p)
     })
@@ -435,21 +326,6 @@ aggregationServer <- function(id,
                            "<tr><td><strong>Max Flux Density</strong></td><td>",
                            sprintf("%.3f g/cm²/hr", max_flux), "</td></tr>")
 
-      # If water use is calculated, add those stats
-      if (!is.null(water_use_data()) && nrow(water_use_data()) > 0) {
-        wu_data <- water_use_data()
-        total_water_use <- sum(wu_data$water_use_L, na.rm = TRUE)
-        mean_water_use <- mean(wu_data$water_use_L, na.rm = TRUE)
-
-        stats_html <- paste0(stats_html,
-                             "<tr><td colspan='2'><hr></td></tr>",
-                             "<tr><td><strong>Total Water Use</strong></td><td>",
-                             sprintf("%.2f L", total_water_use), "</td></tr>",
-                             "<tr><td><strong>Mean Water Use</strong></td><td>",
-                             sprintf("%.2f L/%s", mean_water_use, input$aggregation_period),
-                             "</td></tr>")
-      }
-
       stats_html <- paste0(stats_html, "</tbody></table>")
 
       HTML(stats_html)
@@ -460,10 +336,6 @@ aggregationServer <- function(id,
       req(aggregated_data())
 
       data <- aggregated_data()
-
-      if (!is.null(water_use_data()) && nrow(water_use_data()) > 0) {
-        data <- water_use_data()
-      }
 
       DT::datatable(
         data,
@@ -481,7 +353,7 @@ aggregationServer <- function(id,
 
     # Code generation
     observe({
-      if (!is.null(code_tracker)) {
+      if (!isTRUE(code_tracker)) {
         if (!is.null(input$aggregation_period) && !is.null(input$aggregation_function)) {
           code_tracker$add_step(
             step_name = "Temporal Aggregation",
@@ -489,16 +361,6 @@ aggregationServer <- function(id,
               "# Aggregate flux density data (%s %s)",
               input$aggregation_period,
               input$aggregation_function
-            )
-          )
-        }
-
-        if (!is.null(input$calculate_water_use) && input$calculate_water_use > 0) {
-          code_tracker$add_step(
-            step_name = "Tree Water Use",
-            code = sprintf(
-              "# Calculate whole tree water use (sapwood area: %.2f cm²)",
-              input$sapwood_area
             )
           )
         }

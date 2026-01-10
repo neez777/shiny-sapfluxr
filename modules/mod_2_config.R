@@ -181,11 +181,31 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
           cat("DEBUG: Syncing tool config to wood_properties()
 ")
           wood_properties(tool_config)
+
+          # Track code generation
+          if (!isTRUE(code_tracker)) {
+            code_tracker$add_step(
+              step_name = "Configure Wood Properties",
+              code = sprintf('# Load wood properties\nwood_properties <- sapfluxr::load_wood_properties("%s")',
+                           if (!is.null(tool_config$config_name)) tool_config$config_name else "custom"),
+              description = sprintf("Configured wood properties: %s",
+                                   if (!is.null(tool_config$config_name)) tool_config$config_name else "custom")
+            )
+          }
         }
       } else if (input$wood_mode == "builtin") {
         # Load default builtin config
         builtin_config <- sapfluxr::load_wood_properties("generic_sw")
         wood_properties(builtin_config)
+
+        # Track code generation
+        if (!isTRUE(code_tracker)) {
+          code_tracker$add_step(
+            step_name = "Configure Wood Properties",
+            code = 'wood_properties <- sapfluxr::load_wood_properties("generic_sw")',
+            description = "Using default generic softwood properties"
+          )
+        }
       }
     })
 
@@ -261,6 +281,16 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
         tryCatch({
           config <- sapfluxr::load_probe_config(input$probe_yaml_builtin)
           probe_config(config)
+
+          # Track code generation
+          if (!isTRUE(code_tracker)) {
+            code_tracker$add_step(
+              step_name = "Configure Probe",
+              code = sprintf('# Load probe configuration\nprobe_config <- sapfluxr::load_probe_config("%s")',
+                           input$probe_yaml_builtin),
+              description = sprintf("Using %s probe configuration", input$probe_yaml_builtin)
+            )
+          }
         }, error = function(e) {
           notify_error(
             session = session,
@@ -275,6 +305,16 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
         tryCatch({
           config <- sapfluxr::load_probe_config(input$probe_yaml_upload$datapath)
           probe_config(config)
+
+          # Track code generation
+          if (!isTRUE(code_tracker)) {
+            code_tracker$add_step(
+              step_name = "Configure Probe",
+              code = sprintf('# Load custom probe configuration\nprobe_config <- sapfluxr::load_probe_config("%s")',
+                           input$probe_yaml_upload$name),
+              description = sprintf("Uploaded custom probe configuration: %s", input$probe_yaml_upload$name)
+            )
+          }
 
           notify_success(
             session = session,
