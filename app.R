@@ -697,7 +697,8 @@ server <- function(input, output, session) {
   # Module: Aggregation (Tab 9)
   aggregationServer(
     "aggregation",
-    flux_density_data = reactive(rv$flux_data),
+    flux_density_data = flux_results$flux_data,
+    tree_water_use_data = flux_results$tree_water_use_data,
     code_tracker = code_tracker
   )
 

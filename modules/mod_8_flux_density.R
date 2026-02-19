@@ -898,18 +898,18 @@ fluxDensityServer <- function(id,
           dplyr::summarise(
             n = dplyr::n(),
             mean_Q = mean(Q_L_hr, na.rm = TRUE),
-            total_daily = sum(Q_L_day, na.rm = TRUE),
+            mean_daily = mean(Q_L_hr, na.rm = TRUE) * 24,  # Mean daily water use (L/day)
             .groups = "drop"
           )
 
         method_text <- paste0(
           "\nMethod Breakdown:\n",
           paste(
-            sprintf("  %s: %d points, mean = %.2f L/hr, total = %.1f L/day",
+            sprintf("  %s: %d points, mean = %.2f L/hr, mean daily = %.1f L/day",
                     method_summary$method_label,
                     method_summary$n,
                     method_summary$mean_Q,
-                    method_summary$total_daily),
+                    method_summary$mean_daily),
             collapse = "\n"
           ),
           "\n"
@@ -933,7 +933,7 @@ fluxDensityServer <- function(id,
           "\nOverall Water Use Statistics:\n",
           "  Mean: %.3f L/hr\n",
           "  Median: %.3f L/hr\n",
-          "  Total Daily: %.2f L/day\n",
+          "  Mean Daily Water Use: %.2f L/day\n",
           "  Min: %.3f L/hr\n",
           "  Max: %.3f L/hr"
         ),
@@ -948,7 +948,7 @@ fluxDensityServer <- function(id,
         method_text,
         mean(q_data$Q_L_hr, na.rm = TRUE),
         median(q_data$Q_L_hr, na.rm = TRUE),
-        sum(q_data$Q_L_day, na.rm = TRUE),
+        mean(q_data$Q_L_hr, na.rm = TRUE) * 24,  # Mean daily water use (L/day)
         min(q_data$Q_L_hr, na.rm = TRUE),
         max(q_data$Q_L_hr, na.rm = TRUE)
       )

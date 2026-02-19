@@ -770,7 +770,10 @@ vh_sdma <- vh_sdma_result %%>%%
 
         if (nrow(combined_data) == 0) {
           return(plotly::plot_ly() %>%
-                   plotly::layout(title = "No data available for plotting"))
+                   plotly::layout(
+                     title = "No data available for plotting",
+                     uirevision = "sdma_timeseries_zoom"
+                   ))
         }
 
         # Downsample if too many points
@@ -835,7 +838,8 @@ vh_sdma <- vh_sdma_result %%>%%
             yaxis = list(title = "Velocity (cm/hr)", showgrid = TRUE, gridcolor = "lightgray"),
             hovermode = "closest",
             legend = list(orientation = "v", x = 1.02, y = 1, xanchor = "left"),
-            margin = list(l = 70, r = 200, t = 60, b = 60)
+            margin = list(l = 70, r = 200, t = 60, b = 60),
+            uirevision = "sdma_timeseries_zoom"
           )
 
         return(p)
@@ -845,7 +849,8 @@ vh_sdma <- vh_sdma_result %%>%%
           plotly::layout(
             title = paste("Error creating plot:", e$message),
             xaxis = list(title = "Datetime"),
-            yaxis = list(title = "Velocity (cm/hr)")
+            yaxis = list(title = "Velocity (cm/hr)"),
+            uirevision = "sdma_timeseries_zoom"
           )
       })
     })

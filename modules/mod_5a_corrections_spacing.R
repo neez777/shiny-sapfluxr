@@ -1949,7 +1949,9 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
           message(sprintf("=== PLOT RENDER COMPLETE: %.2f seconds ===", elapsed))
 
           # Register click event to avoid warnings
-          p <- p %>% plotly::event_register("plotly_click")
+          p <- p %>% 
+            plotly::layout(uirevision = 'changepoint_plot_zoom') %>%
+            plotly::event_register("plotly_click")
 
           p
 
@@ -2446,7 +2448,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
           yaxis = list(title = "Vh (cm/hr)", showgrid = TRUE, gridcolor = "lightgray"),
           legend = list(x = 0.02, y = 0.98),
           hovermode = 'closest',
-          uirevision = 'spacing_plot'
+          uirevision = 'spacing_comparison_zoom'
         )
 
       p

@@ -837,7 +837,8 @@ woundCorrectionServer <- function(id,
           yaxis = list(title = "Wound Diameter (mm)", showgrid = TRUE, gridcolor = "lightgray"),
           hovermode = "closest",
           margin = list(l = 60, r = 40, t = 60, b = 60),
-          showlegend = TRUE
+          showlegend = TRUE,
+          uirevision = "wound_diameter_zoom"
         )
 
       return(fig)
@@ -921,7 +922,8 @@ woundCorrectionServer <- function(id,
                  plotly::layout(
                    title = paste("No data for", sensor, "sensor"),
                    xaxis = list(title = "Date"),
-                   yaxis = list(title = "Velocity (cm/hr)")
+                   yaxis = list(title = "Velocity (cm/hr)"),
+                   uirevision = "wound_comparison_zoom"
                  ))
       }
 
@@ -1006,7 +1008,8 @@ woundCorrectionServer <- function(id,
           yaxis = list(title = "Velocity (cm/hr)", showgrid = TRUE, gridcolor = "lightgray"),
           hovermode = "closest",
           legend = list(x = 0.02, y = 0.98),
-          margin = list(l = 60, r = 40, t = 60, b = 60)
+          margin = list(l = 60, r = 40, t = 60, b = 60),
+          uirevision = "wound_comparison_zoom"
         )
 
       return(p)

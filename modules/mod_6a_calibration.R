@@ -595,11 +595,11 @@ calibrationServer <- function(id, vh_corrected, wood_properties, probe_config = 
                                  hjust = 1.1, vjust = -0.3, size = 3.5, color = "black") +
 
                 ggplot2::labs(
-                  title = paste("Method Comparison:", secondary_method, "vs", primary_method),
-                  subtitle = sprintf("Manual Breakpoint at %.1f cm/hr (R² = %.3f)",
-                                    manual_threshold, r2_manual),
-                  x = paste(primary_method, "Velocity (cm/hr)"),
-                  y = paste(secondary_method, "Velocity (cm/hr)")
+                  title = sprintf("Segmented Regression: %s vs %s (%s sensor)",
+                                 secondary_method, primary_method, toupper(sensor_local)),
+                  subtitle = sprintf("Manual threshold: %.1f cm/hr", manual_threshold),
+                  x = sprintf("%s Velocity (cm/hr)", primary_method),
+                  y = sprintf("%s Velocity (cm/hr)", secondary_method)
                 ) +
 
                 ggplot2::theme_classic() +
@@ -609,7 +609,7 @@ calibrationServer <- function(id, vh_corrected, wood_properties, probe_config = 
                   legend.position = "bottom"
                 )
 
-              p
+              return(p)
             })
           })
 
@@ -690,7 +690,6 @@ calibrationServer <- function(id, vh_corrected, wood_properties, probe_config = 
                 ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
                 ggplot2::geom_vline(xintercept = manual_threshold, color = "darkgreen",
                                     linetype = "dashed", linewidth = 1) +
-                ggplot2::geom_smooth(method = "loess", se = TRUE, color = "blue", alpha = 0.2) +
                 ggplot2::annotate("text",
                                  x = manual_threshold,
                                  y = max(plot_data$residuals, na.rm = TRUE),
@@ -709,7 +708,7 @@ calibrationServer <- function(id, vh_corrected, wood_properties, probe_config = 
                   legend.position = "bottom"
                 )
 
-              p
+              return(p)
             })
           })
         })

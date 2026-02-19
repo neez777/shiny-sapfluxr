@@ -371,7 +371,8 @@ fluxValidationServer <- function(id,
               plotly::layout(
                 title = "No data to display - please check your selections",
                 xaxis = list(title = "Datetime"),
-                yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)")
+                yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)"),
+                uirevision = "flux_timeseries_zoom"
               )
           )
         }
@@ -456,7 +457,7 @@ fluxValidationServer <- function(id,
             showlegend = input$show_legend,
             legend = list(orientation = "h", x = 0.5, y = -0.15, xanchor = "center", yanchor = "top"),
             margin = list(l = 70, r = 40, t = 60, b = 120),
-            uirevision = "static"
+            uirevision = "flux_timeseries_zoom"
           )
 
         return(fig)
@@ -466,7 +467,8 @@ fluxValidationServer <- function(id,
           plotly::layout(
             title = paste("Error:", e$message),
             xaxis = list(title = "Datetime"),
-            yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)")
+            yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)"),
+            uirevision = "flux_timeseries_zoom"
           )
       })
     })
@@ -482,7 +484,8 @@ fluxValidationServer <- function(id,
               plotly::layout(
                 title = "No tree water use data available",
                 xaxis = list(title = "Datetime"),
-                yaxis = list(title = "Water Use (L/hr)")
+                yaxis = list(title = "Water Use (L/hr)"),
+                uirevision = "water_use_hourly_zoom"
               )
           )
         }
@@ -550,7 +553,7 @@ fluxValidationServer <- function(id,
             showlegend = input$show_legend,
             legend = list(orientation = "h", x = 0.5, y = -0.15, xanchor = "center", yanchor = "top"),
             margin = list(l = 70, r = 40, t = 60, b = 120),
-            uirevision = "static"
+            uirevision = "water_use_hourly_zoom"
           )
 
         return(fig)
@@ -560,7 +563,8 @@ fluxValidationServer <- function(id,
           plotly::layout(
             title = paste("Error:", e$message),
             xaxis = list(title = "Datetime"),
-            yaxis = list(title = "Water Use (L/hr)")
+            yaxis = list(title = "Water Use (L/hr)"),
+            uirevision = "water_use_hourly_zoom"
           )
       })
     })
@@ -576,7 +580,8 @@ fluxValidationServer <- function(id,
               plotly::layout(
                 title = "No tree water use data available",
                 xaxis = list(title = "Date"),
-                yaxis = list(title = "Daily Water Use (L/day)")
+                yaxis = list(title = "Daily Water Use (L/day)"),
+                uirevision = "water_use_daily_zoom"
               )
           )
         }
@@ -637,7 +642,7 @@ fluxValidationServer <- function(id,
             showlegend = input$show_legend,
             legend = list(orientation = "h", x = 0.5, y = -0.15, xanchor = "center", yanchor = "top"),
             margin = list(l = 70, r = 40, t = 60, b = 120),
-            uirevision = "static"
+            uirevision = "water_use_daily_zoom"
           )
 
         return(fig)
@@ -647,7 +652,8 @@ fluxValidationServer <- function(id,
           plotly::layout(
             title = paste("Error:", e$message),
             xaxis = list(title = "Date"),
-            yaxis = list(title = "Daily Water Use (L/day)")
+            yaxis = list(title = "Daily Water Use (L/day)"),
+            uirevision = "water_use_daily_zoom"
           )
       })
     })
@@ -663,7 +669,8 @@ fluxValidationServer <- function(id,
               plotly::layout(
                 title = "No data to display",
                 xaxis = list(title = "Heat Pulse Velocity (cm/hr)"),
-                yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)")
+                yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)"),
+                uirevision = "velocity_flux_zoom"
               )
           )
         }
@@ -687,7 +694,8 @@ fluxValidationServer <- function(id,
               plotly::layout(
                 title = "Velocity column not found in data",
                 xaxis = list(title = "Heat Pulse Velocity (cm/hr)"),
-                yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)")
+                yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)"),
+                uirevision = "velocity_flux_zoom"
               )
           )
         }
@@ -735,7 +743,8 @@ fluxValidationServer <- function(id,
             hovermode = "closest",
             showlegend = input$show_legend,
             legend = list(x = 0.02, y = 0.98),
-            margin = list(l = 70, r = 40, t = 60, b = 60)
+            margin = list(l = 70, r = 40, t = 60, b = 60),
+            uirevision = "velocity_flux_zoom"
           )
 
         return(fig)
@@ -745,7 +754,8 @@ fluxValidationServer <- function(id,
           plotly::layout(
             title = paste("Error:", e$message),
             xaxis = list(title = "Heat Pulse Velocity (cm/hr)"),
-            yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)")
+            yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)"),
+            uirevision = "velocity_flux_zoom"
           )
       })
     })
@@ -761,7 +771,8 @@ fluxValidationServer <- function(id,
               plotly::layout(
                 title = "No data to display",
                 xaxis = list(title = "Date"),
-                yaxis = list(title = "Daily Flux (cm³/cm²/day)")
+                yaxis = list(title = "Daily Flux (cm³/cm²/day)"),
+                uirevision = "daily_flux_zoom"
               )
           )
         }
@@ -812,7 +823,8 @@ fluxValidationServer <- function(id,
             barmode = "group",
             showlegend = input$show_legend,
             legend = list(orientation = "h", x = 0.5, y = -0.15, xanchor = "center", yanchor = "top"),
-            margin = list(l = 70, r = 40, t = 60, b = 100)
+            margin = list(l = 70, r = 40, t = 60, b = 100),
+            uirevision = "daily_flux_zoom"
           )
 
         return(fig)
@@ -822,7 +834,8 @@ fluxValidationServer <- function(id,
           plotly::layout(
             title = paste("Error:", e$message),
             xaxis = list(title = "Date"),
-            yaxis = list(title = "Daily Flux (cm³/cm²/day)")
+            yaxis = list(title = "Daily Flux (cm³/cm²/day)"),
+            uirevision = "daily_flux_zoom"
           )
       })
     })

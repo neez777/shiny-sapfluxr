@@ -66,9 +66,9 @@ CodeTracker <- R6::R6Class(
         # Step header
         script <- c(
           script,
-          paste0("# ", rep("=", 70), collapse = ""),
+          paste0("#", rep("=", 50), collapse = ""),
           paste0("# Step ", step$number, ": ", step$name),
-          paste0("# ", rep("=", 70), collapse = "")
+          paste0("#", rep("=", 50), collapse = "")
         )
 
         # Description if provided
@@ -87,9 +87,9 @@ CodeTracker <- R6::R6Class(
       # Footer
       script <- c(
         script,
-        paste0("# ", rep("=", 70), collapse = ""),
+        paste0("#", rep("=", 50), collapse = ""),
         "# Session Information",
-        paste0("# ", rep("=", 70), collapse = ""),
+        paste0("#", rep("=", 50), collapse = ""),
         "# R session info for reproducibility",
         "",
         "sessionInfo()",
@@ -255,7 +255,7 @@ codeGenerationServer <- function(id) {
 
     # Initialize code tracker
     tracker <- CodeTracker$new()
-    
+
     # Reactive trigger to force UI updates when R6 object changes
     trigger <- reactiveVal(0)
 

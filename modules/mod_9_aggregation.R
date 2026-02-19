@@ -21,6 +21,19 @@ aggregationUI <- function(id) {
           collapsible = TRUE,
           collapsed = FALSE,
 
+          h5("Data Type"),
+          selectInput(
+            ns("data_type"),
+            "Data to Aggregate:",
+            choices = c(
+              "Flux Density" = "flux_density",
+              "Tree Water Use" = "water_use"
+            ),
+            selected = "flux_density"
+          ),
+
+          hr(),
+
           h5("Temporal Aggregation"),
           selectInput(
             ns("aggregation_period"),
@@ -90,10 +103,10 @@ aggregationUI <- function(id) {
       column(
         width = 9,
 
-        # Aggregated flux density plot
+        # Aggregated data plot
         box(
           width = NULL,
-          title = "Aggregated Flux Density",
+          title = "Aggregated Data",
           status = "primary",
           solidHeader = TRUE,
 
@@ -123,6 +136,7 @@ aggregationUI <- function(id) {
 # Server ----
 aggregationServer <- function(id,
                                flux_density_data,
+                               tree_water_use_data = NULL,
                                code_tracker = TRUE) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
@@ -132,13 +146,23 @@ aggregationServer <- function(id,
     aggregated_data <- reactive({
       # Require button to be clicked at least once
       req(input$calculate_aggregation > 0)
-      req(flux_density_data())
+      req(input$data_type)
 
       # Make reactive to these inputs so plot updates when changed
       req(input$aggregation_period)
       req(input$aggregation_function)
 
-      data <- flux_density_data()
+      # Get appropriate data based on data_type
+      if (input$data_type == "flux_density") {
+        req(flux_density_data())
+        data <- flux_density_data()
+        value_col <- "Jv_cm3_cm2_hr"
+      } else {
+        # water_use
+        req(tree_water_use_data())
+        data <- tree_water_use_data()
+        value_col <- "Q_L_hr"
+      }
 
       # Determine aggregation period
       if (input$aggregation_period == "hourly") {
@@ -167,7 +191,7 @@ aggregationServer <- function(id,
         aggregated <- data %>%
           dplyr::group_by(period, method_label) %>%
           dplyr::summarise(
-            flux_density = agg_func(Jv_cm3_cm2_hr, na.rm = TRUE),
+            aggregated_value = agg_func(.data[[value_col]], na.rm = TRUE),
             n_points = dplyr::n(),
             .groups = "drop"
           )
@@ -175,11 +199,15 @@ aggregationServer <- function(id,
         aggregated <- data %>%
           dplyr::group_by(period) %>%
           dplyr::summarise(
-            flux_density = agg_func(Jv_cm3_cm2_hr, na.rm = TRUE),
+            aggregated_value = agg_func(.data[[value_col]], na.rm = TRUE),
             n_points = dplyr::n(),
             .groups = "drop"
           )
       }
+
+      # Add data type attribute for plotting
+      attr(aggregated, "data_type") <- input$data_type
+      attr(aggregated, "value_col") <- value_col
 
       return(aggregated)
     })
@@ -189,6 +217,16 @@ aggregationServer <- function(id,
       req(aggregated_data())
 
       data <- aggregated_data()
+      data_type <- attr(data, "data_type")
+
+      # Set labels based on data type
+      if (data_type == "water_use") {
+        data_label <- "Water Use"
+        y_label <- "Water Use (L/hr)"
+      } else {
+        data_label <- "Flux Density"
+        y_label <- "Flux Density (cm³/cm²/hr)"
+      }
 
       if (nrow(data) == 0) {
         return(
@@ -196,7 +234,8 @@ aggregationServer <- function(id,
             plotly::layout(
               title = "No data to display",
               xaxis = list(title = "Time Period"),
-              yaxis = list(title = "Flux Density (g/cm²/hr)")
+              yaxis = list(title = y_label),
+              uirevision = "aggregation_zoom"
             )
         )
       }
@@ -209,14 +248,14 @@ aggregationServer <- function(id,
         if (has_method_label) {
           p <- plotly::plot_ly(data,
                                x = ~period,
-                               y = ~flux_density,
+                               y = ~aggregated_value,
                                color = ~method_label,
                                type = 'scatter',
                                mode = 'lines+markers')
         } else {
           p <- plotly::plot_ly(data,
                                x = ~period,
-                               y = ~flux_density,
+                               y = ~aggregated_value,
                                type = 'scatter',
                                mode = 'lines+markers',
                                marker = list(color = 'steelblue'))
@@ -226,23 +265,24 @@ aggregationServer <- function(id,
           plotly::layout(
             title = paste0(tools::toTitleCase(input$aggregation_period), " ",
                            tools::toTitleCase(input$aggregation_function),
-                           " Flux Density"),
+                           " ", data_label),
             xaxis = list(title = "Time Period"),
-            yaxis = list(title = "Flux Density (cm³/cm²/hr)"),
+            yaxis = list(title = y_label),
             hovermode = 'x unified',
-            legend = list(orientation = "h", y = -0.15)
+            legend = list(orientation = "h", y = -0.15),
+            uirevision = "aggregation_zoom"
           )
       } else if (input$plot_type == "bar") {
         if (has_method_label) {
           p <- plotly::plot_ly(data,
                                x = ~period,
-                               y = ~flux_density,
+                               y = ~aggregated_value,
                                color = ~method_label,
                                type = 'bar')
         } else {
           p <- plotly::plot_ly(data,
                                x = ~period,
-                               y = ~flux_density,
+                               y = ~aggregated_value,
                                type = 'bar',
                                marker = list(color = 'steelblue'))
         }
@@ -251,28 +291,30 @@ aggregationServer <- function(id,
           plotly::layout(
             title = paste0(tools::toTitleCase(input$aggregation_period), " ",
                            tools::toTitleCase(input$aggregation_function),
-                           " Flux Density"),
+                           " ", data_label),
             xaxis = list(title = "Time Period"),
-            yaxis = list(title = "Flux Density (cm³/cm²/hr)"),
+            yaxis = list(title = y_label),
             barmode = 'group',
-            legend = list(orientation = "h", y = -0.15)
+            legend = list(orientation = "h", y = -0.15),
+            uirevision = "aggregation_zoom"
           )
       } else {
-        # Heatmap - use method if available, otherwise just show flux_density over time
+        # Heatmap - use method if available, otherwise just show aggregated_value over time
         if (has_method_label) {
           p <- plotly::plot_ly(
             data,
             x = ~period,
             y = ~method_label,
-            z = ~flux_density,
+            z = ~aggregated_value,
             type = 'heatmap',
             colorscale = 'Viridis'
           ) %>%
             plotly::layout(
               title = paste0(tools::toTitleCase(input$aggregation_period), " ",
-                             "Flux Density Heatmap"),
+                             data_label, " Heatmap"),
               xaxis = list(title = "Time Period"),
-              yaxis = list(title = "Method")
+              yaxis = list(title = "Method"),
+              uirevision = "aggregation_zoom"
             )
         } else {
           # Simplified heatmap for single method
@@ -280,15 +322,16 @@ aggregationServer <- function(id,
             data,
             x = ~period,
             y = 1,
-            z = ~flux_density,
+            z = ~aggregated_value,
             type = 'heatmap',
             colorscale = 'Viridis'
           ) %>%
             plotly::layout(
               title = paste0(tools::toTitleCase(input$aggregation_period), " ",
-                             "Flux Density Over Time"),
+                             data_label, " Over Time"),
               xaxis = list(title = "Time Period"),
-              yaxis = list(title = "", showticklabels = FALSE)
+              yaxis = list(title = "", showticklabels = FALSE),
+              uirevision = "aggregation_zoom"
             )
         }
       }
@@ -301,6 +344,16 @@ aggregationServer <- function(id,
       req(aggregated_data())
 
       data <- aggregated_data()
+      data_type <- attr(data, "data_type")
+
+      # Set labels and units based on data type
+      if (data_type == "water_use") {
+        data_label <- "Water Use"
+        unit_label <- "L/hr"
+      } else {
+        data_label <- "Flux Density"
+        unit_label <- "cm³/cm²/hr"
+      }
 
       stats_html <- "<table style='width:100%; font-size:0.9em;'>"
       stats_html <- paste0(stats_html, "<thead><tr>",
@@ -310,21 +363,21 @@ aggregationServer <- function(id,
 
       # Calculate summary statistics
       total_periods <- nrow(data)
-      mean_flux <- mean(data$flux_density, na.rm = TRUE)
-      median_flux <- median(data$flux_density, na.rm = TRUE)
-      min_flux <- min(data$flux_density, na.rm = TRUE)
-      max_flux <- max(data$flux_density, na.rm = TRUE)
+      mean_val <- mean(data$aggregated_value, na.rm = TRUE)
+      median_val <- median(data$aggregated_value, na.rm = TRUE)
+      min_val <- min(data$aggregated_value, na.rm = TRUE)
+      max_val <- max(data$aggregated_value, na.rm = TRUE)
 
       stats_html <- paste0(stats_html,
                            "<tr><td><strong>Total Periods</strong></td><td>", total_periods, "</td></tr>",
-                           "<tr><td><strong>Mean Flux Density</strong></td><td>",
-                           sprintf("%.3f g/cm²/hr", mean_flux), "</td></tr>",
-                           "<tr><td><strong>Median Flux Density</strong></td><td>",
-                           sprintf("%.3f g/cm²/hr", median_flux), "</td></tr>",
-                           "<tr><td><strong>Min Flux Density</strong></td><td>",
-                           sprintf("%.3f g/cm²/hr", min_flux), "</td></tr>",
-                           "<tr><td><strong>Max Flux Density</strong></td><td>",
-                           sprintf("%.3f g/cm²/hr", max_flux), "</td></tr>")
+                           "<tr><td><strong>Mean ", data_label, "</strong></td><td>",
+                           sprintf("%.3f %s", mean_val, unit_label), "</td></tr>",
+                           "<tr><td><strong>Median ", data_label, "</strong></td><td>",
+                           sprintf("%.3f %s", median_val, unit_label), "</td></tr>",
+                           "<tr><td><strong>Min ", data_label, "</strong></td><td>",
+                           sprintf("%.3f %s", min_val, unit_label), "</td></tr>",
+                           "<tr><td><strong>Max ", data_label, "</strong></td><td>",
+                           sprintf("%.3f %s", max_val, unit_label), "</td></tr>")
 
       stats_html <- paste0(stats_html, "</tbody></table>")
 
@@ -348,17 +401,23 @@ aggregationServer <- function(id,
         extensions = 'Buttons',
         rownames = FALSE
       ) %>%
-        DT::formatRound(columns = c("flux_density"), digits = 4)
+        DT::formatRound(columns = c("aggregated_value"), digits = 4)
     })
 
     # Code generation
     observe({
       if (!isTRUE(code_tracker)) {
-        if (!is.null(input$aggregation_period) && !is.null(input$aggregation_function)) {
+        if (!is.null(input$aggregation_period) &&
+            !is.null(input$aggregation_function) &&
+            !is.null(input$data_type)) {
+
+          data_label <- if (input$data_type == "water_use") "water use" else "flux density"
+
           code_tracker$add_step(
             step_name = "Temporal Aggregation",
             code = sprintf(
-              "# Aggregate flux density data (%s %s)",
+              "# Aggregate %s data (%s %s)",
+              data_label,
               input$aggregation_period,
               input$aggregation_function
             )
