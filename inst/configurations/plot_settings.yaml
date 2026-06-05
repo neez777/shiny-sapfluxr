@@ -1,0 +1,59 @@
+methods:
+  HRM:
+    outer: '#1f77b4'
+    inner: '#aec7e8'
+    raw_width: 1
+    raw_style: solid
+    corrected_width: 0.7
+    corrected_style: solid
+  MHR:
+    outer: '#ff7f0e'
+    inner: '#ffbb78'
+    raw_width: 1
+    raw_style: solid
+    corrected_width: 0.7
+    corrected_style: solid
+  Tmax_Klu:
+    outer: '#2ca02c'
+    inner: '#98df8a'
+    raw_width: 1
+    raw_style: solid
+    corrected_width: 0.7
+    corrected_style: solid
+  Tmax_Coh:
+    outer: '#d62728'
+    inner: '#ff9896'
+    raw_width: 1
+    raw_style: solid
+    corrected_width: 0.7
+    corrected_style: solid
+  sDMA:Tmax_Klu:
+    outer: '#9467bd'
+    inner: '#c5b0d5'
+    raw_width: 1
+    raw_style: solid
+    corrected_width: 0.7
+    corrected_style: solid
+  sDMA:MHR:
+    outer: '#e377c2'
+    inner: '#f7b6d2'
+    raw_width: 1
+    raw_style: solid
+    corrected_width: 0.7
+    corrected_style: solid
+  sDMA:Tmax_Coh:
+    outer: '#8c564b'
+    inner: '#c49c94'
+    raw_width: 1
+    raw_style: solid
+    corrected_width: 0.7
+    corrected_style: solid
+special_traces:
+  vpd:
+    color: '#000000'
+    width: 1
+    dash: dot
+  peclet:
+    color: '#666666'
+    width: 1
+    dash: dot
