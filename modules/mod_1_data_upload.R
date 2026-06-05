@@ -22,7 +22,17 @@ dataUploadUI <- function(id) {
         placeholder = "No file selected"
       ),
       p(class = "help-text",
-        "Supported formats: ICT JSON, CSV, Legacy text files (.txt, .csv, .json, .dat)")
+        "Supported formats: ICT JSON, CSV, Legacy text files (.txt, .csv, .json, .dat)"),
+      tags$div(
+        style = "margin-top: 10px;",
+        tags$span(class = "help-text", "No data of your own? "),
+        actionButton(
+          ns("load_example"),
+          label = "Load Example Data",
+          icon = icon("flask"),
+          class = "btn-info btn-sm"
+        )
+      )
     ),
 
     # Upload status
@@ -40,18 +50,18 @@ dataUploadServer <- function(id, code_tracker = TRUE) {
     # Reactive to store uploaded data
     heat_pulse_data <- reactiveVal(NULL)
 
-    # Observe file upload
-    observeEvent(input$file, {
-      req(input$file)
+    # Shared import routine used by both the file upload and the example loader.
+    # code_path_expr is the R expression (as text) inserted into the generated
+    # reproducibility script, so the example produces a runnable system.file() call.
+    import_and_store <- function(path, display_name, code_path_expr) {
 
-      # Clear previous data immediately when new file is selected
+      # Clear previous data immediately
       heat_pulse_data(NULL)
 
       tryCatch({
         # Debug: print file info
-        cat("Original filename:", input$file$name, "\n")
-        cat("Temp file path:", input$file$datapath, "\n")
-        cat("File size:", input$file$size, "bytes\n")
+        cat("Loading file:", display_name, "\n")
+        cat("Path:", path, "\n")
 
         # Show loading notification
         shinyWidgets::sendSweetAlert(
@@ -65,17 +75,17 @@ dataUploadServer <- function(id, code_tracker = TRUE) {
         # Read and validate data
         # Suppress progressr to prevent blue toast notifications
         data <- progressr::without_progress({
-          sapfluxr::read_heat_pulse_data(input$file$datapath)
+          sapfluxr::read_heat_pulse_data(path)
         })
 
-        # Override temp filename with original filename
-        data$metadata$file_name <- input$file$name
+        # Use a friendly display name
+        data$metadata$file_name <- display_name
 
         # Close loading notification
         shinyWidgets::closeSweetAlert(session = session)
 
         # Debug: check what we got
-        cat("Original filename:", input$file$name, "\n")
+        cat("File name:", display_name, "\n")
         cat("Pulse count (n_pulses):", data$metadata$n_pulses, "\n")
         cat("Format:", data$metadata$format, "\n")
         cat("Measurements rows:", nrow(data$measurements), "\n")
@@ -97,9 +107,9 @@ dataUploadServer <- function(id, code_tracker = TRUE) {
         if (!isTRUE(code_tracker)) {
           code_tracker$add_step(
             step_name = "Load Heat Pulse Data",
-            code = sprintf('# Load heat pulse data\nheat_pulse_data <- sapfluxr::read_heat_pulse_data(\n  file_path = "%s"\n)', input$file$name),
+            code = sprintf('# Load heat pulse data\nheat_pulse_data <- sapfluxr::read_heat_pulse_data(\n  file_path = %s\n)', code_path_expr),
             description = sprintf("Imported %s (%d pulses, format: %s)",
-                                 input$file$name,
+                                 display_name,
                                  data$metadata$n_pulses,
                                  data$metadata$format)
           )
@@ -147,6 +157,41 @@ dataUploadServer <- function(id, code_tracker = TRUE) {
 
         heat_pulse_data(NULL)
       })
+    }
+
+    # Observe file upload
+    observeEvent(input$file, {
+      req(input$file)
+      import_and_store(
+        path = input$file$datapath,
+        display_name = input$file$name,
+        code_path_expr = sprintf('"%s"', input$file$name)
+      )
+    })
+
+    # Observe "Load Example Data" button
+    observeEvent(input$load_example, {
+      example_path <- system.file(
+        "extdata", "Sample_HeatPulse_Data.txt", package = "sapfluxr"
+      )
+      if (!nzchar(example_path)) {
+        shinyWidgets::sendSweetAlert(
+          session = session,
+          title = "Example Not Found",
+          text = paste(
+            "The bundled example file could not be located.",
+            "Is the sapfluxr package installed?"
+          ),
+          type = "error"
+        )
+        return()
+      }
+      import_and_store(
+        path = example_path,
+        display_name = "Sample_HeatPulse_Data.txt",
+        code_path_expr =
+          'system.file("extdata", "Sample_HeatPulse_Data.txt", package = "sapfluxr")'
+      )
     })
 
     # Upload status UI

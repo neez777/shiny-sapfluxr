@@ -481,53 +481,71 @@ correctionsUI <- function(id) {
                       class = "btn-warning", width = "100%")
         ),
 
-        # Step 2: Application box
+        # Correction method selection and action button
         box(
           width = 12,
-          title = "Step 2: Apply Spacing Correction",
+          title = "Apply Spacing Correction",
           status = "success",
           solidHeader = TRUE,
 
-          h5("Offset Model (Shape)"),
+          h5("Baseline Correction Method"),
           radioButtons(
-            ns("offset_model"),
+            ns("baseline_method"),
             NULL,
             choices = c(
-              "Segment (Step-wise)" = "segment",
-              "Gradient (Continuous)" = "gradient"
+              "Segment Minimum (Step-wise)" = "segment_minimum",
+              "Gradient Interpolation (Smooth)" = "gradient"
             ),
-            selected = "segment",
+            selected = "segment_minimum",
             inline = FALSE
           ),
 
           helpText(
-            tags$strong("Segment:"), " Traditional - uses a constant offset for each period between changepoints.", tags$br(),
-            tags$strong("Gradient:"), " Continuous - linearly interpolates the baseline between points. ",
+            tags$strong("Segment Minimum:"), " Traditional approach - uses minimum value in each segment between changepoints. Creates step-wise corrections.", tags$br(),
+            tags$strong("Gradient Interpolation:"), " Advanced - linearly interpolates between changepoint values for smooth, continuous correction. Eliminates artificial jumps. ",
             tags$span(
               style = "color: #ff6b6b; cursor: help;",
-              title = "Gradient method is strictly applied between identified anchors. Data outside this range will not be corrected.",
+              title = "IMPORTANT: Gradient method can only be scientifically applied between the first and last changepoints, where empirical evidence exists. Data before the first changepoint and after the last changepoint lack empirical support and should be excluded from analysis. This conservative approach ensures all corrections are evidence-based. For full dataset coverage, use Segment Minimum method instead.",
               icon("exclamation-triangle"),
-              tags$strong(" Anchors Required")
+              tags$strong(" Use with Caution")
+            )
+          ),
+
+          # Conditional warning for gradient method
+          conditionalPanel(
+            condition = sprintf("input['%s'] == 'gradient'", ns("baseline_method")),
+            div(
+              class = "alert alert-warning",
+              style = "margin-top: 10px; margin-bottom: 10px;",
+              icon("exclamation-triangle"),
+              tags$strong(" Edge Period Limitation"), tags$br(),
+              "Gradient interpolation requires empirical baseline values. Only data ",
+              tags$strong("between the first and last changepoints"),
+              " can be scientifically corrected.", tags$br(), tags$br(),
+              tags$strong("Data outside this range:"), tags$br(),
+              "• Before first changepoint: No empirical support", tags$br(),
+              "• After last changepoint: No empirical support", tags$br(), tags$br(),
+              tags$em("Recommendation: Exclude edge periods or use Segment Minimum method for full dataset coverage.")
             )
           ),
 
           hr(),
 
-          h5("Correction Math (Physics)"),
+          h5("Burgess Correction Method"),
           radioButtons(
-            ns("correction_math"),
+            ns("correction_method"),
             NULL,
             choices = c(
-              "Burgess (Physics-based)" = "burgess",
-              "Linear (Simple shift)" = "linear"
+              "Burgess (Physics-based, HRM only)" = "burgess",
+              "Linear Offset (Empirical, all methods)" = "linear"
             ),
             selected = "burgess",
             inline = FALSE
           ),
 
           helpText(
-            tags$strong("Burgess:"), " Uses Burgess et al. (2001) physics model. Highly accurate for HRM.", tags$br(),
-            tags$strong("Linear:"), " Simple empirical subtraction. Robust for large offsets and non-HRM methods."
+            tags$strong("Burgess:"), " Uses Burgess et al. (2001) physics-based correction. Most accurate for HRM with offsets ≤ ±5 cm/hr.", tags$br(),
+            tags$strong("Linear:"), " Simple empirical offset subtraction. Works for all methods (HRM, MHR, Tmax) and large offsets."
           ),
 
           br(),
@@ -671,8 +689,7 @@ correctionsUI <- function(id) {
 
 # Server ----
 correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, wood_properties, calc_methods,
-                              daily_vpd = reactive(NULL), weather_vpd = reactive(NULL), 
-                              code_tracker = NULL, plot_settings = reactive(NULL)) {
+                              daily_vpd = reactive(NULL), weather_vpd = reactive(NULL), code_tracker = NULL) {
   moduleServer(id, function(input, output, session) {
 
     # Reactive values
@@ -938,17 +955,38 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
       waiter$show()
 
       tryCatch({
-        # Step 1: Detect changepoints (calculates minima internally)
-        cpt_result <- sapfluxr::detect_changepoints(
+        # Step 1: Calculate daily minima
+        daily_min <- sapfluxr::calculate_daily_minima(
           vh_data = vh_data,
           sensor_position = input$detect_sensor_position,
-          hpv_method = input$detect_method_filter,
+          method = input$detect_method_filter,
+          vh_col = if ("Vs_cm_hr" %in% names(vh_data)) "Vs_cm_hr" else "Vh_cm_hr"
+        )
+
+        if (nrow(daily_min) < 10) {
+          waiter$hide()
+          showNotification(
+            "Not enough data for changepoint detection (need at least 10 days)",
+            type = "error",
+            duration = 5
+          )
+          return()
+        }
+
+        # Step 2: Detect changepoints
+        cpt_result <- sapfluxr::detect_changepoints(
+          daily_min = daily_min,
           penalty = input$penalty_type,
           penalty_value = if (input$penalty_type == "Manual") input$penalty_value else NULL,
           detection_type = "mean",
           min_segment_days = input$min_segment_days,
           merge_short_segments = input$merge_short_segments
         )
+
+        # Step 3: Extract segment baselines
+        segments <- sapfluxr::extract_segment_baselines(cpt_result)
+
+        cpt_result$segments <- segments
 
         # Hide waiter after detection completes
         waiter$hide()
@@ -1352,9 +1390,8 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
           })
         }
 
-        # Detect dual-stable periods. We deliberately pass timezone = NULL
-        # because data is already in local time (even if tagged as UTC during import).
-        # Passing 'tz' here would cause with_tz to shift the clock hours incorrectly.
+        # Detect dual-stable periods. Pass the same site timezone used to compute
+        # dawn_times above so filter_predawn() evaluates hours in local time.
         dual_stable_result <- sapfluxr::find_dual_stable_periods(
           vh_data = vh_data,
           weather_data = weather_data,
@@ -1365,7 +1402,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
           predawn_window = predawn_range,
           mode = predawn_mode,
           dawn_times = dawn_times,
-          timezone = NULL,
+          timezone = tz,
           vpd_threshold = input$dual_vpd_threshold,
           vpd_stability = input$dual_vpd_stability,
           vh_threshold = input$dual_vh_threshold,
@@ -1608,7 +1645,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
       input$show_vpd_overlay
 
       # Depend on baseline method selection to show gradient overlay
-      input$offset_model
+      input$baseline_method
 
       # Depend on dual-stable results for gradient visualization
       rv$dual_stable_detected_result
@@ -1703,7 +1740,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
           incProgress(0.2, detail = "Finalizing")
 
           # Add gradient overlay if gradient method is selected and dual-stable results exist
-          baseline_method <- input$offset_model %||% "segment_minimum"
+          baseline_method <- input$baseline_method %||% "segment_minimum"
 
           if (baseline_method == "gradient" && !is.null(rv$dual_stable_detected_result)) {
             dual_results <- rv$dual_stable_detected_result
@@ -1792,62 +1829,13 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
           message(sprintf("=== PLOT RENDER COMPLETE: %.2f seconds ===", elapsed))
 
           # Register click event to avoid warnings and apply standard layout
-          base_layout <- get_standard_layout(
-            title = "",
-            xtitle = "Date",
-            ytitle = "Velocity (cm/hr)",
-            uirevision = "changepoint_plot_zoom"
-          )
-          
-          # Handle VPD axis alignment if shown
-          if (isTRUE(input$show_vpd_overlay) && !is.null(daily_vpd()) && nrow(daily_vpd()) > 0) {
-            vpd <- daily_vpd()
-            
-            # Calculate Y ranges for alignment
-            vh_min <- min(0, min(daily_min$min_value, na.rm = TRUE) * 1.1)
-            vh_max <- max(0, max(daily_min$min_value, na.rm = TRUE) * 1.1)
-            
-            vpd_max <- max(0, max(vpd$min_vpd, na.rm = TRUE) * 1.1)
-            vpd_min <- if (vh_max > 0) vpd_max * (vh_min / vh_max) else 0
-            
-            base_layout$yaxis$range <- c(vh_min, vh_max)
-            base_layout$yaxis2 <- list(
-              title = "VPD (kPa)",
-              overlaying = 'y',
-              side = 'right',
-              range = c(vpd_min, vpd_max),
-              fixedrange = TRUE,
-              showgrid = FALSE,
-              zeroline = TRUE,
-              zerolinecolor = "black",
-              zerolinewidth = 0.5,
-              showline = TRUE,
-              linecolor = "black"
-            )
-            base_layout$margin$r <- 80
-          }
-          
-          # Override legend position so it's placed horizontally below the x-axis
-          # to avoid overlapping with the x-axis line or labels
-          base_layout$legend <- list(
-            orientation = "h",
-            yanchor = "top",
-            y = -0.15,
-            xanchor = "center",
-            x = 0.5
-          )
-          
           p <- p %>%
             plotly::layout(
-              plot_bgcolor = base_layout$plot_bgcolor,
-              paper_bgcolor = base_layout$paper_bgcolor,
-              xaxis = base_layout$xaxis,
-              yaxis = base_layout$yaxis,
-              yaxis2 = base_layout$yaxis2,
-              showlegend = base_layout$showlegend,
-              legend = base_layout$legend,
-              uirevision = base_layout$uirevision,
-              margin = base_layout$margin
+              plot_bgcolor = 'white',
+              paper_bgcolor = 'white',
+              xaxis = list(showline = TRUE, linecolor = 'black', showgrid = FALSE, zeroline = FALSE),
+              yaxis = list(showline = TRUE, linecolor = 'black', showgrid = FALSE, fixedrange = TRUE, zeroline = TRUE, zerolinecolor = 'black', zerolinewidth = 0.5),
+              uirevision = 'changepoint_plot_zoom'
             ) %>%
             apply_standard_plotly_config(filename = "changepoints_plot", add_csv_download = TRUE) %>%
             plotly::event_register("plotly_click")
@@ -1869,7 +1857,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
     # Render warning when gradient overlay is hidden due to sensor/method mismatch
     output$gradient_mismatch_warning <- renderUI({
       # Check if gradient method is selected
-      baseline_method <- input$offset_model %||% "segment_minimum"
+      baseline_method <- input$baseline_method %||% "segment_minimum"
 
       if (baseline_method == "gradient" && !is.null(rv$dual_stable_detected_result)) {
         dual_results <- rv$dual_stable_detected_result
@@ -1936,7 +1924,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
     # ==================================================================
 
     observeEvent(input$run_correction, {
-      req(vh_results(), wood_properties(), probe_config())
+      req(vh_results(), wood_properties(), probe_config(), input$correction_method)
 
       vh_data <- vh_results()
 
@@ -1946,100 +1934,221 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         color = waiter::transparent(0.5)
       )
       waiter$show()
+
+      # Ensure waiter is always hidden
       on.exit(waiter$hide(), add = TRUE)
 
       tryCatch({
-        # 1. Resolve Parameters
-        offset_model    <- input$offset_model %||% "segment"
-        correction_math <- input$correction_math %||% "burgess"
-        wood_props      <- wood_properties()
-        probe_conf      <- probe_config()
+        correction_method <- input$correction_method
 
-        # Resolve anchors based on model
-        if (offset_model == "gradient") {
-          if (is.null(rv$dual_stable_detected_result)) {
-            stop("Gradient model requires dual-criterion changepoints. Please run detection first.")
-          }
-          anchors <- rv$dual_stable_detected_result$changepoints
+        # Convert changepoints to Date objects for segment-based correction
+        # rv$changepoints is a list of POSIXct, convert each to Date
+        changepoint_dates <- if (!is.null(rv$changepoints) && length(rv$changepoints) > 0) {
+          # Convert list to vector first, then to Date
+          cpts_vec <- do.call(c, rv$changepoints)
+          as.Date(cpts_vec)
         } else {
-          # Segment model uses the confirm-list of dates
-          anchors <- if (!is.null(rv$changepoints) && length(rv$changepoints) > 0) {
-            # Convert list to vector of Dates
-            as.Date(do.call(c, rv$changepoints))
-          } else {
-            as.Date(character(0)) # Empty segment (single whole range)
-          }
+          NULL
         }
 
-        # Resolve k value
+        # Get wood properties and probe config
+        wood_props <- wood_properties()
+        probe_conf <- probe_config()
+
+        # Extract and validate required parameters
+        # Use actual calculated thermal diffusivity if available, otherwise fall back to default
         if (!is.null(wood_props$derived_properties) &&
             !is.null(wood_props$derived_properties$thermal_diffusivity_actual_cm2_s)) {
           k_value <- wood_props$derived_properties$thermal_diffusivity_actual_cm2_s
         } else if (!is.null(wood_props$wood_constants$thermal_diffusivity_default_cm2_s)) {
           k_value <- wood_props$wood_constants$thermal_diffusivity_default_cm2_s
         } else {
-          k_value <- 0.0025 # Fallback
+          stop("No thermal diffusivity value found in wood properties")
         }
 
-        # Resolve probe spacing (distance between heater and thermistors, NOT radial depth)
-        probe_spacing <- 0.5 # Default 0.5 cm
-        if (!is.null(probe_conf)) {
-          if (inherits(probe_conf, "ProbeConfiguration")) {
-            # Safely extract via active binding if it's the R6 object
-            val <- tryCatch(probe_conf$probe_spacing, error = function(e) NULL)
-            if (!is.null(val)) probe_spacing <- val
-          } else if (!is.null(probe_conf$probe_spacing)) {
-            # Or from a standard list
-            probe_spacing <- probe_conf$probe_spacing
+        # Calculate probe spacing from sensor positions
+        # ProbeConfiguration stores sensor_positions as a named list/vector
+        # For HRM, x = distance from heater to sensor (one-sided)
+        if (!is.null(probe_conf$sensor_positions)) {
+          positions <- unlist(probe_conf$sensor_positions)
+          # Spacing x is distance from heater (0) to sensor (convert mm to cm)
+          # For symmetric probes, use upstream distance (positive value)
+          probe_spacing <- max(abs(positions)) / 10
+        } else {
+          # Fallback to default ICT spacing
+          probe_spacing <- 0.5  # cm (5mm)
+        }
+
+        if (is.null(k_value) || length(k_value) == 0 || !is.numeric(k_value)) {
+          stop("Invalid thermal diffusivity in wood properties: ",
+               paste(capture.output(str(k_value)), collapse = " "))
+        }
+        if (is.null(probe_spacing) || length(probe_spacing) == 0 || !is.numeric(probe_spacing)) {
+          stop("Invalid probe spacing in probe configuration: ",
+               paste(capture.output(str(probe_spacing)), collapse = " "))
+        }
+
+        # Check baseline correction method
+        baseline_method <- input$baseline_method %||% "segment_minimum"
+
+        # Apply correction based on baseline method selection
+        if (baseline_method == "gradient" && !is.null(rv$dual_stable_detected_result)) {
+          # ===== GRADIENT INTERPOLATION METHOD =====
+          # Uses dual-criterion changepoints with exact timestamps and vh values
+
+          changepoints_df <- rv$dual_stable_detected_result$changepoints
+
+          if (nrow(changepoints_df) == 0) {
+            stop("No dual-criterion changepoints available for gradient correction. Please run Dual-Criterion detection first.")
           }
+
+          corrected_data <- vh_data
+          sensors <- c("outer", "inner")
+          methods <- c("HRM", "MHR")
+
+          # Apply gradient correction to each sensor-method combination
+          for (sensor in sensors) {
+            for (method in methods) {
+              # Filter to this sensor-method
+              sensor_method_data <- corrected_data %>%
+                dplyr::filter(sensor_position == sensor, method == method)
+
+              if (nrow(sensor_method_data) > 0) {
+                # Construct vh column name (prefer current best estimate)
+                vh_col <- if ("Vs_cm_hr" %in% names(sensor_method_data)) "Vs_cm_hr" else "Vh_cm_hr"
+
+                # Apply gradient correction
+                corrected_sensor <- sapfluxr::apply_gradient_offset_correction(
+                  vh_data = sensor_method_data,
+                  changepoints = changepoints_df,
+                  vh_col = vh_col,
+                  new_col_suffix = "_gradient_corrected",
+                  edge_handling = "extend"
+                )
+
+                # Update Vs_cm_hr and Vh_cm_hr with corrected values
+                corrected_col <- paste0(vh_col, "_gradient_corrected")
+                corrected_sensor$Vs_cm_hr <- corrected_sensor[[corrected_col]]
+                corrected_sensor$Vh_cm_hr <- corrected_sensor[[corrected_col]]
+                corrected_sensor$spacing_correction_applied <- TRUE
+
+                # Merge back into main data
+                # Remove this sensor-method from corrected_data
+                corrected_data <- corrected_data %>%
+                  dplyr::filter(!(sensor_position == sensor & method == method))
+
+                # Add corrected version
+                corrected_data <- dplyr::bind_rows(corrected_data, corrected_sensor)
+              }
+            }
+          }
+
+          # Sort by datetime
+          corrected_data <- corrected_data %>% dplyr::arrange(datetime)
+
+          # Create metadata for result
+          result <- list(
+            vh_corrected = corrected_data,
+            method_used = "gradient",
+            changepoints = changepoints_df$date,
+            metadata = list(
+              sensor_position = "both",
+              method = "gradient_interpolation",
+              k_assumed = k_value,
+              probe_spacing = probe_spacing,
+              n_segments = nrow(changepoints_df) + 1,
+              n_changepoints = nrow(changepoints_df),
+              changepoints = changepoints_df$date,
+              date_applied = Sys.time(),
+              approach = "Gradient Interpolation (Linear)"
+            )
+          )
+
+          n_segments <- nrow(changepoints_df) + 1
+          method_name <- "Gradient Interpolation"
+
+        } else {
+          # ===== SEGMENT MINIMUM METHOD (Default/Traditional) =====
+          # Uses step-wise correction with segment minima
+
+          corrected_data <- vh_data
+          sensors <- c("outer", "inner")
+          last_result <- NULL
+
+          for (sensor in sensors) {
+            last_result <- sapfluxr::apply_spacing_correction(
+              vh_data = corrected_data,
+              method = "manual",
+              manual_changepoints = changepoint_dates,
+              hpv_method = "HRM",
+              sensor_position = sensor,
+              wood_properties = wood_props,
+              probe_spacing = probe_spacing,
+              measurement_time = 80,
+              verbose = FALSE
+            )
+
+            # apply_spacing_correction() returns the corrected data frame directly
+            corrected_data <- last_result
+          }
+
+          # Wrap into a consistent list structure (same shape as gradient method)
+          result <- list(
+            vh_corrected = corrected_data,
+            method_used = "manual",
+            changepoints = changepoint_dates,
+            metadata = list(
+              sensor_position = "both",
+              method = if (correction_method == "burgess") "burgess" else "linear_offset",
+              k_assumed = k_value,
+              probe_spacing = probe_spacing,
+              n_segments = if (!is.null(changepoint_dates)) length(changepoint_dates) + 1 else 1,
+              n_changepoints = if (!is.null(changepoint_dates)) length(changepoint_dates) else 0,
+              changepoints = changepoint_dates,
+              date_applied = Sys.time()
+            )
+          )
+          n_segments <- if (!is.null(changepoint_dates)) length(changepoint_dates) + 1 else 1
+          method_name <- if (correction_method == "burgess") "Burgess" else "Linear Offset"
         }
 
-        # 2. Call New Unified API
-        # This handles both sensors internally and maintains the audit workflow
-        corrected_data <- sapfluxr::apply_spacing_correction(
-          vh_data = vh_data,
-          changepoints = anchors,
-          offset_model = offset_model,
-          correction_math = correction_math,
-          sensor_position = "both",
-          hpv_method = "HRM",
-          wood_properties = wood_props,
-          probe_spacing = probe_spacing,
-          measurement_time = 80,
-          verbose = FALSE
-        )
-
-        # 3. Store Results
-        # Extract metadata for the module state
-        n_segments <- if(offset_model == "gradient") nrow(anchors) + 1 else (length(anchors) + 1)
-        
-        rv$correction_result <- list(
-          vh_corrected = corrected_data,
-          metadata = list(
-            sensor_position = "both",
-            offset_model = offset_model,
-            correction_math = correction_math,
-            n_segments = n_segments,
-            changepoints = if(offset_model == "gradient") anchors$timestamp else anchors,
-            date_applied = Sys.time(),
-            approach = sprintf("%s (%s)", 
-                               if(offset_model == "gradient") "Gradient Interpolation" else "Segment Minimum",
-                               if(correction_math == "burgess") "Burgess" else "Linear")
-          )
-        )
-        
-        rv$corrected_vh <- corrected_data
+        # Store final result
+        rv$correction_result <- result
+        rv$corrected_vh <- rv$correction_result$vh_corrected
         rv$correction_applied <- TRUE
 
-        # 4. Notifications
+        # Track spacing correction
+        if (!is.null(code_tracker)) {
+          code_tracker$add_step(
+            step_name = "Apply Spacing Correction",
+            code = sprintf(
+              'vh_corrected <- apply_spacing_correction(
+  vh_data = vh_data,
+  method = "%s",
+  probe_spacing = "%s"
+)',
+              tolower(method_name),
+              probe_spacing
+            ),
+            description = sprintf("%s correction applied with %d segment%s",
+                                 method_name, n_segments,
+                                 if (n_segments > 1) "s" else "")
+          )
+        }
+
         showNotification(
-          sprintf("Success: Applied %s correction (%s math) to both sensors.", 
-                  toupper(offset_model), toupper(correction_math)),
-          type = "message"
+          sprintf("%s correction completed! Applied %d segment-specific correction%s to both sensors.",
+                  method_name, n_segments, if (n_segments > 1) "s" else ""),
+          type = "message",
+          duration = 5
         )
 
       }, error = function(e) {
-        showNotification(paste("Correction failed:", e$message), type = "error", duration = 10)
+        showNotification(
+          paste("Error in spacing correction:", e$message),
+          type = "error",
+          duration = 10
+        )
       })
     })
 
@@ -2217,10 +2326,6 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         stop("No velocity column found in corrected data.")
       }
 
-      # Get styling
-      style_config <- plot_settings()
-      style <- get_plot_style(method = method, sensor = sensor, is_corrected = TRUE, config = style_config)
-
       # Create plot with ONLY the corrected trace (base layer)
       p <- plotly::plot_ly(
         data = after,
@@ -2229,7 +2334,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         type = 'scatter',
         mode = 'lines',
         name = 'Spacing Corrected',
-        line = style,
+        line = list(color = 'blue', width = 1.5),
         fill = 'none',
         hovertemplate = paste(
           "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
@@ -2246,18 +2351,18 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         uirevision = "spacing_comparison_zoom"
       )
       
+      base_layout$legend <- list(x = 0.02, y = 0.98)
+
       p <- p %>%
         plotly::layout(
           title = base_layout$title,
           xaxis = base_layout$xaxis,
           yaxis = base_layout$yaxis,
-          showlegend = base_layout$showlegend,
           legend = base_layout$legend,
           hovermode = base_layout$hovermode,
           uirevision = base_layout$uirevision,
           plot_bgcolor = base_layout$plot_bgcolor,
-          paper_bgcolor = base_layout$paper_bgcolor,
-          margin = base_layout$margin
+          paper_bgcolor = base_layout$paper_bgcolor
         ) %>%
         apply_standard_plotly_config(filename = "spacing_correction_comparison", add_csv_download = TRUE)
 
@@ -2265,32 +2370,42 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
     })
 
     # Use plotlyProxy to add/remove raw data overlay (preserves zoom)
+    # Trigger on BOTH checkbox change AND sensor position change
     observe({
       req(spacing_plot_data())
-      
+
       plot_data <- spacing_plot_data()
       after <- plot_data$after
+      before <- plot_data$before
 
       # First, try to remove any existing raw data trace
       tryCatch({
         plotly::plotlyProxy("plot_before_after", session) %>%
           plotly::plotlyProxyInvoke("deleteTraces", list(1))
-      }, error = function(e) {})
+      }, error = function(e) {
+        # Ignore error if trace doesn't exist
+      })
 
       # Then add it back if checkbox is ticked
       if (isTRUE(input$show_raw_overlay)) {
-        raw_col <- if ("Vh_cm_hr_raw" %in% names(after)) "Vh_cm_hr_raw" else "Vh_cm_hr"
+        raw_col <- if ("Vh_cm_hr_raw" %in% names(after)) {
+          "Vh_cm_hr_raw"
+        } else {
+          "Vh_cm_hr"
+        }
+
+        raw_data <- if ("Vh_cm_hr_raw" %in% names(after)) after else before
 
         plotly::plotlyProxy("plot_before_after", session) %>%
           plotly::plotlyProxyInvoke(
             "addTraces",
             list(
-              x = after$datetime,
-              y = after[[raw_col]],
+              x = raw_data$datetime,
+              y = raw_data[[raw_col]],
               type = "scatter",
               mode = "lines",
               name = "Raw Data",
-              line = list(color = "#d62728", width = 1.0),
+              line = list(color = "red", width = 1),
               fill = "none",
               hovertemplate = paste(
                 "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",

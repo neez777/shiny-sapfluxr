@@ -1,21 +1,20 @@
 Package: shinysapfluxr
 Type: Package
 Title: Interactive Shiny Interface for Sap Flow Analysis
-Version: 0.2.0
+Version: 0.3.9.5
 Authors@R: c(
     person("Grant", "Joyce", email = "neez1977@gmail.com",
-           role = c("aut", "cre"), comment = "Developer"),
-    person("Gavan", "McGrath", role = "aut",
-           comment = "Original R script development"),
-    person("Tim", "Bleby", role = "aut",
-           comment = "Scientific review and Excel workflow design")
+           role = c("aut", "cre"), comment = "Developer")
     )
 Description: Interactive web application for processing and visualising heat pulse
     velocity data from ICT SFM1x sensors. Provides an easy-to-use interface for
-    students and researchers to analyse sap flow data and generate publication-quality
-    plots, apply corrections (spacing, wound), calibrate methods, and apply sDMA
-    (Selectable Dual Method Approach). Generates reproducible R code and
-    publication-quality plots. Built on the sapfluxr package.
+    students and researchers to import data (with optional clock-drift and
+    weather/VPD), configure probe and wood properties, calculate heat pulse
+    velocity with quality flagging, apply spacing and wound corrections, calibrate
+    secondary methods and apply sDMA (Selectable Dual Method Approach), convert to
+    sap flux density and tree water use, and aggregate to daily totals. Generates a
+    fully reproducible R script and publication-quality plots. Built on the
+    sapfluxr package.
 License: GPL-3
 Encoding: UTF-8
 LazyData: true
@@ -41,9 +40,11 @@ Imports:
     ggplot2 (>= 3.4.0),
     progressr (>= 0.13.0),
     waiter (>= 0.2.5),
-    webshot2 (>= 0.1.0)
+    webshot2 (>= 0.1.0),
+    leaflet (>= 2.1.0)
 Suggests:
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    lutz (>= 0.3.1)
 URL: https://github.com/neez777/sapfluxr
 BugReports: https://github.com/neez777/sapfluxr/issues
 Config/testthat/edition: 3

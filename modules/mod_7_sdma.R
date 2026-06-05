@@ -26,9 +26,8 @@ sdmaUI <- function(id) {
 
           p("sDMA (Selectable Dual Method Approach) automatically switches between methods based on flow conditions."),
           tags$ul(
-            tags$li(strong("Step 1:"), " Recalculate Peclet numbers using calibrated HRM velocities"),
-            tags$li(strong("Step 2:"), " Select secondary method and Peclet threshold"),
-            tags$li(strong("Step 3:"), " Apply sDMA switching logic")
+            tags$li(strong("Step 1:"), " Select secondary method and Péclet threshold"),
+            tags$li(strong("Step 2:"), " Apply sDMA switching logic")
           ),
           hr(),
           p(tags$small(em("Peclet number determines the theoretical validity limit of HRM. When Pe ≥ threshold, sDMA switches to the secondary method.")))
@@ -40,41 +39,10 @@ sdmaUI <- function(id) {
         # Calibration requirement warning (conditionally displayed)
         uiOutput(ns("calibration_warning")),
 
-        # Peclet recalculation
-        box(
-          width = 12,
-          title = "Step 1: Recalculate Peclet Number",
-          status = "warning",
-          solidHeader = TRUE,
-
-          p("Recalculate Peclet numbers using the latest calibrated HRM velocities."),
-          helpText(icon("info-circle"), " This ensures switching thresholds reflect wound and spacing corrections."),
-
-          actionButton(
-            ns("recalculate_peclet"),
-            "Recalculate Peclet Number",
-            icon = icon("calculator"),
-            class = "btn-warning btn-block"
-          ),
-
-          hr(),
-
-          conditionalPanel(
-            condition = sprintf("output['%s']", ns("has_peclet_recalc")),
-            div(
-              style = "background: #f0f9ff; padding: 10px; border-radius: 4px; margin-top: 10px;",
-              icon("check-circle", style = "color: green;"),
-              strong(" Peclet Recalculated"),
-              br(),
-              verbatimTextOutput(ns("peclet_summary"))
-            )
-          )
-        ),
-
         # sDMA settings
         box(
           width = 12,
-          title = "Step 2 & 3: sDMA Configuration",
+          title = "sDMA Configuration",
           status = "primary",
           solidHeader = TRUE,
 
@@ -152,8 +120,7 @@ sdmaUI <- function(id) {
               tabPanel(
                 "Peclet vs Velocity",
                 br(),
-                p("Visualize switching points: HRM below threshold, secondary method above."),
-                shinycssloaders::withSpinner(
+                p("Visualise switching points: HRM below threshold, secondary method above."),                shinycssloaders::withSpinner(
                   plotOutput(ns("peclet_scatter_plot"), height = "600px"),
                   type = 6,
                   color = "#3c8dbc"
@@ -287,7 +254,7 @@ sdmaServer <- function(id, vh_calibrated, primary_method = reactive("HRM"), prob
               " - sDMA requires calibrated velocity data."
             ),
             tags$ul(
-              tags$li(strong("sDMA cannot proceed"), " without calibrated secondary methods (MHR, HRMXa, HRMXb, etc.)"),
+              tags$li(strong("sDMA cannot proceed"), " without calibrated secondary methods (MHR, Tmax, etc.)"),
               tags$li("Please complete ", strong("Method Calibration (Tab 6a)"), " first"),
               tags$li("Method calibration creates a unified dataset with all methods available for switching"),
               tags$li(em("Note: If you only need HRM data, you can skip sDMA and proceed directly to flux conversion"))
@@ -314,7 +281,7 @@ sdmaServer <- function(id, vh_calibrated, primary_method = reactive("HRM"), prob
               ),
               tags$ul(
                 tags$li("Only HRM data is available in the calibrated dataset"),
-                tags$li("sDMA requires at least one secondary method (MHR, HRMXa, HRMXb, etc.)"),
+                tags$li("sDMA requires at least one secondary method (MHR, Tmax, etc.)"),
                 tags$li("Please ensure secondary methods were calculated and calibrated in Tab 6a"),
                 tags$li(em("If you only need HRM, you can skip sDMA and proceed to flux conversion"))
               )
@@ -326,90 +293,9 @@ sdmaServer <- function(id, vh_calibrated, primary_method = reactive("HRM"), prob
       }
     })
 
-    # Step 1: Recalculate Peclet Number
-    observeEvent(input$recalculate_peclet, {
-      req(vh_calibrated(), probe_config(), wood_properties())
-
-      withProgress(message = "Recalculating Peclet numbers...", value = 0, {
-        tryCatch({
-          incProgress(0.2, detail = "Validating configuration...")
-
-          # Validate configurations (ProbeConfiguration now has probe_spacing active binding)
-          probe <- probe_config()
-          wood <- wood_properties()
-
-          if (is.null(probe)) {
-            stop("Probe configuration is NULL. Please ensure probe configuration is loaded.")
-          }
-
-          if (is.null(wood)) {
-            stop("Wood properties is NULL. Please ensure wood properties are loaded.")
-          }
-
-          incProgress(0.2, detail = "Preparing data...")
-
-          # Get calibrated data (transformed format - long)
-          vh_data <- vh_calibrated()
-
-          # Filter to HRM rows only
-          hrm_data <- vh_data %>%
-            dplyr::filter(method == "HRM")
-
-          if (nrow(hrm_data) == 0) {
-            stop("No HRM data found in calibrated results")
-          }
-
-          incProgress(0.3, detail = "Recalculating Peclet...")
-
-          # Recalculate Peclet using the function from 04d_apply_calibration.R
-          # This function uses the corrected velocity column (auto-detected or specified)
-          hrm_with_peclet <- sapfluxr::recalculate_peclet(
-            vh_results = hrm_data,
-            probe_config = probe_config(),
-            wood_properties = wood_properties(),
-            velocity_col = "Vh_cm_hr",  # Use the velocity column from transformed data
-            peclet_col = "Pe_corrected"
-          )
-
-          # Store result
-          rv$vh_with_peclet <- hrm_with_peclet
-
-          incProgress(0.4, detail = "Done!")
-
-          # Track code
-          if (!is.null(code_tracker)) {
-            code_tracker$add_step(
-              step_name = "Recalculate Peclet Number",
-              code = 'vh_with_peclet <- sapfluxr::recalculate_peclet(
-  vh_results = hrm_data,
-  probe_config = probe_config,
-  wood_properties = wood_properties,
-  velocity_col = "Vh_cm_hr",
-  peclet_col = "Pe_corrected"
-)',
-              description = "Recalculate Peclet numbers using calibrated velocities"
-            )
-          }
-
-          showNotification(
-            "Peclet numbers recalculated successfully!",
-            type = "message",
-            duration = 3
-          )
-
-        }, error = function(e) {
-          showNotification(
-            paste("Error recalculating Peclet:", e$message),
-            type = "error",
-            duration = 10
-          )
-        })
-      })
-    })
-
-    # Step 3: Apply sDMA Switching (Multiple Combinations)
+    # Apply sDMA Switching (Multiple Combinations)
     observeEvent(input$apply_sdma, {
-      req(rv$vh_with_peclet)
+      req(vh_calibrated(), probe_config(), wood_properties())
       req(input$secondary_methods)
       req(input$sensor_positions)
 
@@ -426,41 +312,28 @@ sdmaServer <- function(id, vh_calibrated, primary_method = reactive("HRM"), prob
 
           incProgress(0.1, detail = paste("Processing", n_combinations, "combinations..."))
 
-          # Store individual results
-          all_results <- list()
-          result_counter <- 0
+          incProgress(0.2, detail = "Applying sDMA switching...")
 
-          # Prepare data for parked sDMA function
-          # Step 1: Get HRM data with recalculated Peclet numbers
-          hrm_data <- rv$vh_with_peclet %>%
-            dplyr::select(datetime, pulse_id, sensor_position, method,
-                         Vh_cm_hr, hrm_peclet_number = Pe_corrected)
-
-          # Step 2: Get calibrated secondary methods
-          vh_calibrated_data <- vh_calibrated() %>%
-            dplyr::filter(
-              sensor_position %in% sensors,
-              method %in% methods
-            ) %>%
-            dplyr::select(datetime, pulse_id, sensor_position, method, Vh_cm_hr)
-
-          # Step 3: Combine HRM and secondary methods into one dataset
-          vh_combined <- dplyr::bind_rows(hrm_data, vh_calibrated_data)
-
-          # Step 4: Use parked sDMA function (vectorized, no loops!)
-          incProgress(0.3, detail = "Applying sDMA switching...")
-
+          # Pass calibrated data directly — apply_sdma_processing() computes the
+          # Péclet number automatically from probe_config / wood_properties.
           vh_sdma_result <- sapfluxr::apply_sdma_processing(
-            vh_results = vh_combined,
+            vh_results       = vh_calibrated(),
             secondary_method = methods,
+            probe_config     = probe_config(),
+            wood_properties  = wood_properties(),
             peclet_threshold = input$peclet_threshold,
-            skip_low_peclet = FALSE,
-            show_progress = FALSE
+            skip_low_peclet  = FALSE,
+            show_progress    = FALSE
           )
 
-          # Step 5: Extract only sDMA results and add combination column
+          # Populate rv$vh_with_peclet for the validation module (needs Pe_corrected column).
+          rv$vh_with_peclet <- vh_sdma_result %>%
+            dplyr::filter(method == "HRM") %>%
+            dplyr::rename(Pe_corrected = peclet_number)
+
+          # Extract sDMA rows for selected sensors and add combination column.
           rv$vh_sdma <- vh_sdma_result %>%
-            dplyr::filter(grepl("^sDMA:", method)) %>%
+            dplyr::filter(grepl("^sDMA:", method), sensor_position %in% sensors) %>%
             dplyr::mutate(
               combination = paste0(sensor_position, "_",
                                  gsub("^sDMA:", "", method)),
@@ -501,27 +374,21 @@ sdmaServer <- function(id, vh_calibrated, primary_method = reactive("HRM"), prob
             code_tracker$add_step(
               step_name = "Apply sDMA Switching",
               code = sprintf(
-                '# Apply sDMA switching using parked function
+                '# Apply sDMA switching — Péclet number computed automatically.
 # Sensors: %s
 # Methods: %s
 # Peclet threshold: %.2f
 
-# Combine HRM with recalculated Peclet and calibrated secondary methods
-vh_combined <- dplyr::bind_rows(
-  hrm_data,
-  vh_calibrated_data
-)
-
-# Apply sDMA switching (vectorized, no loops!)
 vh_sdma_result <- sapfluxr::apply_sdma_processing(
-  vh_results = vh_combined,
+  vh_results       = vh_calibrated,
   secondary_method = c(%s),
+  probe_config     = probe_config,
+  wood_properties  = wood_properties,
   peclet_threshold = %.2f,
-  skip_low_peclet = FALSE,
-  show_progress = TRUE
+  skip_low_peclet  = FALSE,
+  show_progress    = TRUE
 )
 
-# Extract sDMA results
 vh_sdma <- vh_sdma_result %%>%%
   dplyr::filter(grepl("^sDMA:", method))',
                 paste(sensors, collapse = ", "),
@@ -557,29 +424,10 @@ vh_sdma <- vh_sdma_result %%>%%
     # Outputs ----
 
     # Flags
-    output$has_peclet_recalc <- reactive({
-      !is.null(rv$vh_with_peclet)
-    })
-    outputOptions(output, "has_peclet_recalc", suspendWhenHidden = FALSE)
-
     output$has_sdma_result <- reactive({
       !is.null(rv$vh_sdma)
     })
     outputOptions(output, "has_sdma_result", suspendWhenHidden = FALSE)
-
-    # Peclet summary
-    output$peclet_summary <- renderText({
-      req(rv$vh_with_peclet)
-
-      data <- rv$vh_with_peclet
-      pe_range <- range(data$Pe_corrected, na.rm = TRUE)
-      n_points <- sum(!is.na(data$Pe_corrected))
-
-      paste0(
-        "Recalculated: ", n_points, " points\n",
-        "Pe range: [", round(pe_range[1], 3), ", ", round(pe_range[2], 3), "]"
-      )
-    })
 
     # sDMA summary
     output$sdma_summary <- renderPrint({
@@ -626,6 +474,11 @@ vh_sdma <- vh_sdma_result %%>%%
       data <- rv$vh_sdma
       n_combinations <- length(unique(data$combination))
 
+      # Use project standard sizes
+      title_size <- 16
+      axis_title_size <- 12
+      tick_size <- 11
+
       if (n_combinations == 1) {
         # Single combination - simple bar chart
         usage_summary <- data %>%
@@ -636,21 +489,25 @@ vh_sdma <- vh_sdma_result %%>%%
             label = sprintf("%s\n%d (%.1f%%)", sdma_source, count, percentage)
           )
 
-        ggplot2::ggplot(usage_summary, ggplot2::aes(x = sdma_source, y = count, fill = sdma_source)) +
-          ggplot2::geom_col() +
-          ggplot2::geom_text(ggplot2::aes(label = label), vjust = -0.5, size = 4) +
+        p <- ggplot2::ggplot(usage_summary, ggplot2::aes(x = sdma_source, y = count, fill = sdma_source)) +
+          ggplot2::geom_col(width = 0.6) +
+          ggplot2::geom_text(ggplot2::aes(label = label), vjust = -0.5, size = 4.5, fontface = "bold") +
           ggplot2::labs(
             title = "Method Selection Frequency",
-            subtitle = paste("sDMA switching:", unique(data$combination)),
+            subtitle = paste("sDMA Switching:", unique(data$combination)),
             x = "Method Used",
             y = "Number of Measurements"
           ) +
           ggplot2::scale_fill_brewer(palette = "Set2") +
+          ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.15))) + # Extra room at top
           ggplot2::theme_classic() +
           ggplot2::theme(
-            plot.title = ggplot2::element_text(face = "bold", size = 14),
-            plot.subtitle = ggplot2::element_text(size = 11),
-            legend.position = "none"
+            plot.title = ggplot2::element_text(face = "bold", size = title_size, hjust = 0.5), # Centred
+            plot.subtitle = ggplot2::element_text(size = axis_title_size, hjust = 0.5), # Centred
+            axis.title = ggplot2::element_text(size = axis_title_size, face = "bold"),
+            axis.text = ggplot2::element_text(size = tick_size, color = "black"),
+            legend.position = "none",
+            plot.margin = ggplot2::margin(20, 20, 20, 20)
           )
       } else {
         # Multiple combinations - grouped bar chart
@@ -658,24 +515,29 @@ vh_sdma <- vh_sdma_result %%>%%
           dplyr::group_by(combination, sdma_source) %>%
           dplyr::summarise(count = dplyr::n(), .groups = "drop")
 
-        ggplot2::ggplot(usage_summary, ggplot2::aes(x = combination, y = count, fill = sdma_source)) +
+        p <- ggplot2::ggplot(usage_summary, ggplot2::aes(x = combination, y = count, fill = sdma_source)) +
           ggplot2::geom_col(position = "dodge") +
           ggplot2::labs(
             title = "Method Selection Frequency by Combination",
-            subtitle = paste(n_combinations, "sensor/method combinations"),
+            subtitle = paste(n_combinations, "Sensor/Method Combinations"),
             x = "Sensor/Method Combination",
             y = "Number of Measurements",
             fill = "Method Used"
           ) +
           ggplot2::scale_fill_brewer(palette = "Set2") +
+          ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.1))) + # Extra room at top
           ggplot2::theme_classic() +
           ggplot2::theme(
-            plot.title = ggplot2::element_text(face = "bold", size = 14),
-            plot.subtitle = ggplot2::element_text(size = 11),
+            plot.title = ggplot2::element_text(face = "bold", size = title_size, hjust = 0.5), # Centred
+            plot.subtitle = ggplot2::element_text(size = axis_title_size, hjust = 0.5), # Centred
+            axis.title = ggplot2::element_text(size = axis_title_size, face = "bold"),
+            axis.text = ggplot2::element_text(size = tick_size, color = "black"),
+            axis.text.x = ggplot2::element_text(angle = 45, hjust = 1),
             legend.position = "bottom",
-            axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)
+            plot.margin = ggplot2::margin(20, 20, 20, 20)
           )
       }
+      return(p)
     })
 
     # Peclet scatter plot
@@ -683,7 +545,7 @@ vh_sdma <- vh_sdma_result %%>%%
       req(rv$vh_sdma)
 
       data <- rv$vh_sdma %>%
-        dplyr::filter(!is.na(hrm_peclet_number), !is.na(Vh_sdma))
+        dplyr::filter(!is.na(peclet_number), !is.na(Vh_sdma))
 
       if (nrow(data) == 0) {
         return(NULL)
@@ -691,19 +553,24 @@ vh_sdma <- vh_sdma_result %%>%%
 
       n_combinations <- length(unique(data$combination))
 
-      p <- ggplot2::ggplot(data, ggplot2::aes(x = hrm_peclet_number, y = Vh_sdma, color = sdma_source)) +
+      # Use project standard sizes
+      title_size <- 16
+      axis_title_size <- 12
+      tick_size <- 11
+
+      p <- ggplot2::ggplot(data, ggplot2::aes(x = peclet_number, y = Vh_sdma, color = sdma_source)) +
         ggplot2::geom_point(alpha = 0.5, size = 2) +
         ggplot2::geom_vline(xintercept = input$peclet_threshold, linetype = "dashed",
                            color = "red", linewidth = 1) +
         ggplot2::annotate("text", x = input$peclet_threshold, y = max(data$Vh_sdma, na.rm = TRUE),
                          label = sprintf("Pe = %.1f", input$peclet_threshold),
-                         hjust = -0.1, vjust = 1, color = "red", size = 4) +
+                         hjust = -0.1, vjust = 1, color = "red", size = 4.5, fontface = "bold") +
         ggplot2::labs(
           title = "sDMA Switching Behaviour",
           subtitle = if (n_combinations == 1) {
-            paste("Peclet threshold =", input$peclet_threshold, "-", unique(data$combination))
+            paste("Peclet Threshold =", input$peclet_threshold, "-", unique(data$combination))
           } else {
-            paste("Peclet threshold =", input$peclet_threshold, "-", n_combinations, "combinations")
+            paste("Peclet Threshold =", input$peclet_threshold, "-", n_combinations, "Combinations")
           },
           x = "Peclet Number (Corrected)",
           y = "Velocity (cm/hr)",
@@ -712,9 +579,14 @@ vh_sdma <- vh_sdma_result %%>%%
         ggplot2::scale_color_brewer(palette = "Set1") +
         ggplot2::theme_classic() +
         ggplot2::theme(
-          plot.title = ggplot2::element_text(face = "bold", size = 14),
-          plot.subtitle = ggplot2::element_text(size = 11),
-          legend.position = "bottom"
+          plot.title = ggplot2::element_text(face = "bold", size = title_size, hjust = 0.5),
+          plot.subtitle = ggplot2::element_text(size = axis_title_size, hjust = 0.5),
+          axis.title = ggplot2::element_text(size = axis_title_size, face = "bold"),
+          axis.text = ggplot2::element_text(size = tick_size, color = "black"),
+          legend.position = "bottom",
+          legend.title = ggplot2::element_text(face = "bold"),
+          plot.margin = ggplot2::margin(20, 20, 20, 20),
+          strip.text = ggplot2::element_text(face = "bold", size = tick_size) # For faceted combos
         )
 
       # Add faceting if multiple combinations
@@ -722,7 +594,7 @@ vh_sdma <- vh_sdma_result %%>%%
         p <- p + ggplot2::facet_wrap(~combination, ncol = 2)
       }
 
-      p
+      return(p)
     })
 
     # Time series plot - comparison of HRM, calibrated secondary, and sDMA result
@@ -785,8 +657,6 @@ vh_sdma <- vh_sdma_result %%>%%
         method_colors <- c(
           "HRM (Corrected)" = "#1f77b4",
           "MHR (Calibrated)" = "#ff7f0e",
-          "HRMXa (Calibrated)" = "#2ca02c",
-          "HRMXb (Calibrated)" = "#d62728",
           "Tmax_Coh (Calibrated)" = "#9467bd",
           "Tmax_Klu (Calibrated)" = "#8c564b"
         )
@@ -831,15 +701,26 @@ vh_sdma <- vh_sdma_result %%>%%
             )
         }
 
+        # Apply standard layout
+        base_layout <- get_standard_layout(
+          title = "sDMA Comparison: HRM Baseline, Calibrated Methods, and sDMA Results",
+          xtitle = "Datetime",
+          ytitle = "Velocity (cm/hr)",
+          uirevision = "sdma_timeseries_zoom"
+        )
+        
         p <- p %>%
           plotly::layout(
-            title = "sDMA Comparison: HRM Baseline, Calibrated Methods, and sDMA Results",
-            xaxis = list(title = "Datetime", showgrid = TRUE, gridcolor = "lightgray"),
-            yaxis = list(title = "Velocity (cm/hr)", showgrid = TRUE, gridcolor = "lightgray"),
-            hovermode = "closest",
-            legend = list(orientation = "v", x = 1.02, y = 1, xanchor = "left"),
-            margin = list(l = 70, r = 200, t = 60, b = 60),
-            uirevision = "sdma_timeseries_zoom"
+            title = base_layout$title,
+            xaxis = base_layout$xaxis,
+            yaxis = base_layout$yaxis,
+            hovermode = base_layout$hovermode,
+            showlegend = base_layout$showlegend,
+            legend = base_layout$legend,
+            margin = base_layout$margin,
+            plot_bgcolor = base_layout$plot_bgcolor,
+            paper_bgcolor = base_layout$paper_bgcolor,
+            uirevision = base_layout$uirevision
           )
 
         return(p)
@@ -861,7 +742,7 @@ vh_sdma <- vh_sdma_result %%>%%
 
       data <- rv$vh_sdma %>%
         dplyr::select(datetime, pulse_id, combination, sensor_position,
-                     hrm_peclet_number, Vh_sdma, sdma_source, sdma_trigger) %>%
+                     peclet_number, Vh_sdma, sdma_source, sdma_trigger) %>%
         dplyr::arrange(dplyr::desc(datetime))
 
       DT::datatable(
@@ -876,7 +757,7 @@ vh_sdma <- vh_sdma_result %%>%%
         rownames = FALSE,
         filter = 'top'  # Add filters for combination and other columns
       ) %>%
-        DT::formatRound(columns = c("hrm_peclet_number", "Vh_sdma"), digits = 3)
+        DT::formatRound(columns = c("peclet_number", "Vh_sdma"), digits = 3)
     })
 
     # Return values for downstream modules

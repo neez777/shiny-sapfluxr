@@ -45,6 +45,8 @@ pulseTraceUI <- function(id) {
 
           uiOutput(ns("show_windows_ui")),
 
+          uiOutput(ns("detrend_slope_ui")),
+
           hr(),
 
           actionButton(
@@ -78,7 +80,7 @@ pulseTraceUI <- function(id) {
 }
 
 # Server ----
-pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results = NULL) {
+pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results = NULL, plot_settings = reactive(NULL)) {
   moduleServer(id, function(input, output, session) {
 
     # ========================================================================
@@ -145,12 +147,6 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
           if ("MHR" %in% pulse_methods) {
             all_choices[["MHR Peaks (time to max ΔT)"]] <- "MHR"
           }
-          if ("HRMXa" %in% pulse_methods) {
-            all_choices[["HRMXa Window"]] <- "HRMXa"
-          }
-          if ("HRMXb" %in% pulse_methods) {
-            all_choices[["HRMXb Windows (separate up/down)"]] <- "HRMXb"
-          }
           if ("Tmax_Coh" %in% pulse_methods || "Tmax_Klu" %in% pulse_methods) {
             all_choices[["Tmax Peaks (time to max ΔT)"]] <- "Tmax"
           }
@@ -163,6 +159,29 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
         choices = all_choices,
         selected = default_selected
       )
+    })
+
+    # UI for detrending slope
+    output$detrend_slope_ui <- renderUI({
+      pulse_id <- selected_pulse_id()
+      if (is.null(pulse_id) || is.na(pulse_id) || is.null(vh_results)) return(NULL)
+
+      results <- vh_results()
+      if (is.null(results) || nrow(results) == 0) return(NULL)
+
+      method_attr <- attr(results, "baseline_method")
+      if (!is.null(method_attr) && grepl("slope", method_attr)) {
+        tagList(
+          hr(),
+          checkboxInput(
+            session$ns("detrend_slope"),
+            "Remove pre-pulse drift (Detrend)",
+            value = FALSE
+          )
+        )
+      } else {
+        NULL
+      }
     })
 
     # Display selected pulse info
@@ -192,6 +211,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
 
     # Pulse trace plot
     output$pulse_trace_plot <- plotly::renderPlotly({
+      style_config <- plot_settings()
       pulse_id <- selected_pulse_id()
 
       if (is.null(pulse_id) || is.na(pulse_id)) {
@@ -236,38 +256,80 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
         )
       }
 
-      # Calculate time_sec if not present
-      # Time should be seconds from start of measurement series (row number - 1)
+      # 1. Always set heat pulse injection at t=0
+      # Standard raw data format has 30 seconds of pre-pulse data before injection
+      # So row 31 (index 30) is always the injection point.
       if (!"time_sec" %in% names(pulse_data)) {
-#         cat("time_sec column not found, calculating from row numbers\n")
         pulse_data <- pulse_data %>%
           dplyr::mutate(time_sec = row_number() - 1)
       }
-
-      # Calculate pre-pulse baseline (typically first 30 seconds)
-      pre_pulse_period <- 30
-
-      # Adjust time_sec so heat pulse injection is at time 0
-      # Pre-pulse period becomes negative (e.g., -30 to 0)
+      
+      # Constant offset: injection is at 30 seconds
       pulse_data <- pulse_data %>%
-        dplyr::mutate(time_sec = time_sec - pre_pulse_period)
+        dplyr::mutate(time_sec = time_sec - 30)
 
-      baseline_indices <- pulse_data$time_sec < 0
+      # 2. Determine baseline method and shading window duration
+      # Get from vh_results attributes (set on Page 3)
+      baseline_window_sec <- 30
+      baseline_method <- "30-sec mean"
+      
+      if (!is.null(vh_results)) {
+        res <- vh_results()
+        method_attr <- attr(res, "baseline_method")
+        if (!is.null(method_attr)) {
+          baseline_method <- method_attr
+          if (grepl("3-sec|mean_3s", baseline_method)) baseline_window_sec <- 3
+        }
+      }
 
-      # Calculate baseline mean temperatures
-      do_baseline <- mean(pulse_data$do[baseline_indices], na.rm = TRUE)
-      di_baseline <- mean(pulse_data$di[baseline_indices], na.rm = TRUE)
-      uo_baseline <- mean(pulse_data$uo[baseline_indices], na.rm = TRUE)
-      ui_baseline <- mean(pulse_data$ui[baseline_indices], na.rm = TRUE)
+      # 3. Calculate temperature deltas (ΔT) based on the method
+      # Define the indices for the baseline window (relative to t=0)
+      baseline_indices <- pulse_data$time_sec < 0 & pulse_data$time_sec >= -baseline_window_sec
 
-      # Calculate temperature deltas (ΔT)
-      pulse_data <- pulse_data %>%
-        dplyr::mutate(
-          deltaT_do = do - do_baseline,
-          deltaT_di = di - di_baseline,
-          deltaT_uo = uo - uo_baseline,
-          deltaT_ui = ui - ui_baseline
+      if (grepl("slope", baseline_method)) {
+        # Slope-intercept: Fit linear models to full pre-pulse (-30 to 0)
+        slope_indices <- pulse_data$time_sec < 0
+        pre_data <- pulse_data[slope_indices, ]
+        
+        # Calculate and store model coefficients for each sensor
+        fit_do <- lm(do ~ time_sec, data = pre_data)
+        fit_di <- lm(di ~ time_sec, data = pre_data)
+        fit_uo <- lm(uo ~ time_sec, data = pre_data)
+        fit_ui <- lm(ui ~ time_sec, data = pre_data)
+        
+        slope_models <- list(
+          do = list(m = coef(fit_do)[2], c = coef(fit_do)[1]),
+          di = list(m = coef(fit_di)[2], c = coef(fit_di)[1]),
+          uo = list(m = coef(fit_uo)[2], c = coef(fit_uo)[1]),
+          ui = list(m = coef(fit_ui)[2], c = coef(fit_ui)[1])
         )
+        
+        detrend <- isTRUE(input$detrend_slope)
+        
+        pulse_data <- pulse_data %>%
+          dplyr::mutate(
+            deltaT_do = if(detrend) do - (slope_models$do$m * time_sec + slope_models$do$c) else do - slope_models$do$c,
+            deltaT_di = if(detrend) di - (slope_models$di$m * time_sec + slope_models$di$c) else di - slope_models$di$c,
+            deltaT_uo = if(detrend) uo - (slope_models$uo$m * time_sec + slope_models$uo$c) else uo - slope_models$uo$c,
+            deltaT_ui = if(detrend) ui - (slope_models$ui$m * time_sec + slope_models$ui$c) else ui - slope_models$ui$c
+          )
+          
+        attr(pulse_data, "slope_models") <- slope_models
+      } else {
+        # Standard mean baseline (30s or 3s)
+        do_baseline <- mean(pulse_data$do[baseline_indices], na.rm = TRUE)
+        di_baseline <- mean(pulse_data$di[baseline_indices], na.rm = TRUE)
+        uo_baseline <- mean(pulse_data$uo[baseline_indices], na.rm = TRUE)
+        ui_baseline <- mean(pulse_data$ui[baseline_indices], na.rm = TRUE)
+        
+        pulse_data <- pulse_data %>%
+          dplyr::mutate(
+            deltaT_do = do - do_baseline,
+            deltaT_di = di - di_baseline,
+            deltaT_uo = uo - uo_baseline,
+            deltaT_ui = ui - ui_baseline
+          )
+      }
 
 #       cat("Time range:", range(pulse_data$time_sec, na.rm = TRUE), "\n")
 
@@ -281,6 +343,7 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
       # Consistent colour scheme: Downstream = Red, Upstream = Blue
       if (show_outer) {
         # Downstream outer
+        style_ds <- get_plot_style(method = "Tmax_Coh", sensor = "outer", config = style_config)
         p <- p %>%
           add_trace(
             data = pulse_data,
@@ -289,11 +352,12 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
             type = "scatter",
             mode = "lines+markers",
             name = "Downstream Outer",
-            line = list(color = "#d62728", width = 2),  # Red
-            marker = list(size = 4, color = "#d62728")
+            line = style_ds,
+            marker = list(size = 4, color = style_ds$color)
           )
 
         # Upstream outer
+        style_us <- get_plot_style(method = "HRM", sensor = "outer", config = style_config)
         p <- p %>%
           add_trace(
             data = pulse_data,
@@ -302,11 +366,12 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
             type = "scatter",
             mode = "lines+markers",
             name = "Upstream Outer",
-            line = list(color = "#1f77b4", width = 2),  # Blue
-            marker = list(size = 4, color = "#1f77b4")
+            line = style_us,
+            marker = list(size = 4, color = style_us$color)
           )
       } else {
         # Downstream inner
+        style_ds <- get_plot_style(method = "Tmax_Coh", sensor = "inner", config = style_config)
         p <- p %>%
           add_trace(
             data = pulse_data,
@@ -315,11 +380,12 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
             type = "scatter",
             mode = "lines+markers",
             name = "Downstream Inner",
-            line = list(color = "#d62728", width = 2),  # Red
-            marker = list(size = 4, color = "#d62728")
+            line = style_ds,
+            marker = list(size = 4, color = style_ds$color)
           )
 
         # Upstream inner
+        style_us <- get_plot_style(method = "HRM", sensor = "inner", config = style_config)
         p <- p %>%
           add_trace(
             data = pulse_data,
@@ -328,9 +394,61 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
             type = "scatter",
             mode = "lines+markers",
             name = "Upstream Inner",
-            line = list(color = "#1f77b4", width = 2),  # Blue
-            marker = list(size = 4, color = "#1f77b4")
+            line = style_us,
+            marker = list(size = 4, color = style_us$color)
           )
+      }
+
+      # Add slope trendlines if in Drift View
+      slope_models <- attr(pulse_data, "slope_models")
+      if (!is.null(slope_models) && !isTRUE(input$detrend_slope)) {
+        if (show_outer) {
+          # Downstream outer trend
+          p <- p %>% add_trace(
+            x = pulse_data$time_sec,
+            y = slope_models$do$m * pulse_data$time_sec,
+            type = "scatter",
+            mode = "lines",
+            name = "DS Drift Trend",
+            line = list(color = style_ds$color, dash = "dash", width = 1),
+            hoverinfo = "none",
+            showlegend = FALSE
+          )
+          # Upstream outer trend
+          p <- p %>% add_trace(
+            x = pulse_data$time_sec,
+            y = slope_models$uo$m * pulse_data$time_sec,
+            type = "scatter",
+            mode = "lines",
+            name = "US Drift Trend",
+            line = list(color = style_us$color, dash = "dash", width = 1),
+            hoverinfo = "none",
+            showlegend = FALSE
+          )
+        } else {
+          # Downstream inner trend
+          p <- p %>% add_trace(
+            x = pulse_data$time_sec,
+            y = slope_models$di$m * pulse_data$time_sec,
+            type = "scatter",
+            mode = "lines",
+            name = "DS Drift Trend",
+            line = list(color = style_ds$color, dash = "dash", width = 1),
+            hoverinfo = "none",
+            showlegend = FALSE
+          )
+          # Upstream inner trend
+          p <- p %>% add_trace(
+            x = pulse_data$time_sec,
+            y = slope_models$ui$m * pulse_data$time_sec,
+            type = "scatter",
+            mode = "lines",
+            name = "US Drift Trend",
+            line = list(color = style_us$color, dash = "dash", width = 1),
+            hoverinfo = "none",
+            showlegend = FALSE
+          )
+        }
       }
 
       # Add vertical line at heat pulse injection (now at time 0)
@@ -356,16 +474,16 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
       show_windows <- if (!is.null(input$show_windows)) input$show_windows else character(0)
 
       if ("baseline" %in% show_windows) {
-        # Baseline window (pre-pulse, now from -pre_pulse_period to 0)
+        # Baseline window (pre-pulse, from -baseline_window_sec to 0)
         p <- p %>%
           add_trace(
-            x = c(-pre_pulse_period, 0, 0, -pre_pulse_period, -pre_pulse_period),
+            x = c(-baseline_window_sec, 0, 0, -baseline_window_sec, -baseline_window_sec),
             y = c(min_deltaT, min_deltaT, max_deltaT, max_deltaT, min_deltaT),
             type = "scatter",
             mode = "none",
             fill = "toself",
             fillcolor = "rgba(128, 128, 128, 0.1)",
-            name = sprintf("Baseline (-%ds to 0)", pre_pulse_period),
+            name = sprintf("Baseline (%s)", baseline_method),
             showlegend = TRUE,
             hoverinfo = "name"
           )
@@ -537,14 +655,8 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
         }
       }
 
-      if ("HRMXa" %in% show_windows) {
-        # HRMXa window - get actual window times from results
-        # Get the sensor position being displayed
-        position <- if (show_outer) "outer" else "inner"
-
-        # Default window times
-        hrm_start <- 60
-        hrm_end <- 100
+      if (FALSE) {
+        # HRMXa/HRMXb removed — methods no longer supported
 
         # Get the actual window times from vh_results for this pulse and method
         if (!is.null(vh_results)) {
@@ -719,10 +831,8 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
         }
       }
 
-      if ("HRMXb" %in% input$show_windows) {
-        # HRMXb uses two separate windows - get actual window times from results
-        # Get the sensor position being displayed
-        position <- if (show_outer) "outer" else "inner"
+      if (FALSE) {
+        # HRMXb removed — method no longer supported
 
         # Default window times
         downstream_start <- 60
@@ -1166,53 +1276,88 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
         }
       }
 
-      # Layout
+      # Apply standard layout
+      base_layout <- get_standard_layout(
+        title = paste("Pulse Temperature Trace -", format(pulse_data$datetime[1], "%Y-%m-%d %H:%M:%S")),
+        xtitle = "Time relative to heat pulse injection (seconds)",
+        ytitle = "\u0394T (\u00B0C)",
+        uirevision = "pulse_trace_zoom"
+      )
+
+      base_layout$xaxis$range <- c(min(pulse_data$time_sec, na.rm = TRUE), max(pulse_data$time_sec, na.rm = TRUE))
+      base_layout$yaxis$rangemode <- "tozero"
+      base_layout$hovermode <- "x unified"
+
+      annot_list <- list(
+        list(
+          x = 0,
+          y = max_deltaT * 0.95,
+          text = "Heat Pulse<br>Injection<br>(t = 0)",
+          showarrow = FALSE,
+          xanchor = "left",
+          xshift = 5,
+          font = list(size = 10, color = "red"),
+          bgcolor = "rgba(255, 255, 255, 0.8)",
+          bordercolor = "red",
+          borderwidth = 1,
+          borderpad = 4
+        )
+      )
+
+      # Add slope annotations if in Drift View
+      slope_models <- attr(pulse_data, "slope_models")
+      if (!is.null(slope_models) && !isTRUE(input$detrend_slope)) {
+        if (show_outer) {
+          annot_list[[length(annot_list) + 1]] <- list(
+            x = -baseline_window_sec / 2,
+            y = slope_models$do$m * (-baseline_window_sec / 2) + 0.05,
+            text = sprintf("DS Drift: T = %.4ft + %.2f", slope_models$do$m, slope_models$do$c),
+            showarrow = FALSE,
+            font = list(size = 10, color = style_ds$color),
+            bgcolor = "rgba(255,255,255,0.7)"
+          )
+          annot_list[[length(annot_list) + 1]] <- list(
+            x = -baseline_window_sec / 2,
+            y = slope_models$uo$m * (-baseline_window_sec / 2) - 0.05,
+            text = sprintf("US Drift: T = %.4ft + %.2f", slope_models$uo$m, slope_models$uo$c),
+            showarrow = FALSE,
+            font = list(size = 10, color = style_us$color),
+            bgcolor = "rgba(255,255,255,0.7)"
+          )
+        } else {
+          annot_list[[length(annot_list) + 1]] <- list(
+            x = -baseline_window_sec / 2,
+            y = slope_models$di$m * (-baseline_window_sec / 2) + 0.05,
+            text = sprintf("DS Drift: T = %.4ft + %.2f", slope_models$di$m, slope_models$di$c),
+            showarrow = FALSE,
+            font = list(size = 10, color = style_ds$color),
+            bgcolor = "rgba(255,255,255,0.7)"
+          )
+          annot_list[[length(annot_list) + 1]] <- list(
+            x = -baseline_window_sec / 2,
+            y = slope_models$ui$m * (-baseline_window_sec / 2) - 0.05,
+            text = sprintf("US Drift: T = %.4ft + %.2f", slope_models$ui$m, slope_models$ui$c),
+            showarrow = FALSE,
+            font = list(size = 10, color = style_us$color),
+            bgcolor = "rgba(255,255,255,0.7)"
+          )
+        }
+      }
+
       p <- p %>%
         layout(
-          title = paste("Pulse Temperature Trace -", format(pulse_data$datetime[1], "%Y-%m-%d %H:%M:%S")),
-          xaxis = list(
-            title = "Time relative to heat pulse injection (seconds)",
-            showgrid = TRUE,
-            range = c(min(pulse_data$time_sec, na.rm = TRUE), max(pulse_data$time_sec, na.rm = TRUE))
-          ),
-          yaxis = list(
-            title = "\u0394T (\u00B0C)",  # Delta T (temperature change)
-            showgrid = TRUE,
-            rangemode = "tozero"  # Always include zero
-          ),
-          hovermode = "x unified",
-          legend = list(
-            orientation = "h",
-            x = 0,
-            y = -0.2
-          ),
-          annotations = list(
-            list(
-              x = 0,
-              y = max_deltaT * 0.95,
-              text = "Heat Pulse<br>Injection<br>(t = 0)",
-              showarrow = FALSE,
-              xanchor = "left",
-              xshift = 5,
-              font = list(size = 10, color = "red"),
-              bgcolor = "rgba(255, 255, 255, 0.8)",
-              bordercolor = "red",
-              borderwidth = 1,
-              borderpad = 4
-            )
-          )
+          title = base_layout$title,
+          xaxis = base_layout$xaxis,
+          yaxis = base_layout$yaxis,
+          showlegend = base_layout$showlegend,
+          legend = base_layout$legend,
+          hovermode = base_layout$hovermode,
+          uirevision = base_layout$uirevision,
+          plot_bgcolor = base_layout$plot_bgcolor,
+          paper_bgcolor = base_layout$paper_bgcolor,
+          annotations = annot_list
         ) %>%
-        config(
-          displayModeBar = TRUE,
-          displaylogo = FALSE,
-          toImageButtonOptions = list(
-            format = "png",
-            filename = paste0("pulse_trace_", pulse_id),
-            height = 600,
-            width = 1200,
-            scale = 2
-          )
-        )
+        apply_standard_plotly_config(filename = paste0("pulse_trace_", pulse_id), add_csv_download = TRUE)
 
       p
     })

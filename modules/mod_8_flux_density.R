@@ -125,8 +125,8 @@ fluxDensityUI <- function(id) {
               ),
               column(6,
                 numericInput(
-                  ns("sapwood_depth_cm"),
-                  "Sapwood Depth (cm):",
+                  ns("sapwood_thickness_cm"),
+                  "Sapwood Thickness (cm):",
                   value = 3.0,
                   min = 0.1,
                   max = 50,
@@ -136,8 +136,17 @@ fluxDensityUI <- function(id) {
             ),
 
             numericInput(
-              ns("bark_thickness_cm"),
-              "Bark Thickness (cm, optional):",
+              ns("bark_thickness_dbh_cm"),
+              "Bark Thickness at DBH (cm):",
+              value = 0,
+              min = 0,
+              max = 10,
+              step = 0.1
+            ),
+
+            numericInput(
+              ns("bark_thickness_probe_cm"),
+              "Bark Thickness at Probe (cm, after shaving):",
               value = 0,
               min = 0,
               max = 10,
@@ -146,17 +155,36 @@ fluxDensityUI <- function(id) {
 
             hr(),
 
+            tags$label(
+              "Radial Integration Method:",
+              tags$span(
+                tabindex = "0",
+                style = "margin-left: 6px; color: #3c8dbc; cursor: help;",
+                title = paste(
+                  "Linear decay (Pausch et al. 2000): sap flux declines linearly",
+                  "from the adjacent sensor value to zero across an unmeasured",
+                  "annulus, giving a mean of Jv / 2.\n\n",
+                  "Constant velocity (nearest-neighbour): the adjacent sensor",
+                  "value is applied unchanged across the unmeasured annulus."
+                ),
+                icon("circle-question")
+              )
+            ),
             selectInput(
               ns("integration_method"),
-              "Integration Method:",
+              label = NULL,
               choices = c(
-                "Weighted Average" = "weighted_average",
-                "Uniform" = "uniform"
+                "Linear decay (Pausch et al. 2000)" = "linear_decay",
+                "Constant velocity (nearest-neighbour)" = "constant_velocity"
               ),
-              selected = "weighted_average"
+              selected = "linear_decay"
             ),
 
-            helpText("Weighted average accounts for radial variation in sap flux density."),
+            helpText(
+              icon("info-circle"),
+              " The method only affects sensorless annuli (where the sapwood",
+              " extends past the deepest sensor or no inner sensor is fitted)."
+            ),
 
             hr(),
 
@@ -166,44 +194,6 @@ fluxDensityUI <- function(id) {
               icon = icon("tint"),
               class = "btn-warning",
               width = "100%"
-            )
-          )
-        ),
-
-        # Export options
-        box(
-          width = 12,
-          title = "Export Flux Density Data",
-          status = "success",
-          solidHeader = TRUE,
-          collapsible = TRUE,
-          collapsed = TRUE,
-
-          conditionalPanel(
-            condition = sprintf("!output['%s']", ns("has_flux_results")),
-            p(em("No flux density data available yet."))
-          ),
-
-          conditionalPanel(
-            condition = sprintf("output['%s']", ns("has_flux_results")),
-
-            helpText("Export sap flux density data to CSV for further analysis."),
-
-            selectInput(
-              ns("export_format"),
-              "Export Format:",
-              choices = c(
-                "Wide format (one column per sensor/method)" = "wide",
-                "Long format (tidy data)" = "long"
-              ),
-              selected = "wide"
-            ),
-
-            downloadButton(
-              ns("download_flux_data"),
-              "Download CSV",
-              class = "btn-success",
-              style = "width: 100%;"
             )
           )
         )
@@ -286,26 +276,6 @@ fluxDensityUI <- function(id) {
               strong("Tab 9: Aggregation"),
               " for temporal summaries."
             )
-          )
-        ),
-
-        # Active Status Box
-        box(
-          width = 12,
-          title = "Active Conversion Status",
-          status = "info",
-          solidHeader = TRUE,
-          collapsible = TRUE,
-          collapsed = TRUE,
-
-          conditionalPanel(
-            condition = sprintf("!output['%s']", ns("has_flux_results")),
-            p(em("No conversions applied yet."))
-          ),
-
-          conditionalPanel(
-            condition = sprintf("output['%s']", ns("has_flux_results")),
-            verbatimTextOutput(ns("flux_status"))
           )
         )
       )
@@ -460,13 +430,16 @@ fluxDensityServer <- function(id,
         }
 
         # Update sapwood depth if available
-        if (!is.null(tree_meas$sapwood_depth) && !is.na(tree_meas$sapwood_depth)) {
-          updateNumericInput(session, "sapwood_depth_cm", value = tree_meas$sapwood_depth)
+        if (!is.null(tree_meas$sapwood_thickness) && !is.na(tree_meas$sapwood_thickness)) {
+          updateNumericInput(session, "sapwood_thickness_cm", value = tree_meas$sapwood_thickness)
         }
 
         # Update bark thickness if available
-        if (!is.null(tree_meas$bark_thickness) && !is.na(tree_meas$bark_thickness)) {
-          updateNumericInput(session, "bark_thickness_cm", value = tree_meas$bark_thickness)
+        if (!is.null(tree_meas$bark_thickness_dbh) && !is.na(tree_meas$bark_thickness_dbh)) {
+          updateNumericInput(session, "bark_thickness_dbh_cm", value = tree_meas$bark_thickness_dbh)
+        }
+        if (!is.null(tree_meas$bark_thickness_probe) && !is.na(tree_meas$bark_thickness_probe)) {
+          updateNumericInput(session, "bark_thickness_probe_cm", value = tree_meas$bark_thickness_probe)
         }
       }
     })
@@ -608,13 +581,14 @@ fluxDensityServer <- function(id,
               }
 
               if (!is.null(data) && "method" %in% names(data)) {
+                vel_col <- if ("Vs_cm_hr" %in% names(data)) "Vs_cm_hr" else "Vh_cm_hr"
                 # Get ALL sensors (don't filter by sensor_position)
                 filtered <- data %>%
                   dplyr::filter(
                     method == method_name
                   ) %>%
                   dplyr::mutate(
-                    Vh_for_conversion = Vh_cm_hr,
+                    Vh_for_conversion = .data[[vel_col]],
                     method_label = if (source_type == "corrected") {
                       paste0(method_name, " (Spacing Corrected)")
                     } else if (source_type == "wound") {
@@ -668,17 +642,15 @@ fluxDensityServer <- function(id,
             methods_str <- paste0('"', input$methods_selected, '"', collapse = ", ")
             code_tracker$add_step(
               step_name = "Convert to Sap Flux Density",
-              code = sprintf(
-                paste0(
+              code = paste0(
                   '# Convert heat pulse velocity to sap flux density\n',
-                  'flux_data <- sapfluxr::convert_vh_to_flux_density(\n',
-                  '  vh_data = velocity_data,  # Use corrected velocity data\n',
-                  '  wood_properties = wood_properties,\n',
-                  '  methods = c(%s)\n',
+                  '# velocity_data$Vs_cm_hr is the current best velocity estimate\n',
+                  'flux_data <- velocity_data\n',
+                  'flux_data$Jv_cm3_cm2_hr <- sapfluxr::calc_sap_flux_density(\n',
+                  '  Vh             = velocity_data$Vs_cm_hr,\n',
+                  '  wood_properties = wood_properties\n',
                   ')'
                 ),
-                methods_str
-              ),
               description = sprintf("Converted %d method(s) to flux density", length(input$methods_selected))
             )
           }
@@ -702,7 +674,7 @@ fluxDensityServer <- function(id,
     # Calculate tree water use (Q)
     observeEvent(input$calculate_tree_water_use, {
       req(rv$flux_data)
-      req(input$dbh_cm, input$sapwood_depth_cm)
+      req(input$dbh_cm, input$sapwood_thickness_cm)
 
       withProgress(message = "Calculating tree water use...", {
 
@@ -710,17 +682,19 @@ fluxDensityServer <- function(id,
           # Add tree dimensions as columns to flux data
           flux_with_dims <- rv$flux_data
           flux_with_dims$dbh <- input$dbh_cm
-          flux_with_dims$sapwood_depth <- input$sapwood_depth_cm
-          flux_with_dims$bark_thickness <- input$bark_thickness_cm
+          flux_with_dims$sapwood_thickness <- input$sapwood_thickness_cm
+          flux_with_dims$bark_thickness_dbh <- input$bark_thickness_dbh_cm
+          flux_with_dims$bark_thickness_probe <- input$bark_thickness_probe_cm
 
           # Apply sap flux integration across sapwood area
           # This integrates flux density from all sensor positions (inner + outer)
-          # using the selected integration method (weighted average or uniform)
+          # using the selected radial method (linear_decay or constant_velocity)
           tree_water_use_data <- sapfluxr::apply_sap_flux_integration(
             flux_data = flux_with_dims,
             dbh_col = "dbh",
-            sapwood_depth_col = "sapwood_depth",
-            bark_thickness_col = "bark_thickness",
+            sapwood_thickness_col = "sapwood_thickness",
+            bark_thickness_dbh_col = "bark_thickness_dbh",
+            bark_thickness_probe_col = "bark_thickness_probe",
             method = input$integration_method
           )
 
@@ -728,16 +702,17 @@ fluxDensityServer <- function(id,
           rv$tree_water_use_data <- tree_water_use_data
           rv$tree_dimensions <- list(
             dbh = input$dbh_cm,
-            sapwood_depth = input$sapwood_depth_cm,
-            bark_thickness = input$bark_thickness_cm
+            sapwood_thickness = input$sapwood_thickness_cm,
+            bark_thickness_dbh = input$bark_thickness_dbh_cm,
+            bark_thickness_probe = input$bark_thickness_probe_cm
           )
           rv$integration_timestamp <- Sys.time()
 
           # Code generation
           if (!isTRUE(code_tracker)) {
             # Calculate sapwood area
-            r_outer <- (input$dbh_cm - 2 * input$bark_thickness_cm) / 2
-            r_inner <- r_outer - input$sapwood_depth_cm
+            r_outer <- (input$dbh_cm / 2) - input$bark_thickness_dbh_cm
+            r_inner <- r_outer - input$sapwood_thickness_cm
             sapwood_area <- pi * (r_outer^2 - r_inner^2)
 
             rv$tree_dimensions$sapwood_area <- sapwood_area
@@ -747,30 +722,34 @@ fluxDensityServer <- function(id,
               step_name = "Calculate Tree Water Use",
               code = sprintf(
                 paste0(
-                  '# Calculate tree-level water use from flux density\n',
+                  '# Add tree dimensions as columns, then integrate across sapwood\n',
+                  'flux_data$dbh                  <- %.2f  # cm\n',
+                  'flux_data$sapwood_thickness        <- %.2f  # cm\n',
+                  'flux_data$bark_thickness_dbh   <- %.2f  # cm (full bark at DBH)\n',
+                  'flux_data$bark_thickness_probe <- %.2f  # cm (remaining bark at probe site)\n',
                   'tree_water_use <- sapfluxr::apply_sap_flux_integration(\n',
-                  '  flux_data = flux_data,\n',
-                  '  dbh = %.2f,  # cm\n',
-                  '  sapwood_depth = %.2f,  # cm\n',
-                  '  bark_thickness = %.2f,  # cm\n',
-                  '  method = "%s"  # Integration method\n',
+                  '  flux_data              = flux_data,\n',
+                  '  bark_thickness_dbh_col = "bark_thickness_dbh",\n',
+                  '  bark_thickness_probe_col = "bark_thickness_probe",\n',
+                  '  method                 = "%s"\n',
                   ')\n',
-                  '# Sapwood area: %.2f cm²'
+                  '# Sapwood area: %.2f cm\u00b2'
                 ),
                 input$dbh_cm,
-                input$sapwood_depth_cm,
-                input$bark_thickness_cm,
+                input$sapwood_thickness_cm,
+                input$bark_thickness_dbh_cm,
+                input$bark_thickness_probe_cm,
                 input$integration_method,
                 sapwood_area
               ),
               description = sprintf("Integrated flux across sapwood area (DBH: %.1f cm, Sapwood: %.1f cm, Area: %.1f cm²)",
-                                   input$dbh_cm, input$sapwood_depth_cm, sapwood_area)
+                                   input$dbh_cm, input$sapwood_thickness_cm, sapwood_area)
             )
           }
 
           showNotification(
             sprintf("Tree water use calculated! DBH: %.1f cm, Sapwood depth: %.1f cm",
-                    input$dbh_cm, input$sapwood_depth_cm),
+                    input$dbh_cm, input$sapwood_thickness_cm),
             type = "message"
           )
 
@@ -869,22 +848,6 @@ fluxDensityServer <- function(id,
       )
     })
 
-    # Flux status
-    output$flux_status <- renderText({
-      req(rv$flux_data)
-
-      sprintf(
-        paste0(
-          "Flux density data active (%d records)\n",
-          "Source: %s\n",
-          "Converted: %s"
-        ),
-        nrow(rv$flux_data),
-        rv$velocity_source_used,
-        format(rv$conversion_timestamp, "%Y-%m-%d %H:%M:%S")
-      )
-    })
-
     # Tree water use summary
     output$tree_water_use_summary <- renderText({
       req(rv$tree_water_use_data)
@@ -897,8 +860,8 @@ fluxDensityServer <- function(id,
           dplyr::group_by(method_label) %>%
           dplyr::summarise(
             n = dplyr::n(),
-            mean_Q = mean(Q_L_hr, na.rm = TRUE),
-            mean_daily = mean(Q_L_hr, na.rm = TRUE) * 24,  # Mean daily water use (L/day)
+            mean_Q = mean(Q_total_L_hr, na.rm = TRUE),
+            mean_daily = mean(Q_total_L_hr, na.rm = TRUE) * 24,  # Mean instantaneous rate × 24 h
             .groups = "drop"
           )
 
@@ -923,7 +886,7 @@ fluxDensityServer <- function(id,
           "Tree Water Use Summary\n\n",
           "Tree Dimensions:\n",
           "  DBH: %.2f cm\n",
-          "  Sapwood Depth: %.2f cm\n",
+          "  Sapwood Thickness: %.2f cm\n",
           "  Sapwood Area: %.2f cm²\n\n",
           "Integration Method: %s\n",
           "Calculated: %s\n\n",
@@ -938,7 +901,7 @@ fluxDensityServer <- function(id,
           "  Max: %.3f L/hr"
         ),
         rv$tree_dimensions$dbh,
-        rv$tree_dimensions$sapwood_depth,
+        rv$tree_dimensions$sapwood_thickness,
         rv$tree_dimensions$sapwood_area,
         rv$tree_dimensions$integration_method,
         format(rv$integration_timestamp, "%Y-%m-%d %H:%M:%S"),
@@ -946,11 +909,11 @@ fluxDensityServer <- function(id,
         format(min(q_data$datetime), "%Y-%m-%d"),
         format(max(q_data$datetime), "%Y-%m-%d"),
         method_text,
-        mean(q_data$Q_L_hr, na.rm = TRUE),
-        median(q_data$Q_L_hr, na.rm = TRUE),
-        mean(q_data$Q_L_hr, na.rm = TRUE) * 24,  # Mean daily water use (L/day)
-        min(q_data$Q_L_hr, na.rm = TRUE),
-        max(q_data$Q_L_hr, na.rm = TRUE)
+        mean(q_data$Q_total_L_hr, na.rm = TRUE),
+        median(q_data$Q_total_L_hr, na.rm = TRUE),
+        mean(q_data$Q_total_L_hr, na.rm = TRUE) * 24,
+        min(q_data$Q_total_L_hr, na.rm = TRUE),
+        max(q_data$Q_total_L_hr, na.rm = TRUE)
       )
     })
 
@@ -964,25 +927,6 @@ fluxDensityServer <- function(id,
     # REMOVED: daily_flux_plot - moved to mod_8b
     # REMOVED: tree_water_use_plot_hourly - moved to mod_8b
     # REMOVED: tree_water_use_plot_daily - moved to mod_8b
-
-    # Download flux data
-    output$download_flux_data <- downloadHandler(
-      filename = function() {
-        paste0("sap_flux_density_", format(Sys.Date(), "%Y%m%d"), ".csv")
-      },
-      content = function(file) {
-        req(rv$flux_data)
-
-        if (input$export_format == "wide") {
-          # Wide format: keep as is
-          write.csv(rv$flux_data, file, row.names = FALSE)
-        } else {
-          # Long format: reshape
-          # This would require tidyr::pivot_longer, implement if needed
-          write.csv(rv$flux_data, file, row.names = FALSE)
-        }
-      }
-    )
 
     # Return values for downstream modules
     return(list(

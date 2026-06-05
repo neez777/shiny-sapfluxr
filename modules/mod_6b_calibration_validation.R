@@ -3,7 +3,7 @@
 #
 # Tab 6b: Calibration Validation
 # Time series plots to verify the "fit" of calibrated data against HRM baseline.
-# Shows before/after calibration comparison to assess calibration quality.
+# Shows before/after calibration comparison for secondary methods.
 
 # UI ----
 calibrationValidationUI <- function(id) {
@@ -11,51 +11,49 @@ calibrationValidationUI <- function(id) {
 
   tagList(
     fluidRow(
-      # Left column: Controls
+      # Left column: Configuration
       column(
         width = 3,
         box(
-          width = NULL,
-          title = "Validation Controls",
+          width = 12,
+          title = "Plot Controls",
           status = "primary",
           solidHeader = TRUE,
-          collapsible = TRUE,
-          collapsed = FALSE,
 
-          h5("Calibration State"),
-          helpText("Compare raw vs. calibrated velocities"),
           selectInput(
-            ns("calibration_state"),
-            NULL,
-            choices = c(
-              "Raw (Before Calibration)" = "raw",
-              "Calibrated (After Calibration)" = "calibrated",
-              "Both (Comparison)" = "both"
-            ),
-            selected = "both"
-          ),
-
-          hr(),
-
-          h5("Methods to Display"),
-          helpText("Select methods to compare against HRM baseline"),
-          uiOutput(ns("method_checkboxes")),
-
-          hr(),
-
-          h5("Sensor Position"),
-          radioButtons(
             ns("sensor_position"),
-            NULL,
-            choices = c("Inner" = "inner", "Outer" = "outer"),
+            "Sensor Position:",
+            choices = c("Outer" = "outer", "Inner" = "inner"),
             selected = "outer"
           ),
 
           hr(),
 
-          h5("Time Range"),
-          p(class = "help-text", style = "font-size: 0.9em; color: #666;",
-            "Select date range to display"),
+          h5("Calibration States"),
+          helpText("Toggle Raw and Calibrated traces"),
+          checkboxGroupInput(
+            ns("calibration_states"),
+            NULL,
+            choices = c(
+              "Raw (Before Calibration)" = "raw",
+              "Calibrated (After Calibration)" = "calibrated"
+            ),
+            selected = c("raw", "calibrated")
+          ),
+
+          hr(),
+
+          h5("Methods to Show"),
+          helpText("HRM is always shown as baseline"),
+          uiOutput(ns("method_checkboxes"))
+        ),
+
+        box(
+          width = 12,
+          title = "Time Range",
+          status = "info",
+          solidHeader = TRUE,
+          collapsible = TRUE,
 
           shinyWidgets::airDatepickerInput(
             ns("start_datetime"),
@@ -73,63 +71,27 @@ calibrationValidationUI <- function(id) {
             dateFormat = "yyyy-MM-dd HH:mm"
           ),
 
-          actionButton(
-            ns("apply_range"),
-            "Apply Time Range",
-            icon = icon("clock"),
-            class = "btn-primary",
-            style = "width: 100%; margin-top: 5px;"
-          ),
-
-          hr(),
-
-          h5("Display Options"),
-          checkboxInput(
-            ns("show_vpd"),
-            "Show VPD overlay (right axis)",
-            value = FALSE
-          ),
-
-          checkboxInput(
-            ns("show_legend"),
-            "Show legend",
-            value = TRUE
+          fluidRow(
+            column(6, actionButton(ns("apply_range"), "Apply", class = "btn-primary btn-block")),
+            column(6, actionButton(ns("reset_zoom"), "Reset Zoom", class = "btn-default btn-block"))
           )
         )
       ),
 
-      # Right column: Plot
+      # Right column: Plot and Results
       column(
         width = 9,
         box(
-          width = NULL,
-          title = "Calibration Validation Plot",
-          status = "success",
+          width = 12,
+          title = "Calibration Validation",
+          status = "primary",
           solidHeader = TRUE,
-
-          helpText(
-            icon("info-circle"),
-            "This plot shows how well the calibrated secondary methods align with HRM (the primary/baseline method).",
-            "Good calibration results in similar patterns between HRM and secondary methods."
-          ),
-
+          
           shinycssloaders::withSpinner(
             plotly::plotlyOutput(ns("validation_plot"), height = "600px"),
             type = 6,
             color = "#3c8dbc"
           )
-        ),
-
-        # Statistics box (moved below plot)
-        box(
-          width = NULL,
-          title = "Calibration Statistics",
-          status = "info",
-          solidHeader = TRUE,
-          collapsible = TRUE,
-          collapsed = FALSE,
-
-          htmlOutput(ns("calibration_stats"))
         )
       )
     )
@@ -138,14 +100,17 @@ calibrationValidationUI <- function(id) {
 
 # Server ----
 calibrationValidationServer <- function(id,
-                                         vh_raw,
-                                         vh_calibrated,
+                                         vh_raw = reactive(NULL),
+                                         vh_calibrated = reactive(NULL),
                                          weather_data = reactive(NULL),
-                                         code_tracker = NULL) {
+                                         code_tracker = NULL,
+                                         plot_settings = reactive(NULL)) {
   moduleServer(id, function(input, output, session) {
-    ns <- session$ns
 
-    # Initialize datetime range from data
+    # Internal state
+    time_range <- reactiveVal(NULL)
+
+    # Initialise date/time range inputs when raw data becomes available
     observe({
       req(vh_raw())
 
@@ -167,335 +132,219 @@ calibrationValidationServer <- function(id,
     output$method_checkboxes <- renderUI({
       req(vh_raw())
 
-      data <- vh_raw()
-      methods <- unique(data$method)
-      # Remove HRM from choices (it's always shown as baseline)
-      secondary_methods <- setdiff(methods, "HRM")
+      # Get available secondary methods
+      methods <- unique(vh_raw()$method)
+      secondary_methods <- methods[methods != "HRM"]
+
+      if (length(secondary_methods) == 0) {
+        return(p(em("No secondary methods available.")))
+      }
 
       checkboxGroupInput(
-        ns("methods_selected"),
+        session$ns("methods_selected"),
         NULL,
         choices = secondary_methods,
         selected = secondary_methods
       )
     })
 
-    # Reactive: Time range
-    time_range <- reactiveVal(NULL)
-
     observeEvent(input$apply_range, {
       time_range(c(input$start_datetime, input$end_datetime))
     })
 
-    # Reactive: Filtered data for plotting
-    plot_data <- reactive({
+    # Calibration Validation Plot - Stable Base Layer (HRM)
+    output$validation_plot <- plotly::renderPlotly({
       req(vh_raw())
       req(input$sensor_position)
-      req(input$methods_selected)
 
       raw_data <- vh_raw()
-
-      # Validate raw data structure
-      if (!all(c("datetime", "method", "sensor_position", "Vh_cm_hr") %in% names(raw_data))) {
-        return(data.frame())  # Return empty data frame if structure is wrong
-      }
-
-      cal_data <- vh_calibrated()
       sensor <- input$sensor_position
-      methods <- c("HRM", input$methods_selected)  # Always include HRM
 
-      # Filter by sensor and methods
-      raw_filtered <- raw_data %>%
-        dplyr::filter(
-          sensor_position == sensor,
-          method %in% methods
-        )
-
-      # Apply time range if set
-      if (!is.null(time_range())) {
-        raw_filtered <- raw_filtered %>%
-          dplyr::filter(
-            datetime >= time_range()[1],
-            datetime <= time_range()[2]
-          )
-      }
-
-      # Add calibration state flag
-      raw_filtered <- raw_filtered %>%
-        dplyr::mutate(calibration_state = "raw")
-
-      # If we have calibrated data and want to show it
-      if (!is.null(cal_data) && nrow(cal_data) > 0 && input$calibration_state %in% c("calibrated", "both")) {
-        cal_filtered <- cal_data %>%
-          dplyr::filter(
-            sensor_position == sensor,
-            method %in% methods
-          )
-
-        # Apply time range
-        if (!is.null(time_range())) {
-          cal_filtered <- cal_filtered %>%
-            dplyr::filter(
-              datetime >= time_range()[1],
-              datetime <= time_range()[2]
-            )
-        }
-
-        cal_filtered <- cal_filtered %>%
-          dplyr::mutate(calibration_state = "calibrated")
-
-        # Combine based on selection
-        if (input$calibration_state == "both") {
-          plot_data <- dplyr::bind_rows(raw_filtered, cal_filtered)
-        } else {
-          plot_data <- cal_filtered
-        }
-      } else {
-        plot_data <- raw_filtered
-      }
-
-      return(plot_data)
-    })
-
-    # Validation plot
-    output$validation_plot <- plotly::renderPlotly({
-
-      # Wrap in tryCatch for better error handling
       tryCatch({
-        req(plot_data())
+        # Prepare HRM Baseline (always shown as base)
+        hrm_base <- raw_data %>%
+          dplyr::filter(sensor_position == sensor, method == "HRM")
 
-        data <- plot_data()
-
-        # Check if calibrated data is available
-        has_calibrated <- any(data$calibration_state == "calibrated")
-
-        if (nrow(data) == 0) {
+        if (nrow(hrm_base) == 0) {
           return(
             plotly::plot_ly() %>%
               plotly::layout(
-                title = "No data to display - please run calibration first",
+                title = paste("No HRM data for", sensor, "sensor"),
                 xaxis = list(title = "Datetime"),
                 yaxis = list(title = "Velocity (cm/hr)")
               )
           )
         }
 
-        # If user selected calibrated/both but no calibrated data exists
-        if (input$calibration_state %in% c("calibrated", "both") && !has_calibrated) {
-          return(
-            plotly::plot_ly() %>%
-              plotly::layout(
-                title = "No calibrated data available - please run calibration in Tab 6a first",
-                xaxis = list(title = "Datetime"),
-                yaxis = list(title = "Velocity (cm/hr)")
-              )
+        # Get Style
+        style_config <- plot_settings()
+        hrm_style <- get_plot_style(method = "HRM", sensor = sensor, is_corrected = TRUE, config = style_config)
+
+        # Determine HRM column (prioritize Wound Corrected > Spacing Corrected > Raw)
+        hrm_col <- if ("Vh_cm_hr_wc" %in% names(hrm_base)) "Vh_cm_hr_wc" else 
+                   if ("Vh_cm_hr_sc" %in% names(hrm_base)) "Vh_cm_hr_sc" else "Vh_cm_hr"
+        
+        # Create Plot with HRM only
+        p <- plotly::plot_ly(source = "validation_plot") %>%
+          plotly::add_trace(
+            data = hrm_base,
+            x = ~datetime,
+            y = as.formula(paste0("~", hrm_col)),
+            type = "scatter",
+            mode = "lines",
+            name = "HRM (Corrected)",
+            line = hrm_style,
+            hovertemplate = paste0("<b>HRM (Baseline)</b><br>Time: %{x}<br>Vel: %{y:.2f} (", hrm_col, ")<extra></extra>")
           )
-        }
 
-      # Create base plot
-      p <- plotly::plot_ly()
-
-      # Color palette for methods
-      method_colors <- c(
-        "HRM" = "#1f77b4",
-        "MHR" = "#ff7f0e",
-        "HRMXa" = "#2ca02c",
-        "HRMXb" = "#d62728",
-        "Tmax_Coh" = "#9467bd",
-        "Tmax_Klu" = "#8c564b"
-      )
-
-      # Add traces for each method and calibration state
-      for (method in unique(data$method)) {
-        for (state in unique(data$calibration_state)) {
-          # Skip HRM raw when showing both (HRM doesn't get calibrated, so only show once)
-          if (method == "HRM" && state == "raw" && input$calibration_state == "both") {
-            next
-          }
-
-          subset_data <- data %>%
-            dplyr::filter(method == !!method, calibration_state == !!state)
-
-          if (nrow(subset_data) == 0) next
-
-          # Determine trace name
-          if (method == "HRM") {
-            # HRM is always the corrected baseline (not calibrated)
-            trace_name <- "HRM (Corrected)"
-          } else if (input$calibration_state == "both") {
-            # For secondary methods, show Raw vs Calibrated
-            trace_name <- paste0(method, " (",
-                   ifelse(state == "raw", "Raw", "Calibrated"), ")")
-          } else {
-            trace_name <- method
-          }
-
-          # Determine line width: raw = thin (1), calibrated = thick (2.5)
-          line_width <- if (state == "raw") {
-            1.0  # Thin line for raw
-          } else {
-            2.5  # Thick line for calibrated
-          }
-
-          p <- p %>%
-            plotly::add_trace(
-              data = subset_data,
-              x = ~datetime,
-              y = ~Vh_cm_hr,
-              type = 'scatter',
-              mode = 'lines',
-              name = trace_name,
-              line = list(
-                color = method_colors[[method]],
-                width = line_width
-              ),
-              legendgroup = method,
-              showlegend = input$show_legend
-            )
-        }
-      }
-
-      # Add VPD overlay if requested
-      if (input$show_vpd && !is.null(weather_data()) && nrow(weather_data()) > 0) {
-        weather <- weather_data()
-
-        # Filter weather data to match time range
-        if (!is.null(time_range())) {
-          weather <- weather %>%
-            dplyr::filter(
-              datetime >= time_range()[1],
-              datetime <= time_range()[2]
-            )
-        }
-
-        if (nrow(weather) > 0 && "vpd_kPa" %in% names(weather)) {
-          p <- p %>%
-            plotly::add_trace(
-              data = weather,
-              x = ~datetime,
-              y = ~vpd_kPa,
-              type = 'scatter',
-              mode = 'lines',
-              name = 'VPD (kPa)',
-              line = list(color = '#999999', width = 1, dash = 'dash'),
-              yaxis = 'y2',
-              showlegend = input$show_legend
-            )
-        }
-      }
-
-      # Layout
-      p <- p %>%
-        plotly::layout(
-          title = paste0("Calibration Validation - ",
-                         toupper(input$sensor_position), " Sensor"),
-          xaxis = list(
-            title = "Datetime",
-            showgrid = TRUE
-          ),
-          yaxis = list(
-            title = "Velocity (cm/hr)",
-            showgrid = TRUE
-          ),
-          yaxis2 = if (input$show_vpd) {
-            list(
-              title = "VPD (kPa)",
-              overlaying = 'y',
-              side = 'right',
-              showgrid = FALSE
-            )
-          } else {
-            NULL
-          },
-          hovermode = 'x unified',
-          legend = list(
-            orientation = 'h',
-            x = 0,
-            y = -0.2,
-            xanchor = 'left',
-            yanchor = 'top'
-          ),
-          # Preserve zoom and pan when plot updates
-          uirevision = "static"
+        # Standard Layout with uirevision
+        base_layout <- get_standard_layout(
+          title = sprintf("Calibration Validation: %s Sensor", toupper(sensor)),
+          xtitle = "Datetime",
+          ytitle = "Velocity (cm/hr)",
+          uirevision = "calibration_validation_zoom"
         )
 
-      return(p)
+        p <- p %>%
+          plotly::layout(
+            title = base_layout$title,
+            xaxis = base_layout$xaxis,
+            yaxis = base_layout$yaxis,
+            showlegend = TRUE,
+            legend = base_layout$legend,
+            hovermode = base_layout$hovermode,
+            uirevision = base_layout$uirevision,
+            plot_bgcolor = base_layout$plot_bgcolor,
+            paper_bgcolor = base_layout$paper_bgcolor,
+            margin = base_layout$margin
+          ) %>%
+          apply_standard_plotly_config(filename = "calibration_validation", add_csv_download = TRUE) %>%
+          plotly::event_register("plotly_relayout")
+
+        return(p)
 
       }, error = function(e) {
-        # Return error plot if something goes wrong
         plotly::plot_ly() %>%
-          plotly::layout(
-            title = paste("Error:", e$message),
-            xaxis = list(title = "Datetime"),
-            yaxis = list(title = "Velocity (cm/hr)")
-          )
+          plotly::layout(title = paste("Error:", e$message), uirevision = "calibration_validation_zoom")
       })
     })
 
-    # Calibration statistics
-    output$calibration_stats <- renderUI({
+    # Handle dynamic overlays (Raw/Calibrated/Methods) using plotlyProxy
+    observe({
       req(vh_raw())
       req(input$sensor_position)
+      
+      # Dependencies
+      raw_data <- vh_raw()
+      cal_data <- vh_calibrated()
+      sensor <- input$sensor_position
+      methods <- input$methods_selected
+      states <- input$calibration_states
+      
+      # 1. Clear all overlays (everything except the base HRM trace at index 0)
+      tryCatch({
+        for (i in 1:20) { # Max possible methods/states
+          plotly::plotlyProxy("validation_plot", session) %>%
+            plotly::plotlyProxyInvoke("deleteTraces", list(1))
+        }
+      }, error = function(e) {})
 
-      # Check if calibrated data exists
-      if (is.null(vh_calibrated()) || nrow(vh_calibrated()) == 0) {
-        return(HTML("<p style='color:#999;'>No calibrated data available yet. Please run calibration in Tab 6a first.</p>"))
-      }
-
-      raw_data <- vh_raw() %>%
-        dplyr::filter(sensor_position == input$sensor_position)
-
-      cal_data <- vh_calibrated() %>%
-        dplyr::filter(sensor_position == input$sensor_position)
-
-      # Calculate statistics for each method
-      stats_html <- "<table style='width:100%; font-size:0.9em;'>"
-      stats_html <- paste0(stats_html, "<thead><tr>",
-                           "<th>Method</th>",
-                           "<th>Mean Δ</th>",
-                           "<th>RMSE</th>",
-                           "</tr></thead><tbody>")
-
-      for (method in setdiff(unique(raw_data$method), "HRM")) {
-        raw_method <- raw_data %>%
-          dplyr::filter(method == !!method) %>%
-          dplyr::pull(Vh_cm_hr)
-
-        cal_method <- cal_data %>%
-          dplyr::filter(method == !!method) %>%
-          dplyr::pull(Vh_cm_hr)
-
-        if (length(raw_method) > 0 && length(cal_method) > 0) {
-          delta <- mean(cal_method - raw_method, na.rm = TRUE)
-          rmse <- sqrt(mean((cal_method - raw_method)^2, na.rm = TRUE))
-
-          stats_html <- paste0(stats_html, "<tr>",
-                               "<td><strong>", method, "</strong></td>",
-                               "<td>", sprintf("%.2f", delta), " cm/hr</td>",
-                               "<td>", sprintf("%.2f", rmse), " cm/hr</td>",
-                               "</tr>")
+      # 2. Add back selected traces
+      style_config <- plot_settings()
+      
+      for (m in methods) {
+        # Raw State
+        if ("raw" %in% states) {
+          m_raw <- raw_data %>% dplyr::filter(sensor_position == sensor, method == m)
+          if (nrow(m_raw) > 0) {
+            style <- get_plot_style(method = m, sensor = sensor, is_corrected = FALSE, config = style_config)
+            plotly::plotlyProxy("validation_plot", session) %>%
+              plotly::plotlyProxyInvoke("addTraces", list(
+                x = m_raw$datetime, y = m_raw$Vh_cm_hr,
+                type = "scatter", mode = "lines",
+                name = paste0(m, " (Raw)"), line = style,
+                hovertemplate = paste0("<b>", m, " (Raw)</b><br>Time: %{x}<br>Vel: %{y:.2f}<extra></extra>")
+              ))
+          }
+        }
+        
+        # Calibrated State
+        if ("calibrated" %in% states && !is.null(cal_data) && nrow(cal_data) > 0) {
+          m_cal <- cal_data %>% dplyr::filter(sensor_position == sensor, method == m)
+          if (nrow(m_cal) > 0) {
+            style <- get_plot_style(method = m, sensor = sensor, is_corrected = TRUE, config = style_config)
+            y_col <- if ("Vs_cm_hr" %in% names(m_cal)) "Vs_cm_hr" else "Vh_cm_hr"
+            plotly::plotlyProxy("validation_plot", session) %>%
+              plotly::plotlyProxyInvoke("addTraces", list(
+                x = m_cal$datetime, y = m_cal[[y_col]],
+                type = "scatter", mode = "lines",
+                name = paste0(m, " (Calibrated)"), line = style,
+                hovertemplate = paste0("<b>", m, " (Cal)</b><br>Time: %{x}<br>Vel: %{y:.2f}<extra></extra>")
+              ))
+          }
         }
       }
+    }) %>% bindEvent(input$sensor_position, input$methods_selected, input$calibration_states, vh_calibrated())
 
-      stats_html <- paste0(stats_html, "</tbody></table>")
-      stats_html <- paste0(stats_html,
-                           "<p style='margin-top:10px; font-size:0.85em; color:#666;'>",
-                           "Mean Δ = average change after calibration<br>",
-                           "RMSE = root mean squared error</p>")
+    # Update datetime inputs when user zooms the validation plot
+    val_relayout_debounced <- debounce(reactive({
+      event_data("plotly_relayout", source = "validation_plot")
+    }), 500)
 
-      HTML(stats_html)
+    observeEvent(val_relayout_debounced(), {
+      rd <- val_relayout_debounced()
+      if (is.null(rd)) return()
+
+      if (!is.null(rd$xaxis.range) && length(rd$xaxis.range) == 2) {
+        shinyWidgets::updateAirDateInput(session, "start_datetime",
+          value = as.POSIXct(rd$xaxis.range[1], tz = "UTC"))
+        shinyWidgets::updateAirDateInput(session, "end_datetime",
+          value = as.POSIXct(rd$xaxis.range[2], tz = "UTC"))
+      } else if (!is.null(rd$`xaxis.range[0]`)) {
+        shinyWidgets::updateAirDateInput(session, "start_datetime",
+          value = as.POSIXct(rd$`xaxis.range[0]`, tz = "UTC"))
+        shinyWidgets::updateAirDateInput(session, "end_datetime",
+          value = as.POSIXct(rd$`xaxis.range[1]`, tz = "UTC"))
+      } else if (isTRUE(rd$`xaxis.autorange`)) {
+        req(vh_raw())
+        date_range <- range(vh_raw()$datetime, na.rm = TRUE)
+        shinyWidgets::updateAirDateInput(session, "start_datetime", value = date_range[1])
+        shinyWidgets::updateAirDateInput(session, "end_datetime", value = date_range[2])
+      }
+    })
+
+    observeEvent(input$apply_range, {
+      req(input$start_datetime, input$end_datetime)
+      plotly::plotlyProxy("validation_plot", session) %>%
+        plotly::plotlyProxyInvoke("relayout", list(
+          "xaxis.range" = list(
+            format(input$start_datetime, "%Y-%m-%d %H:%M:%S"),
+            format(input$end_datetime, "%Y-%m-%d %H:%M:%S")
+          )
+        ))
+    })
+
+    # Reset zoom
+    observeEvent(input$reset_zoom, {
+      req(vh_raw())
+      date_range <- range(vh_raw()$datetime, na.rm = TRUE)
+      shinyWidgets::updateAirDateInput(session, "start_datetime", value = date_range[1])
+      shinyWidgets::updateAirDateInput(session, "end_datetime", value = date_range[2])
+
+      plotly::plotlyProxy("validation_plot", session) %>%
+        plotly::plotlyProxyInvoke("relayout", list("xaxis.autorange" = TRUE))
     })
 
     # Code generation
     observe({
       if (!is.null(code_tracker)) {
         # Track validation visualisation
-        if (!is.null(input$calibration_state) && !is.null(input$sensor_position)) {
+        if (!is.null(input$calibration_states) && !is.null(input$sensor_position)) {
           code_tracker$add_step(
             step_name = "Calibration Validation",
             code = sprintf(
               "# Calibration validation - comparing %s velocities for %s sensor",
-              input$calibration_state,
+              paste(input$calibration_states, collapse = " and "),
               input$sensor_position
             )
           )

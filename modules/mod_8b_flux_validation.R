@@ -1,5 +1,5 @@
 # mod_8b_flux_validation.R
-# Module for Flux Density and Water Use Validation Visualization
+# Module for Flux Density and Water Use Validation Visualisation
 #
 # Tab 8b: Flux Density & Water Use Validation
 # Interactive time series to explore flux density and tree water use results
@@ -68,12 +68,6 @@ fluxValidationUI <- function(id) {
           hr(),
 
           h5("Display Options"),
-          checkboxInput(
-            ns("show_legend"),
-            "Show legend",
-            value = TRUE
-          ),
-
           checkboxInput(
             ns("show_points"),
             "Show data points",
@@ -158,49 +152,6 @@ fluxValidationUI <- function(id) {
             type = 6,
             color = "#00a65a"
           )
-        ),
-
-        # Velocity vs Flux comparison
-        box(
-          width = NULL,
-          title = "Velocity vs Flux Density Comparison",
-          status = "info",
-          solidHeader = TRUE,
-          collapsible = TRUE,
-          collapsed = TRUE,
-
-          helpText(
-            icon("info-circle"),
-            "Visualize the conversion from heat pulse velocity (Vh) to sap flux density (Jv).",
-            "Dashed line shows the Z factor relationship (Jv = Z × Vh)."
-          ),
-
-          shinycssloaders::withSpinner(
-            plotly::plotlyOutput(ns("velocity_vs_flux_plot"), height = "500px"),
-            type = 6,
-            color = "#3c8dbc"
-          )
-        ),
-
-        # Daily flux totals
-        box(
-          width = NULL,
-          title = "Daily Sap Flux Totals",
-          status = "info",
-          solidHeader = TRUE,
-          collapsible = TRUE,
-          collapsed = TRUE,
-
-          helpText(
-            icon("info-circle"),
-            "Daily sap flux totals integrated over 24-hour periods."
-          ),
-
-          shinycssloaders::withSpinner(
-            plotly::plotlyOutput(ns("daily_flux_plot"), height = "500px"),
-            type = 6,
-            color = "#3c8dbc"
-          )
         )
       )
     )
@@ -212,7 +163,8 @@ fluxValidationServer <- function(id,
                                   flux_data,
                                   tree_water_use_data,
                                   tree_dimensions,
-                                  code_tracker = TRUE) {
+                                  code_tracker = NULL,
+                                  plot_settings = reactive(list())) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
@@ -364,6 +316,7 @@ fluxValidationServer <- function(id,
     output$flux_timeseries_plot <- plotly::renderPlotly({
       tryCatch({
         flux <- plot_data_flux()
+        style_config <- plot_settings()
 
         if (is.null(flux) || nrow(flux) == 0) {
           return(
@@ -377,95 +330,108 @@ fluxValidationServer <- function(id,
           )
         }
 
-        # Sample if too many points
-        if (nrow(flux) > 10000) {
-          sample_idx <- seq(1, nrow(flux), length.out = 10000)
-          flux <- flux[sample_idx, ]
+        # Create base plot
+        p <- plotly::plot_ly(source = "flux_timeseries_plot")
+        
+        # Determine mode
+        mode <- if (input$show_points) "lines+markers" else "lines"
+        
+        # Determine which methods and sensors are present
+        methods <- unique(flux$method_label %||% flux$method %||% "Sap Flux")
+        sensors <- if ("sensor_position" %in% names(flux)) unique(flux$sensor_position) else "outer"
+
+        # Add traces using loop for consistent styling
+        for (m in methods) {
+          for (s in sensors) {
+            # Filter data for this trace
+            trace_data <- flux
+            if ("method_label" %in% names(flux)) {
+              trace_data <- trace_data %>% dplyr::filter(method_label == m)
+            } else if ("method" %in% names(flux)) {
+              trace_data <- trace_data %>% dplyr::filter(method == m)
+            }
+            
+            if ("sensor_position" %in% names(flux)) {
+              trace_data <- trace_data %>% dplyr::filter(sensor_position == s)
+            }
+            
+            if (nrow(trace_data) == 0) next
+            
+            # Determine trace name
+            trace_name <- if (length(sensors) > 1) {
+              paste0(m, " (", toupper(s), ")")
+            } else {
+              m
+            }
+            
+            # Get style
+            style_m <- m
+            if (grepl("HRM", style_m)) style_m <- "HRM"
+            else if (grepl("MHR", style_m)) style_m <- "MHR"
+            else if (grepl("Tmax_Coh", style_m)) style_m <- "Tmax_Coh"
+            else if (grepl("Tmax_Klu", style_m)) style_m <- "Tmax_Klu"
+            else if (grepl("sDMA", style_m)) style_m <- "sDMA"
+            
+            style <- get_plot_style(method = style_m, sensor = s, is_corrected = TRUE, config = style_config)
+
+            p <- p %>%
+              plotly::add_trace(
+                data = trace_data,
+                x = ~datetime,
+                y = ~Jv_cm3_cm2_hr,
+                type = "scatter",
+                mode = mode,
+                name = trace_name,
+                line = style,
+                marker = if (input$show_points) list(size = 4, color = style$color) else NULL,
+                legendgroup = trace_name,
+                showlegend = TRUE,
+                hovertemplate = paste(
+                  "<b>", trace_name, "</b><br>",
+                  "Date: %{x|%Y-%m-%d %H:%M}<br>",
+                  "Jv: %{y:.2f} cm³/cm²/hr<br>",
+                  "<extra></extra>"
+                )
+              )
+          }
         }
 
-        # Create trace name including sensor position
-        if ("method_label" %in% names(flux) && "sensor_position" %in% names(flux)) {
-          flux <- flux %>%
-            dplyr::mutate(
-              trace_name = paste0(method_label, " (", toupper(sensor_position), ")")
-            )
-
-          # Determine mode
-          mode <- if (input$show_points) "lines+markers" else "lines"
-
-          fig <- plotly::plot_ly(
-            data = flux,
-            x = ~datetime,
-            y = ~Jv_cm3_cm2_hr,
-            color = ~trace_name,
-            type = "scatter",
-            mode = mode,
-            line = list(width = 1.5),
-            marker = if (input$show_points) list(size = 4) else NULL,
-            hovertemplate = paste(
-              "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
-              "<b>Jv:</b> %{y:.3f} cm³/cm²/hr<br>",
-              "<extra></extra>"
-            )
-          )
-        } else if ("method" %in% names(flux)) {
-          # Regular data fallback
-          mode <- if (input$show_points) "lines+markers" else "lines"
-
-          fig <- plotly::plot_ly(
-            data = flux,
-            x = ~datetime,
-            y = ~Jv_cm3_cm2_hr,
-            color = ~method,
-            type = "scatter",
-            mode = mode,
-            line = list(width = 1.5),
-            marker = if (input$show_points) list(size = 4) else NULL,
-            hovertemplate = paste(
-              "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
-              "<b>Jv:</b> %{y:.3f} cm³/cm²/hr<br>",
-              "<extra></extra>"
-            )
-          )
-        } else {
-          # Single trace fallback
-          mode <- if (input$show_points) "lines+markers" else "lines"
-
-          fig <- plotly::plot_ly(
-            data = flux,
-            x = ~datetime,
-            y = ~Jv_cm3_cm2_hr,
-            type = "scatter",
-            mode = mode,
-            name = "Sap Flux Density",
-            line = list(color = "darkgreen", width = 1.5),
-            marker = if (input$show_points) list(size = 4) else NULL,
-            hovertemplate = paste(
-              "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
-              "<b>Jv:</b> %{y:.3f} cm³/cm²/hr<br>",
-              "<extra></extra>"
-            )
-          )
+        # Apply standard layout
+        base_layout <- get_standard_layout(
+          title = "Sap Flux Density Time Series",
+          xtitle = "Date",
+          ytitle = "Sap Flux Density (cm³/cm²/hr)",
+          uirevision = "flux_timeseries_zoom"
+        )
+        
+        # Force zoom range persistence
+        if (!is.null(time_range())) {
+          base_layout$xaxis$range <- time_range()
+          base_layout$xaxis$autorange <- FALSE
         }
 
-        fig <- fig %>%
+        p <- p %>%
           plotly::layout(
-            title = "Sap Flux Density Time Series",
-            xaxis = list(title = "Date", showgrid = TRUE, gridcolor = "lightgray"),
-            yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)", showgrid = TRUE, gridcolor = "lightgray"),
-            hovermode = "closest",
-            showlegend = input$show_legend,
-            legend = list(orientation = "h", x = 0.5, y = -0.15, xanchor = "center", yanchor = "top"),
-            margin = list(l = 70, r = 40, t = 60, b = 120),
-            uirevision = "flux_timeseries_zoom"
-          )
+            title = list(text = base_layout$title, x = 0.5, xanchor = "center"),
+            xaxis = base_layout$xaxis,
+            yaxis = base_layout$yaxis,
+            hovermode = base_layout$hovermode,
+            showlegend = TRUE,
+            legend = base_layout$legend,
+            margin = base_layout$margin,
+            plot_bgcolor = base_layout$plot_bgcolor,
+            paper_bgcolor = base_layout$paper_bgcolor,
+            uirevision = base_layout$uirevision
+          ) %>%
+          apply_standard_plotly_config(filename = "flux_timeseries_plot", add_csv_download = TRUE) %>%
+          plotly::event_register("plotly_relayout")
 
-        return(fig)
+        return(p)
 
       }, error = function(e) {
         plotly::plot_ly() %>%
           plotly::layout(
-            title = paste("Error:", e$message),
+            title = list(text = paste("Error:", e$message), x = 0.5),
             xaxis = list(title = "Datetime"),
             yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)"),
             uirevision = "flux_timeseries_zoom"
@@ -477,6 +443,7 @@ fluxValidationServer <- function(id,
     output$tree_water_use_plot_hourly <- plotly::renderPlotly({
       tryCatch({
         q_data <- plot_data_water_use()
+        style_config <- plot_settings()
 
         if (is.null(q_data) || nrow(q_data) == 0) {
           return(
@@ -491,77 +458,100 @@ fluxValidationServer <- function(id,
         }
 
         # Sample if too many points
-        if (nrow(q_data) > 5000) {
-          sample_idx <- seq(1, nrow(q_data), length.out = 5000)
+        if (nrow(q_data) > 30000) { # Increased sample limit
+          sample_idx <- seq(1, nrow(q_data), length.out = 30000)
           q_data <- q_data[sample_idx, ]
         }
 
         # Determine mode
         mode <- if (input$show_points) "lines+markers" else "lines"
 
-        # Check if we have method_label for grouping
-        if ("method_label" %in% names(q_data)) {
-          fig <- plotly::plot_ly(
-            data = q_data,
-            x = ~datetime,
-            y = ~Q_L_hr,
-            color = ~method_label,
-            type = "scatter",
-            mode = mode,
-            line = list(width = 1.5),
-            marker = if (input$show_points) list(size = 4) else NULL,
-            hovertemplate = paste(
-              "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
-              "<b>Q:</b> %{y:.3f} L/hr<br>",
-              "<extra></extra>"
+        # Create Plotly object
+        fig <- plotly::plot_ly(source = "water_use_hourly_plot")
+
+        # Add traces manually for consistent styling
+        methods <- unique(q_data$method_label %||% "Tree Water Use")
+        
+        for (m in methods) {
+          trace_data <- q_data %>% dplyr::filter(method_label == m)
+          if (nrow(trace_data) == 0) next
+          
+          # Get style
+          style_m <- m
+          if (grepl("HRM", style_m)) style_m <- "HRM"
+          else if (grepl("MHR", style_m)) style_m <- "MHR"
+          else if (grepl("Tmax_Coh", style_m)) style_m <- "Tmax_Coh"
+          else if (grepl("Tmax_Klu", style_m)) style_m <- "Tmax_Klu"
+          else if (grepl("sDMA", style_m)) style_m <- "sDMA"
+          
+          style <- get_plot_style(method = style_m, sensor = "outer", is_corrected = TRUE, config = style_config)
+
+          fig <- fig %>%
+            plotly::add_trace(
+              data = trace_data,
+              x = ~datetime,
+              y = ~Q_total_L_hr,
+              type = "scatter",
+              mode = mode,
+              name = m,
+              line = style,
+              marker = if (input$show_points) list(size = 4, color = style$color) else NULL,
+              legendgroup = m,
+              showlegend = TRUE,
+              hovertemplate = paste(
+                "<b>", m, "</b><br>",
+                "Date: %{x|%Y-%m-%d %H:%M}<br>",
+                "Q: %{y:.3f} L/hr<br>",
+                "<extra></extra>"
+              )
             )
-          )
-        } else {
-          # Single method fallback
-          fig <- plotly::plot_ly(
-            data = q_data,
-            x = ~datetime,
-            y = ~Q_L_hr,
-            type = "scatter",
-            mode = mode,
-            name = "Tree Water Use",
-            line = list(color = "darkblue", width = 1.5),
-            marker = if (input$show_points) list(size = 4) else NULL,
-            hovertemplate = paste(
-              "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
-              "<b>Q:</b> %{y:.3f} L/hr<br>",
-              "<extra></extra>"
-            )
-          )
         }
 
         # Get tree dimensions for title
         dims <- tree_dimensions()
         title_text <- if (!is.null(dims) && !is.null(dims$dbh)) {
           sprintf("Tree Water Use (DBH: %.1f cm, Sapwood: %.1f cm)",
-                  dims$dbh, dims$sapwood_depth)
+                  dims$dbh, dims$sapwood_thickness)
         } else {
           "Tree Water Use"
         }
 
+        # Apply standard layout
+        base_layout <- get_standard_layout(
+          title = title_text,
+          xtitle = "Date",
+          ytitle = "Water Use (L/hr)",
+          uirevision = "water_use_hourly_zoom"
+        )
+        
+        # Force zoom range persistence
+        if (!is.null(time_range())) {
+          base_layout$xaxis$range <- time_range()
+          base_layout$xaxis$autorange <- FALSE
+        }
+        
         fig <- fig %>%
           plotly::layout(
-            title = title_text,
-            xaxis = list(title = "Date", showgrid = TRUE, gridcolor = "lightgray"),
-            yaxis = list(title = "Water Use (L/hr)", showgrid = TRUE, gridcolor = "lightgray"),
-            hovermode = "closest",
-            showlegend = input$show_legend,
-            legend = list(orientation = "h", x = 0.5, y = -0.15, xanchor = "center", yanchor = "top"),
-            margin = list(l = 70, r = 40, t = 60, b = 120),
-            uirevision = "water_use_hourly_zoom"
-          )
+            title = list(text = base_layout$title, x = 0.5, xanchor = "center"),
+            xaxis = base_layout$xaxis,
+            yaxis = base_layout$yaxis,
+            hovermode = base_layout$hovermode,
+            showlegend = TRUE,
+            legend = base_layout$legend,
+            margin = base_layout$margin,
+            plot_bgcolor = base_layout$plot_bgcolor,
+            paper_bgcolor = base_layout$paper_bgcolor,
+            uirevision = base_layout$uirevision
+          ) %>%
+          apply_standard_plotly_config(filename = "water_use_hourly_plot", add_csv_download = TRUE) %>%
+          plotly::event_register("plotly_relayout")
 
         return(fig)
 
       }, error = function(e) {
         plotly::plot_ly() %>%
           plotly::layout(
-            title = paste("Error:", e$message),
+            title = list(text = paste("Error:", e$message), x = 0.5),
             xaxis = list(title = "Datetime"),
             yaxis = list(title = "Water Use (L/hr)"),
             uirevision = "water_use_hourly_zoom"
@@ -573,6 +563,7 @@ fluxValidationServer <- function(id,
     output$tree_water_use_plot_daily <- plotly::renderPlotly({
       tryCatch({
         q_data <- plot_data_water_use()
+        style_config <- plot_settings()
 
         if (is.null(q_data) || nrow(q_data) == 0) {
           return(
@@ -586,42 +577,50 @@ fluxValidationServer <- function(id,
           )
         }
 
-        # Calculate daily totals
-        q_data$date <- as.Date(q_data$datetime)
+        # Calculate true daily totals (rate × interval, not mean of rate×24)
+        group_cols_present <- intersect(c("method_label", "method", "pulse_id"), names(q_data))
+        daily_totals <- sapfluxr::aggregate_daily_flux(
+          q_data,
+          group_cols = if (length(group_cols_present) > 0) group_cols_present else NULL
+        )
+        # Ensure method_label is present for trace loop
+        if (!"method_label" %in% names(daily_totals)) {
+          daily_totals$method_label <- "Tree Water Use"
+        }
 
-        # Check if we have method_label for grouping
-        if ("method_label" %in% names(q_data)) {
-          daily_totals <- q_data %>%
-            dplyr::group_by(date, method_label) %>%
-            dplyr::summarise(Q_L_day = mean(Q_L_day, na.rm = TRUE), .groups = "drop")
+        # Create Plotly object
+        fig <- plotly::plot_ly(source = "water_use_daily_plot")
 
-          fig <- plotly::plot_ly(
-            data = daily_totals,
-            x = ~date,
-            y = ~Q_L_day,
-            color = ~method_label,
-            type = "bar",
-            hovertemplate = paste(
-              "<b>Date:</b> %{x|%Y-%m-%d}<br>",
-              "<b>Daily Total:</b> %{y:.2f} L/day<br>",
-              "<extra></extra>"
+        for (m in unique(daily_totals$method_label)) {
+          trace_data <- daily_totals %>% dplyr::filter(method_label == m)
+          
+          # Get style
+          style_m <- m
+          if (grepl("HRM", style_m)) style_m <- "HRM"
+          else if (grepl("MHR", style_m)) style_m <- "MHR"
+          else if (grepl("Tmax_Coh", style_m)) style_m <- "Tmax_Coh"
+          else if (grepl("Tmax_Klu", style_m)) style_m <- "Tmax_Klu"
+          else if (grepl("sDMA", style_m)) style_m <- "sDMA"
+          
+          style <- get_plot_style(method = style_m, sensor = "outer", is_corrected = TRUE, config = style_config)
+
+          fig <- fig %>%
+            plotly::add_trace(
+              data = trace_data,
+              x = ~date,
+              y = ~Q_total_L_day,
+              name = m,
+              type = "bar",
+              marker = list(color = style$color),
+              legendgroup = m,
+              showlegend = TRUE,
+              hovertemplate = paste(
+                "<b>", m, "</b><br>",
+                "Date: %{x|%Y-%m-%d}<br>",
+                "Daily Total: %{y:.2f} L/day<br>",
+                "<extra></extra>"
+              )
             )
-          )
-        } else {
-          daily_totals <- aggregate(Q_L_day ~ date, data = q_data, FUN = mean, na.rm = TRUE)
-
-          fig <- plotly::plot_ly(
-            data = daily_totals,
-            x = ~date,
-            y = ~Q_L_day,
-            type = "bar",
-            marker = list(color = "darkblue"),
-            hovertemplate = paste(
-              "<b>Date:</b> %{x|%Y-%m-%d}<br>",
-              "<b>Daily Total:</b> %{y:.2f} L/day<br>",
-              "<extra></extra>"
-            )
-          )
         }
 
         # Get tree dimensions for title
@@ -632,25 +631,36 @@ fluxValidationServer <- function(id,
           "Daily Tree Water Use"
         }
 
+        # Apply standard layout
+        base_layout <- get_standard_layout(
+          title = title_text,
+          xtitle = "Date",
+          ytitle = "Daily Water Use (L/day)",
+          uirevision = "water_use_daily_zoom"
+        )
+        
         fig <- fig %>%
           plotly::layout(
-            title = title_text,
-            xaxis = list(title = "Date", showgrid = FALSE),
-            yaxis = list(title = "Daily Water Use (L/day)", showgrid = TRUE, gridcolor = "lightgray"),
-            hovermode = "closest",
-            barmode = "group",
-            showlegend = input$show_legend,
-            legend = list(orientation = "h", x = 0.5, y = -0.15, xanchor = "center", yanchor = "top"),
-            margin = list(l = 70, r = 40, t = 60, b = 120),
-            uirevision = "water_use_daily_zoom"
-          )
+            title = list(text = base_layout$title, x = 0.5, xanchor = "center"),
+            xaxis = base_layout$xaxis,
+            yaxis = base_layout$yaxis,
+            hovermode = base_layout$hovermode,
+            showlegend = TRUE,
+            legend = base_layout$legend,
+            margin = base_layout$margin,
+            plot_bgcolor = base_layout$plot_bgcolor,
+            paper_bgcolor = base_layout$paper_bgcolor,
+            uirevision = base_layout$uirevision,
+            barmode = "group"
+          ) %>%
+          apply_standard_plotly_config(filename = "water_use_daily_plot", add_csv_download = TRUE)
 
         return(fig)
 
       }, error = function(e) {
         plotly::plot_ly() %>%
           plotly::layout(
-            title = paste("Error:", e$message),
+            title = list(text = paste("Error:", e$message), x = 0.5),
             xaxis = list(title = "Date"),
             yaxis = list(title = "Daily Water Use (L/day)"),
             uirevision = "water_use_daily_zoom"
@@ -658,186 +668,63 @@ fluxValidationServer <- function(id,
       })
     })
 
-    # Velocity vs Flux comparison plot
-    output$velocity_vs_flux_plot <- plotly::renderPlotly({
-      tryCatch({
-        flux <- plot_data_flux()
+    # Update datetime inputs when user zooms any of the validation plots
+    relayout_debounced <- debounce(reactive({
+      # Listen to both timeseries plots
+      r1 <- event_data("plotly_relayout", source = "flux_timeseries_plot")
+      r2 <- event_data("plotly_relayout", source = "water_use_hourly_plot")
+      if (!is.null(r1)) return(r1)
+      return(r2)
+    }), 500)
 
-        if (is.null(flux) || nrow(flux) == 0) {
-          return(
-            plotly::plot_ly() %>%
-              plotly::layout(
-                title = "No data to display",
-                xaxis = list(title = "Heat Pulse Velocity (cm/hr)"),
-                yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)"),
-                uirevision = "velocity_flux_zoom"
-              )
-          )
-        }
+    observeEvent(relayout_debounced(), {
+      rd <- relayout_debounced()
+      if (is.null(rd)) return()
 
-        # Sample if too many points
-        if (nrow(flux) > 5000) {
-          sample_idx <- seq(1, nrow(flux), length.out = 5000)
-          flux <- flux[sample_idx, ]
-        }
-
-        # Determine velocity column name
-        velocity_col <- if ("Vh_sdma" %in% names(flux)) {
-          "Vh_sdma"
-        } else if ("Vh_cm_hr" %in% names(flux)) {
-          "Vh_cm_hr"
-        } else if ("Vh_for_conversion" %in% names(flux)) {
-          "Vh_for_conversion"
-        } else {
-          return(
-            plotly::plot_ly() %>%
-              plotly::layout(
-                title = "Velocity column not found in data",
-                xaxis = list(title = "Heat Pulse Velocity (cm/hr)"),
-                yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)"),
-                uirevision = "velocity_flux_zoom"
-              )
-          )
-        }
-
-        # Calculate Z factor
-        Z <- mean(flux$Jv_cm3_cm2_hr / flux[[velocity_col]], na.rm = TRUE)
-
-        # Create scatter plot
-        fig <- plotly::plot_ly(
-          data = flux,
-          x = as.formula(paste0("~", velocity_col)),
-          y = ~Jv_cm3_cm2_hr,
-          type = "scatter",
-          mode = "markers",
-          marker = list(
-            color = "steelblue",
-            size = 4,
-            opacity = 0.6
-          ),
-          hovertemplate = paste(
-            "<b>Vh:</b> %{x:.3f} cm/hr<br>",
-            "<b>Jv:</b> %{y:.3f} cm³/cm²/hr<br>",
-            "<extra></extra>"
-          )
-        )
-
-        # Add reference line (Jv = Z × Vh)
-        vh_range <- range(flux[[velocity_col]], na.rm = TRUE)
-        fig <- fig %>%
-          plotly::add_trace(
-            x = vh_range,
-            y = vh_range * Z,
-            type = "scatter",
-            mode = "lines",
-            name = sprintf("Jv = %.4f × Vh", Z),
-            line = list(color = "darkred", width = 2, dash = "dash"),
-            hoverinfo = "skip"
-          )
-
-        fig <- fig %>%
-          plotly::layout(
-            title = "Velocity vs Flux Density",
-            xaxis = list(title = "Heat Pulse Velocity (cm/hr)", showgrid = TRUE, gridcolor = "lightgray"),
-            yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)", showgrid = TRUE, gridcolor = "lightgray"),
-            hovermode = "closest",
-            showlegend = input$show_legend,
-            legend = list(x = 0.02, y = 0.98),
-            margin = list(l = 70, r = 40, t = 60, b = 60),
-            uirevision = "velocity_flux_zoom"
-          )
-
-        return(fig)
-
-      }, error = function(e) {
-        plotly::plot_ly() %>%
-          plotly::layout(
-            title = paste("Error:", e$message),
-            xaxis = list(title = "Heat Pulse Velocity (cm/hr)"),
-            yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)"),
-            uirevision = "velocity_flux_zoom"
-          )
-      })
+      if (!is.null(rd$xaxis.range) && length(rd$xaxis.range) == 2) {
+        shinyWidgets::updateAirDateInput(session, "start_datetime",
+          value = as.POSIXct(rd$xaxis.range[1], tz = "UTC"))
+        shinyWidgets::updateAirDateInput(session, "end_datetime",
+          value = as.POSIXct(rd$xaxis.range[2], tz = "UTC"))
+        
+        # Save range for persistence
+        time_range(c(rd$xaxis.range[1], rd$xaxis.range[2]))
+        
+      } else if (!is.null(rd$`xaxis.range[0]`)) {
+        shinyWidgets::updateAirDateInput(session, "start_datetime",
+          value = as.POSIXct(rd$`xaxis.range[0]`, tz = "UTC"))
+        shinyWidgets::updateAirDateInput(session, "end_datetime",
+          value = as.POSIXct(rd$`xaxis.range[1]`, tz = "UTC"))
+          
+        # Save range
+        time_range(c(rd$`xaxis.range[0]`, rd$`xaxis.range[1]`))
+        
+      } else if (isTRUE(rd$`xaxis.autorange`)) {
+        req(flux_data())
+        date_range <- range(flux_data()$datetime, na.rm = TRUE)
+        shinyWidgets::updateAirDateInput(session, "start_datetime", value = date_range[1])
+        shinyWidgets::updateAirDateInput(session, "end_datetime", value = date_range[2])
+        
+        time_range(NULL)
+      }
     })
 
-    # Daily flux totals plot
-    output$daily_flux_plot <- plotly::renderPlotly({
-      tryCatch({
-        flux <- plot_data_flux()
-
-        if (is.null(flux) || nrow(flux) == 0) {
-          return(
-            plotly::plot_ly() %>%
-              plotly::layout(
-                title = "No data to display",
-                xaxis = list(title = "Date"),
-                yaxis = list(title = "Daily Flux (cm³/cm²/day)"),
-                uirevision = "daily_flux_zoom"
-              )
-          )
-        }
-
-        # Calculate daily totals
-        flux$date <- as.Date(flux$datetime)
-
-        if ("method_label" %in% names(flux)) {
-          daily_totals <- flux %>%
-            dplyr::group_by(date, method_label) %>%
-            dplyr::summarise(Jv_daily = sum(Jv_cm3_cm2_hr, na.rm = TRUE), .groups = "drop")
-
-          fig <- plotly::plot_ly(
-            data = daily_totals,
-            x = ~date,
-            y = ~Jv_daily,
-            color = ~method_label,
-            type = "bar",
-            hovertemplate = paste(
-              "<b>Date:</b> %{x|%Y-%m-%d}<br>",
-              "<b>Daily Total:</b> %{y:.2f} cm³/cm²/day<br>",
-              "<extra></extra>"
-            )
-          )
-        } else {
-          daily_totals <- aggregate(Jv_cm3_cm2_hr ~ date, data = flux, FUN = sum, na.rm = TRUE)
-
-          fig <- plotly::plot_ly(
-            data = daily_totals,
-            x = ~date,
-            y = ~Jv_cm3_cm2_hr,
-            type = "bar",
-            marker = list(color = "darkgreen"),
-            hovertemplate = paste(
-              "<b>Date:</b> %{x|%Y-%m-%d}<br>",
-              "<b>Daily Total:</b> %{y:.2f} cm³/cm²/day<br>",
-              "<extra></extra>"
-            )
-          )
-        }
-
-        fig <- fig %>%
-          plotly::layout(
-            title = "Daily Sap Flux Totals",
-            xaxis = list(title = "Date", showgrid = FALSE),
-            yaxis = list(title = "Daily Flux (cm³/cm²/day)", showgrid = TRUE, gridcolor = "lightgray"),
-            hovermode = "closest",
-            barmode = "group",
-            showlegend = input$show_legend,
-            legend = list(orientation = "h", x = 0.5, y = -0.15, xanchor = "center", yanchor = "top"),
-            margin = list(l = 70, r = 40, t = 60, b = 100),
-            uirevision = "daily_flux_zoom"
-          )
-
-        return(fig)
-
-      }, error = function(e) {
-        plotly::plot_ly() %>%
-          plotly::layout(
-            title = paste("Error:", e$message),
-            xaxis = list(title = "Date"),
-            yaxis = list(title = "Daily Flux (cm³/cm²/day)"),
-            uirevision = "daily_flux_zoom"
-          )
-      })
+    # Apply manual range
+    observeEvent(input$apply_range, {
+      req(input$start_datetime, input$end_datetime)
+      
+      t_range <- c(
+        format(input$start_datetime, "%Y-%m-%d %H:%M:%S"),
+        format(input$end_datetime, "%Y-%m-%d %H:%M:%S")
+      )
+      
+      time_range(t_range)
+      
+      plotly::plotlyProxy("flux_timeseries_plot", session) %>%
+        plotly::plotlyProxyInvoke("relayout", list("xaxis.range" = t_range))
+      
+      plotly::plotlyProxy("water_use_hourly_plot", session) %>%
+        plotly::plotlyProxyInvoke("relayout", list("xaxis.range" = t_range))
     })
 
     # Reset zoom
@@ -850,15 +737,21 @@ fluxValidationServer <- function(id,
 
         shinyWidgets::updateAirDateInput(session, "start_datetime", value = date_range[1])
         shinyWidgets::updateAirDateInput(session, "end_datetime", value = date_range[2])
+        
+        plotly::plotlyProxy("flux_timeseries_plot", session) %>%
+          plotly::plotlyProxyInvoke("relayout", list("xaxis.autorange" = TRUE))
+        
+        plotly::plotlyProxy("water_use_hourly_plot", session) %>%
+          plotly::plotlyProxyInvoke("relayout", list("xaxis.autorange" = TRUE))
       }
     })
 
     # Code generation
     observe({
-      if (!isTRUE(code_tracker)) {
+      if (!is.null(code_tracker) && !is.logical(code_tracker)) {
         if (!is.null(input$sensor_position)) {
           code_tracker$add_step(
-            step_name = "Flux Density Validation Visualization",
+            step_name = "Flux Density Validation Visualisation",
             code = sprintf(
               "# Flux density validation plot for %s sensor(s)",
               paste(input$sensor_position, collapse = ", ")

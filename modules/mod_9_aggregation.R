@@ -41,25 +41,10 @@ aggregationUI <- function(id) {
             choices = c(
               "Hourly" = "hourly",
               "Daily" = "daily",
-              "Weekly" = "weekly"
+              "Weekly" = "weekly",
+              "Monthly" = "monthly"
             ),
             selected = "daily"
-          ),
-
-          hr(),
-
-          h5("Aggregation Function"),
-          selectInput(
-            ns("aggregation_function"),
-            "Summary Function:",
-            choices = c(
-              "Mean" = "mean",
-              "Sum" = "sum",
-              "Median" = "median",
-              "Maximum" = "max",
-              "Minimum" = "min"
-            ),
-            selected = "mean"
           ),
 
           hr(),
@@ -70,10 +55,19 @@ aggregationUI <- function(id) {
             NULL,
             choices = c(
               "Time Series" = "timeseries",
-              "Bar Chart" = "bar",
-              "Heatmap" = "heatmap"
+              "Bar Chart" = "bar"
             ),
             selected = "timeseries"
+          ),
+
+          conditionalPanel(
+            condition = sprintf("input['%s'] == 'timeseries' || input['%s'] == 'bar'",
+                               ns("plot_type"), ns("plot_type")),
+            checkboxInput(
+              ns("show_cumulative"),
+              "Show Cumulative",
+              value = FALSE
+            )
           ),
 
           hr(),
@@ -137,7 +131,8 @@ aggregationUI <- function(id) {
 aggregationServer <- function(id,
                                flux_density_data,
                                tree_water_use_data = NULL,
-                               code_tracker = TRUE) {
+                               code_tracker = NULL,
+                               plot_settings = reactive(list())) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
@@ -150,7 +145,10 @@ aggregationServer <- function(id,
 
       # Make reactive to these inputs so plot updates when changed
       req(input$aggregation_period)
-      req(input$aggregation_function)
+      
+      # We now default to 'sum' for all temporal aggregations
+      # as it represents the physical total (integral) for the period.
+      agg_func_name <- "sum"
 
       # Get appropriate data based on data_type
       if (input$data_type == "flux_density") {
@@ -161,7 +159,7 @@ aggregationServer <- function(id,
         # water_use
         req(tree_water_use_data())
         data <- tree_water_use_data()
-        value_col <- "Q_L_hr"
+        value_col <- "Q_total_L_hr"
       }
 
       # Determine aggregation period
@@ -174,16 +172,23 @@ aggregationServer <- function(id,
       } else if (input$aggregation_period == "weekly") {
         data <- data %>%
           dplyr::mutate(period = lubridate::floor_date(datetime, "week"))
+      } else if (input$aggregation_period == "monthly") {
+        data <- data %>%
+          dplyr::mutate(period = lubridate::floor_date(datetime, "month"))
       }
 
-      # Apply aggregation function
-      agg_func <- switch(input$aggregation_function,
-                         "mean" = mean,
-                         "sum" = sum,
-                         "median" = median,
-                         "max" = max,
-                         "min" = min,
-                         mean)
+      # Detect measurement interval (hours) from unique timestamps
+      # This is critical for 'sum' aggregation (Total volume = sum(rate) * delta_t)
+      unique_dts <- sort(unique(data$datetime))
+      delta_t <- 1 # Default fallback
+      if (length(unique_dts) > 1) {
+        dt_diffs <- as.numeric(difftime(unique_dts[-1], unique_dts[-length(unique_dts)], units = "hours"))
+        # Use median to be robust to gaps
+        delta_t <- median(dt_diffs[dt_diffs > 0], na.rm = TRUE)
+      }
+
+      # Apply aggregation function (Integrated sum)
+      agg_func <- function(x, na.rm = TRUE) sum(x, na.rm = na.rm) * delta_t
 
       # Aggregate across all sensors and methods
       # Group by period and method_label if available
@@ -205,9 +210,12 @@ aggregationServer <- function(id,
           )
       }
 
-      # Add data type attribute for plotting
+      # Add metadata for plotting
       attr(aggregated, "data_type") <- input$data_type
       attr(aggregated, "value_col") <- value_col
+      attr(aggregated, "agg_func") <- agg_func_name
+      attr(aggregated, "agg_period") <- input$aggregation_period
+      attr(aggregated, "delta_t") <- delta_t
 
       return(aggregated)
     })
@@ -218,14 +226,36 @@ aggregationServer <- function(id,
 
       data <- aggregated_data()
       data_type <- attr(data, "data_type")
+      agg_func_name <- attr(data, "agg_func")
+      agg_period_name <- attr(data, "agg_period")
 
-      # Set labels based on data type
+      # Set labels based on data type and aggregation function
       if (data_type == "water_use") {
         data_label <- "Water Use"
-        y_label <- "Water Use (L/hr)"
+        if (agg_func_name == "sum") {
+          unit <- switch(agg_period_name, 
+                         "hourly" = "L/hr", 
+                         "daily" = "L/day", 
+                         "weekly" = "L/week", 
+                         "monthly" = "L/month",
+                         "L")
+          y_label <- paste0("Total Water Use (", unit, ")")
+        } else {
+          y_label <- "Water Use (L/hr)"
+        }
       } else {
         data_label <- "Flux Density"
-        y_label <- "Flux Density (cm³/cm²/hr)"
+        if (agg_func_name == "sum") {
+          unit <- switch(agg_period_name, 
+                         "hourly" = "cm/hr", 
+                         "daily" = "cm/day", 
+                         "weekly" = "cm/week", 
+                         "monthly" = "cm/month",
+                         "cm")
+          y_label <- paste0("Total Flux Density (", unit, ")")
+        } else {
+          y_label <- "Flux Density (cm³/cm²/hr)"
+        }
       }
 
       if (nrow(data) == 0) {
@@ -240,18 +270,72 @@ aggregationServer <- function(id,
         )
       }
 
+      # Apply cumulative transform if requested
+      show_cumulative <- isTRUE(input$show_cumulative) && input$plot_type %in% c("timeseries", "bar")
+      if (show_cumulative) {
+        if ("method_label" %in% names(data)) {
+          data <- data %>%
+            dplyr::group_by(method_label) %>%
+            dplyr::arrange(period) %>%
+            dplyr::mutate(aggregated_value = cumsum(aggregated_value)) %>%
+            dplyr::ungroup()
+        } else {
+          data <- data %>%
+            dplyr::arrange(period) %>%
+            dplyr::mutate(aggregated_value = cumsum(aggregated_value))
+        }
+        
+        # Override y_label for cumulative
+        if (data_type == "water_use") {
+          y_label <- "Cumulative Water Use (L)"
+        } else {
+          y_label <- "Cumulative Flux (cm)"
+        }
+      }
+
       # Create plot based on plot type
       # Color by method_label if available
       has_method_label <- "method_label" %in% names(data)
 
+      # Apply standard layout
+      base_layout <- get_standard_layout(
+        title = paste0(tools::toTitleCase(input$aggregation_period), " Total ",
+                       data_label),
+        xtitle = "Time Period",
+        ytitle = y_label,
+        uirevision = "aggregation_zoom"
+      )
+      
+      style_config <- plot_settings()
+
       if (input$plot_type == "timeseries") {
+        p <- plotly::plot_ly()
+        
         if (has_method_label) {
-          p <- plotly::plot_ly(data,
-                               x = ~period,
-                               y = ~aggregated_value,
-                               color = ~method_label,
-                               type = 'scatter',
-                               mode = 'lines+markers')
+          methods <- unique(data$method_label)
+          for (m in methods) {
+            method_data <- data %>% dplyr::filter(method_label == m)
+            
+            base_method <- m
+            if (grepl("HRM", m)) base_method <- "HRM"
+            else if (grepl("MHR", m)) base_method <- "MHR"
+            else if (grepl("Tmax_Coh", m)) base_method <- "Tmax_Coh"
+            else if (grepl("Tmax_Klu", m)) base_method <- "Tmax_Klu"
+            
+            style <- get_plot_style(method = base_method, sensor = "outer", is_corrected = TRUE, config = style_config)
+            
+            p <- p %>%
+              plotly::add_trace(
+                data = method_data,
+                x = ~period,
+                y = ~aggregated_value,
+                name = m,
+                type = 'scatter',
+                mode = 'lines+markers',
+                line = style,
+                marker = list(size = 6, color = style$color)
+              )
+          }
         } else {
           p <- plotly::plot_ly(data,
                                x = ~period,
@@ -263,16 +347,19 @@ aggregationServer <- function(id,
 
         p <- p %>%
           plotly::layout(
-            title = paste0(tools::toTitleCase(input$aggregation_period), " ",
-                           tools::toTitleCase(input$aggregation_function),
-                           " ", data_label),
-            xaxis = list(title = "Time Period"),
-            yaxis = list(title = y_label),
+            xaxis = base_layout$xaxis,
+            yaxis = base_layout$yaxis,
             hovermode = 'x unified',
-            legend = list(orientation = "h", y = -0.15),
-            uirevision = "aggregation_zoom"
-          )
-      } else if (input$plot_type == "bar") {
+            showlegend = base_layout$showlegend,
+            legend = base_layout$legend,
+            plot_bgcolor = base_layout$plot_bgcolor,
+            paper_bgcolor = base_layout$paper_bgcolor,
+            uirevision = base_layout$uirevision,
+            margin = base_layout$margin
+          ) %>%
+          plotly::event_register("plotly_relayout")
+      } else {
+        # Bar Chart
         if (has_method_label) {
           p <- plotly::plot_ly(data,
                                x = ~period,
@@ -289,52 +376,20 @@ aggregationServer <- function(id,
 
         p <- p %>%
           plotly::layout(
-            title = paste0(tools::toTitleCase(input$aggregation_period), " ",
-                           tools::toTitleCase(input$aggregation_function),
-                           " ", data_label),
-            xaxis = list(title = "Time Period"),
-            yaxis = list(title = y_label),
+            xaxis = base_layout$xaxis,
+            yaxis = base_layout$yaxis,
             barmode = 'group',
-            legend = list(orientation = "h", y = -0.15),
-            uirevision = "aggregation_zoom"
-          )
-      } else {
-        # Heatmap - use method if available, otherwise just show aggregated_value over time
-        if (has_method_label) {
-          p <- plotly::plot_ly(
-            data,
-            x = ~period,
-            y = ~method_label,
-            z = ~aggregated_value,
-            type = 'heatmap',
-            colorscale = 'Viridis'
+            showlegend = base_layout$showlegend,
+            legend = base_layout$legend,
+            plot_bgcolor = base_layout$plot_bgcolor,
+            paper_bgcolor = base_layout$paper_bgcolor,
+            uirevision = base_layout$uirevision,
+            margin = base_layout$margin
           ) %>%
-            plotly::layout(
-              title = paste0(tools::toTitleCase(input$aggregation_period), " ",
-                             data_label, " Heatmap"),
-              xaxis = list(title = "Time Period"),
-              yaxis = list(title = "Method"),
-              uirevision = "aggregation_zoom"
-            )
-        } else {
-          # Simplified heatmap for single method
-          p <- plotly::plot_ly(
-            data,
-            x = ~period,
-            y = 1,
-            z = ~aggregated_value,
-            type = 'heatmap',
-            colorscale = 'Viridis'
-          ) %>%
-            plotly::layout(
-              title = paste0(tools::toTitleCase(input$aggregation_period), " ",
-                             data_label, " Over Time"),
-              xaxis = list(title = "Time Period"),
-              yaxis = list(title = "", showticklabels = FALSE),
-              uirevision = "aggregation_zoom"
-            )
-        }
+          plotly::event_register("plotly_relayout")
       }
+
+      p <- p %>% apply_standard_plotly_config(filename = "aggregated_data_plot", add_csv_download = TRUE)
 
       return(p)
     })
@@ -345,14 +400,34 @@ aggregationServer <- function(id,
 
       data <- aggregated_data()
       data_type <- attr(data, "data_type")
+      agg_func_name <- attr(data, "agg_func")
+      agg_period_name <- attr(data, "agg_period")
 
-      # Set labels and units based on data type
+      # Set labels and units based on data type and aggregation function
       if (data_type == "water_use") {
         data_label <- "Water Use"
-        unit_label <- "L/hr"
+        if (agg_func_name == "sum") {
+          unit_label <- switch(agg_period_name, 
+                               "hourly" = "L/hr", 
+                               "daily" = "L/day", 
+                               "weekly" = "L/week", 
+                               "monthly" = "L/month",
+                               "L")
+        } else {
+          unit_label <- "L/hr"
+        }
       } else {
         data_label <- "Flux Density"
-        unit_label <- "cm³/cm²/hr"
+        if (agg_func_name == "sum") {
+          unit_label <- switch(agg_period_name, 
+                               "hourly" = "cm/hr", 
+                               "daily" = "cm/day", 
+                               "weekly" = "cm/week", 
+                               "monthly" = "cm/month",
+                               "cm")
+        } else {
+          unit_label <- "cm³/cm²/hr"
+        }
       }
 
       stats_html <- "<table style='width:100%; font-size:0.9em;'>"
@@ -370,13 +445,13 @@ aggregationServer <- function(id,
 
       stats_html <- paste0(stats_html,
                            "<tr><td><strong>Total Periods</strong></td><td>", total_periods, "</td></tr>",
-                           "<tr><td><strong>Mean ", data_label, "</strong></td><td>",
+                           "<tr><td><strong>Average Total (per period)</strong></td><td>",
                            sprintf("%.3f %s", mean_val, unit_label), "</td></tr>",
-                           "<tr><td><strong>Median ", data_label, "</strong></td><td>",
+                           "<tr><td><strong>Median Total</strong></td><td>",
                            sprintf("%.3f %s", median_val, unit_label), "</td></tr>",
-                           "<tr><td><strong>Min ", data_label, "</strong></td><td>",
+                           "<tr><td><strong>Min Total</strong></td><td>",
                            sprintf("%.3f %s", min_val, unit_label), "</td></tr>",
-                           "<tr><td><strong>Max ", data_label, "</strong></td><td>",
+                           "<tr><td><strong>Max Total</strong></td><td>",
                            sprintf("%.3f %s", max_val, unit_label), "</td></tr>")
 
       stats_html <- paste0(stats_html, "</tbody></table>")
@@ -406,7 +481,7 @@ aggregationServer <- function(id,
 
     # Code generation
     observe({
-      if (!isTRUE(code_tracker)) {
+      if (!is.null(code_tracker) && !is.logical(code_tracker)) {
         if (!is.null(input$aggregation_period) &&
             !is.null(input$aggregation_function) &&
             !is.null(input$data_type)) {

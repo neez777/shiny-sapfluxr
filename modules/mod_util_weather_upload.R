@@ -23,7 +23,17 @@ weatherUploadUI <- function(id) {
         placeholder = "No file selected"
       ),
       p(class = "help-text",
-        "CSV format with datetime, temperature, and relative humidity columns")
+        "CSV format with datetime, temperature, and relative humidity columns"),
+      tags$div(
+        style = "margin-top: 10px;",
+        tags$span(class = "help-text", "No data of your own? "),
+        actionButton(
+          ns("load_example"),
+          label = "Load Example Weather",
+          icon = icon("flask"),
+          class = "btn-info btn-sm"
+        )
+      )
     ),
 
     # Column specification (optional)
@@ -32,28 +42,28 @@ weatherUploadUI <- function(id) {
       style = "display: none;",
       h5("Column Specification (Optional)"),
       p(class = "text-muted",
-        "Leave blank for automatic detection"),
+        "Select the correct columns from the dropdowns below."),
       fluidRow(
         column(6,
-          textInput(ns("datetime_col"), "Datetime Column:",
-                   placeholder = "Auto-detect")
+          selectInput(ns("datetime_col"), "Datetime Column:",
+                   choices = character(0))
         ),
         column(6,
-          textInput(ns("temp_col"), "Temperature Column:",
-                   placeholder = "Auto-detect")
+          selectInput(ns("temp_col"), "Temperature Column:",
+                   choices = character(0))
         )
       ),
       fluidRow(
         column(6,
-          textInput(ns("rh_col"), "Humidity Column:",
-                   placeholder = "Auto-detect")
+          selectInput(ns("rh_col"), "Humidity Column:",
+                   choices = character(0))
         ),
         column(6,
-          textInput(ns("pressure_col"), "Pressure Column (optional):",
-                   placeholder = "Auto-detect")
+          selectInput(ns("pressure_col"), "Pressure Column (optional):",
+                   choices = character(0))
         )
       ),
-      actionButton(ns("reprocess"), "Reprocess with Custom Columns",
+      actionButton(ns("reprocess"), "Update Column Mapping",
                   icon = icon("sync"))
     ),
 
@@ -99,9 +109,8 @@ weatherUploadServer <- function(id, heat_pulse_data = reactive(NULL)) {
       file_uploaded = FALSE
     )
 
-    # Observe file upload
-    observeEvent(input$file, {
-      req(input$file)
+    # Shared weather import routine used by both the upload and example loader.
+    load_weather <- function(path, display_name) {
 
       # Clear previous data
       rv$weather_raw <- NULL
@@ -116,15 +125,17 @@ weatherUploadServer <- function(id, heat_pulse_data = reactive(NULL)) {
                         duration = NULL,
                         id = "weather_load")
 
-        # Get column specifications if provided
-        datetime_col <- if (nzchar(input$datetime_col)) input$datetime_col else NULL
-        temp_col <- if (nzchar(input$temp_col)) input$temp_col else NULL
-        rh_col <- if (nzchar(input$rh_col)) input$rh_col else NULL
-        pressure_col <- if (nzchar(input$pressure_col)) input$pressure_col else NULL
+        # Get column specifications if provided (Handle selectInputs)
+        # On first load these will be empty, so auto-detect runs.
+        # On 'Update Mapping' click, they will have values.
+        datetime_col <- if (nzchar(input$datetime_col %||% "")) input$datetime_col else NULL
+        temp_col <- if (nzchar(input$temp_col %||% "")) input$temp_col else NULL
+        rh_col <- if (nzchar(input$rh_col %||% "")) input$rh_col else NULL
+        pressure_col <- if (nzchar(input$pressure_col %||% "")) input$pressure_col else NULL
 
         # Read weather data
         weather <- sapfluxr::read_weather_data(
-          input$file$datapath,
+          path,
           datetime_col = datetime_col,
           temp_col = temp_col,
           rh_col = rh_col,
@@ -132,12 +143,24 @@ weatherUploadServer <- function(id, heat_pulse_data = reactive(NULL)) {
           confirm = FALSE
         )
 
-        # Override filename
-        attr(weather, "source_file") <- input$file$name
+        # Record source name
+        attr(weather, "source_file") <- display_name
 
         # Store data
         rv$weather_raw <- weather
         rv$file_uploaded <- TRUE
+
+        # Populate Dropdowns with RAW column names from the file
+        # We get these from the attributes of the successfully read weather object
+        col_mapping <- attr(weather, "column_mapping")
+        raw_col_names <- names(readr::read_csv(path, n_max = 0, show_col_types = FALSE))
+
+        updateSelectInput(session, "datetime_col", choices = raw_col_names, selected = col_mapping$datetime)
+        updateSelectInput(session, "temp_col", choices = raw_col_names, selected = col_mapping$temperature)
+        updateSelectInput(session, "rh_col", choices = raw_col_names, selected = col_mapping$humidity)
+        updateSelectInput(session, "pressure_col",
+                          choices = c("None" = "", raw_col_names),
+                          selected = col_mapping$pressure %||% "")
 
         # Remove loading notification
         removeNotification("weather_load")
@@ -160,6 +183,27 @@ weatherUploadServer <- function(id, heat_pulse_data = reactive(NULL)) {
           duration = 10
         )
       })
+    }
+
+    # Observe file upload
+    observeEvent(input$file, {
+      req(input$file)
+      load_weather(input$file$datapath, input$file$name)
+    })
+
+    # Observe "Load Example Weather" button
+    observeEvent(input$load_example, {
+      example_path <- system.file(
+        "extdata", "Sample_Meteorological_Data.txt", package = "sapfluxr"
+      )
+      if (!nzchar(example_path)) {
+        showNotification(
+          "Bundled example weather file not found. Is sapfluxr installed?",
+          type = "error", duration = 10
+        )
+        return()
+      }
+      load_weather(example_path, "Sample_Meteorological_Data.txt")
     })
 
     # Reprocess with custom columns

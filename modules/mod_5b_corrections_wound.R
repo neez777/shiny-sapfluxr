@@ -147,6 +147,14 @@ woundCorrectionUI <- function(id) {
             selected = "5mm"
           ),
 
+          radioButtons(
+            ns("wound_method"),
+            "Correction Method:",
+            choices = c("Linear" = "linear", "Polynomial" = "polynomial"),
+            selected = "linear",
+            inline = TRUE
+          ),
+
           actionButton(
             ns("apply_wound_correction"),
             "Apply Wound Correction",
@@ -169,7 +177,7 @@ woundCorrectionUI <- function(id) {
           solidHeader = TRUE,
           collapsible = TRUE,
 
-          helpText("Visualize how wound diameter changes over time based on initial installation and reinstallation dates."),
+          helpText("Visualise how wound diameter changes over time based on initial installation and reinstallation dates."),
 
           conditionalPanel(
             condition = sprintf("!output['%s']", ns("has_temporal_wound_tracking")),
@@ -221,7 +229,7 @@ woundCorrectionUI <- function(id) {
                   column(4,
                     checkboxInput(
                       ns("show_raw_data"),
-                      "Show Raw Data",
+                      "Show Raw Data Overlay",
                       value = FALSE
                     )
                   ),
@@ -230,6 +238,47 @@ woundCorrectionUI <- function(id) {
                       ns("show_spacing_corrected"),
                       "Show Spacing Corrected",
                       value = FALSE
+                    )
+                  )
+                ),
+
+                fluidRow(
+                  column(4,
+                    shinyWidgets::airDatepickerInput(
+                      ns("wc_start_datetime"),
+                      "Start Date/Time:",
+                      value = NULL,
+                      timepicker = TRUE,
+                      dateFormat = "yyyy-MM-dd HH:mm"
+                    )
+                  ),
+                  column(4,
+                    shinyWidgets::airDatepickerInput(
+                      ns("wc_end_datetime"),
+                      "End Date/Time:",
+                      value = NULL,
+                      timepicker = TRUE,
+                      dateFormat = "yyyy-MM-dd HH:mm"
+                    )
+                  ),
+                  column(2,
+                    br(),
+                    actionButton(
+                      ns("wc_apply_range"),
+                      "Apply",
+                      icon = icon("clock"),
+                      class = "btn-primary btn-sm",
+                      style = "width: 100%; margin-top: 8px;"
+                    )
+                  ),
+                  column(2,
+                    br(),
+                    actionButton(
+                      ns("wc_reset_zoom"),
+                      "Reset",
+                      icon = icon("refresh"),
+                      class = "btn-default btn-sm",
+                      style = "width: 100%; margin-top: 8px;"
                     )
                   )
                 ),
@@ -255,36 +304,6 @@ woundCorrectionUI <- function(id) {
               )
             )
           )
-        ),
-
-        # Active wound correction status
-        box(
-          width = 12,
-          title = "Active Wound Correction Status",
-          status = "success",
-          solidHeader = TRUE,
-
-          conditionalPanel(
-            condition = sprintf("!output['%s']", ns("has_wound_results")),
-            p(em("No wound correction applied."))
-          ),
-
-          conditionalPanel(
-            condition = sprintf("output['%s']", ns("has_wound_results")),
-
-            p("Wound correction is active and will be used in downstream analyses:"),
-            verbatimTextOutput(ns("wound_status")),
-
-            hr(),
-
-            actionButton(
-              ns("reset_wound_correction"),
-              "Remove Wound Correction",
-              icon = icon("undo"),
-              class = "btn-warning",
-              width = "100%"
-            )
-          )
         )
       )
     )
@@ -296,7 +315,8 @@ woundCorrectionServer <- function(id,
                                    vh_data = reactive(NULL),
                                    wood_properties = reactive(NULL),
                                    probe_config = reactive(NULL),
-                                   code_tracker = NULL) {
+                                   code_tracker = NULL,
+                                   plot_settings = reactive(NULL)) {
   moduleServer(id, function(input, output, session) {
 
     # Reactive values
@@ -611,8 +631,8 @@ woundCorrectionServer <- function(id,
           result <- sapfluxr::apply_wound_correction(
             vh_data = vh_data(),
             probe_spacing = input$probe_spacing,
+            method = input$wound_method,
             wood_properties = wood,
-            use_spacing_corrected = TRUE,
             confirm_parameters = FALSE
           )
 
@@ -632,11 +652,14 @@ woundCorrectionServer <- function(id,
                 'vh_corrected <- apply_wound_correction(
   vh_data = vh_data,
   probe_spacing = "%s",
+  method = "%s",
   wood_properties = wood_properties
 )',
-                input$probe_spacing
+                input$probe_spacing,
+                input$wound_method
               ),
-              description = sprintf("Wound correction applied%s",
+              description = sprintf("Wound correction applied (%s method)%s",
+                                   input$wound_method,
                                    if (n_reinstalls > 0)
                                      sprintf(" with %d reinstallation%s",
                                             n_reinstalls,
@@ -681,48 +704,21 @@ woundCorrectionServer <- function(id,
 
       sprintf(
         paste0(
-          "Wound Correction Applied
-
-",
-          "Data Points: %d
-",
-          "Probe Spacing: %s
-",
-          "Wound Diameter Range: %.2f - %.2f mm
-",
-          "Correction Coefficient Range: %.3f - %.3f
-",
-          "Mean Correction: %.2f cm/hr
-"
+          "Wound Correction Applied\n",
+          strrep("-", 40), "\n",
+          "Data Points: %d\n",
+          "Method: %s\n",
+          "Probe Spacing: %s\n",
+          "Wound Diameter Range: %.2f - %.2f mm\n",
+          "Correction Coefficient Range: %.3f - %.3f\n",
+          "Mean Correction: %.2f cm/hr\n"
         ),
         nrow(after),
+        input$wound_method,
         input$probe_spacing,
         wound_range[1] * 10, wound_range[2] * 10,
         B_range[1], B_range[2],
         mean_correction
-      )
-    })
-
-    # Wound status
-    output$wound_status <- renderText({
-      req(rv$wound_corrected_data)
-
-      n_reinstalls <- 0
-      if (!is.null(rv$reinstallations) && is.data.frame(rv$reinstallations)) {
-        n_reinstalls <- nrow(rv$reinstallations)
-      }
-
-      sprintf(
-        paste0(
-          "Wound-corrected data active (%d records)
-",
-          "Applied: %s
-",
-          "Reinstallations: %d"
-        ),
-        nrow(rv$wound_corrected_data),
-        format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
-        n_reinstalls
       )
     })
 
@@ -760,8 +756,25 @@ woundCorrectionServer <- function(id,
         max(Sys.time(), max(rv$reinstallations$datetime, na.rm=TRUE))
       }
 
-      # Generate daily timestamps
-      timestamps <- seq(from = start_time, to = end_time, by = "1 day")
+      # Generate a sequence of points for a crisp sawtooth geometry
+      # We need points at start/end and at EVERY reinstallation moment (Peak and Base)
+      
+      reinstalls <- if(!is.null(rv$reinstallations) && is.data.frame(rv$reinstallations) && nrow(rv$reinstallations) > 0) rv$reinstallations$datetime else NULL
+      
+      # 1. Start with daily timestamps for the growth lines
+      daily_ts <- seq(from = start_time, to = end_time, by = "1 day")
+      
+      # 2. Add reinstallation moments (TWICE: just before and just after)
+      # T-1s captures the peak reached just before removal
+      # T+1s captures the reset to base size
+      reinstall_peaks <- if(!is.null(reinstalls)) reinstalls - 1 else as.POSIXct(character())
+      reinstall_bases <- if(!is.null(reinstalls)) reinstalls + 1 else as.POSIXct(character())
+      
+      # 3. Combine and sort
+      timestamps_list <- list(start_time, daily_ts, reinstall_peaks, reinstall_bases, end_time)
+      # Ensure all are valid by removing NULLs or empty vectors if any, though do.call("c") handles empty well
+      timestamps <- do.call("c", timestamps_list)
+      timestamps <- sort(unique(timestamps))
 
       # Calculate diameters using package function
       # This ensures plot matches actual logic (sawtooth)
@@ -787,8 +800,9 @@ woundCorrectionServer <- function(id,
         wound_diameter_mm = diameters_mm,
         stringsAsFactors = FALSE
       )
-
-      # Plot
+      
+      # IMPORTANT: Ensure strictly sorted to avoid ghost lines crossing back/forth
+      timeline_df <- timeline_df[order(timeline_df$datetime), ]
       fig <- plotly::plot_ly(
         data = timeline_df,
         x = ~datetime,
@@ -815,6 +829,7 @@ woundCorrectionServer <- function(id,
         }
 
         fig <- fig %>% plotly::add_trace(
+          inherit = FALSE,
           x = rv$reinstallations$datetime,
           y = reinstall_y_values,
           type = "scatter",
@@ -830,16 +845,33 @@ woundCorrectionServer <- function(id,
         )
       }
 
+      # Apply standard layout
+      base_layout <- get_standard_layout(
+        title = "Wound Diameter Over Time",
+        xtitle = "Date",
+        ytitle = "Wound Diameter (mm)",
+        uirevision = "wound_diameter_zoom"
+      )
+      
+      # Tweak legend and margin to avoid overlap with x-axis title
+      base_layout$legend$y <- -0.25
+      base_layout$margin$b <- 120
+      base_layout$yaxis$fixedrange <- FALSE
+
       fig <- fig %>%
         plotly::layout(
-          title = "Wound Diameter Over Time (Sawtooth Model)",
-          xaxis = list(title = "Date", showgrid = TRUE, gridcolor = "lightgray"),
-          yaxis = list(title = "Wound Diameter (mm)", showgrid = TRUE, gridcolor = "lightgray"),
-          hovermode = "closest",
-          margin = list(l = 60, r = 40, t = 60, b = 60),
-          showlegend = TRUE,
-          uirevision = "wound_diameter_zoom"
-        )
+          title = base_layout$title,
+          xaxis = base_layout$xaxis,
+          yaxis = base_layout$yaxis,
+          legend = base_layout$legend,
+          hovermode = base_layout$hovermode,
+          margin = base_layout$margin,
+          uirevision = base_layout$uirevision,
+          plot_bgcolor = base_layout$plot_bgcolor,
+          paper_bgcolor = base_layout$paper_bgcolor,
+          showlegend = TRUE
+        ) %>%
+        apply_standard_plotly_config(filename = "wound_diameter_plot", add_csv_download = TRUE)
 
       return(fig)
     })
@@ -877,8 +909,8 @@ woundCorrectionServer <- function(id,
       after <- after[order(after$datetime), ]
 
       # Systematic sampling for performance while maintaining line continuity
-      # Plotly gets slow with >5000 points, so downsample for visualisation
-      max_plot_points <- 5000
+      # Plotly gets slow with >30000 points, so downsample for visualisation
+      max_plot_points <- 30000
 
       if (nrow(after) > max_plot_points) {
         sample_idx <- seq(1, nrow(after), length.out = max_plot_points)
@@ -904,27 +936,17 @@ woundCorrectionServer <- function(id,
       after <- data_list$after
       sensor <- input$plot_sensor_position
       method <- "HRM"  # Wound correction is only applied to HRM
-
-      # Debug output
-      cat("\n=== WOUND CORRECTION PLOT DEBUG ===\n")
-      cat("Before rows:", nrow(before), "\n")
-      cat("After rows:", nrow(after), "\n")
-      cat("Before columns:", paste(names(before), collapse = ", "), "\n")
-      cat("After columns:", paste(names(after), collapse = ", "), "\n")
-      cat("Sensor:", sensor, "\n")
-      cat("Method:", method, "\n")
-      cat("Show raw data:", isTRUE(input$show_raw_data), "\n")
-      cat("Show spacing corrected:", isTRUE(input$show_spacing_corrected), "\n")
-
+      
       if (nrow(after) == 0) {
         # Return empty plot if no data
-        return(plotly::plot_ly() %>%
+        return(plotly::plot_ly(source = "wound_comparison") %>%
                  plotly::layout(
                    title = paste("No data for", sensor, "sensor"),
                    xaxis = list(title = "Date"),
-                   yaxis = list(title = "Velocity (cm/hr)"),
+                   yaxis = list(title = "Velocity (cm/hr)", fixedrange = TRUE),
                    uirevision = "wound_comparison_zoom"
-                 ))
+                 ) %>%
+                 plotly::event_register("plotly_relayout"))
       }
 
       # Determine which wound corrected column to use
@@ -934,23 +956,22 @@ woundCorrectionServer <- function(id,
       } else if ("Vh_cm_hr_sc_wc" %in% names(after)) {
         "Vh_cm_hr_sc_wc"
       } else {
-        cat("ERROR: No wound corrected velocity column found!\n")
-        cat("Available columns in 'after':", paste(names(after), collapse = ", "), "\n")
         stop("No wound corrected velocity column found.")
       }
 
-      cat("Using wound corrected column:", wc_col, "\n")
-      cat("Non-NA values:", sum(!is.na(after[[wc_col]])), "\n")
-
-      # Start with Wound Corrected line (always shown)
+      # Get styling config
+      style_config <- plot_settings()
+      
+      # Start with Wound Corrected line (always shown as base layer)
       p <- plotly::plot_ly(
+        source = "wound_comparison",
         data = after,
         x = ~datetime,
         y = as.formula(paste0("~", wc_col)),
         type = "scatter",
         mode = "lines",
         name = "Wound Corrected",
-        line = list(color = "darkgreen", width = 1.5),
+        line = list(color = "#2ca02c", width = 1.5),
         hovertemplate = paste(
           "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
           "<b>Wound Corrected:</b> %{y:.2f} cm/hr<br>",
@@ -958,62 +979,94 @@ woundCorrectionServer <- function(id,
         )
       )
 
-      # Add Raw Data overlay if requested
-      if (isTRUE(input$show_raw_data)) {
-        raw_col <- if ("Vh_cm_hr_raw" %in% names(before)) "Vh_cm_hr_raw" else "Vh_cm_hr"
-
-        p <- p %>%
-          plotly::add_trace(
-            data = before,
-            x = ~datetime,
-            y = as.formula(paste0("~", raw_col)),
-            type = "scatter",
-            mode = "lines",
-            name = "Raw Data",
-            line = list(color = "red", width = 1),
-            hovertemplate = paste(
-              "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
-              "<b>Raw:</b> %{y:.2f} cm/hr<br>",
-              "<extra></extra>"
-            )
-          )
-      }
-
-      # Add Spacing Corrected overlay if requested
-      if (isTRUE(input$show_spacing_corrected)) {
-        sc_col <- if ("Vh_cm_hr_sc" %in% names(before)) "Vh_cm_hr_sc" else "Vh_cm_hr"
-
-        p <- p %>%
-          plotly::add_trace(
-            data = before,
-            x = ~datetime,
-            y = as.formula(paste0("~", sc_col)),
-            type = "scatter",
-            mode = "lines",
-            name = "Spacing Corrected",
-            line = list(color = "steelblue", width = 1.2),
-            hovertemplate = paste(
-              "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
-              "<b>Spacing Corrected:</b> %{y:.2f} cm/hr<br>",
-              "<extra></extra>"
-            )
-          )
-      }
-
-      # Layout
+      # Apply standard layout
+      base_layout <- get_standard_layout(
+        title = sprintf("Wound Correction: Before vs After (%s, %s)", toupper(sensor), method),
+        xtitle = "Date",
+        ytitle = "Velocity (cm/hr)",
+        uirevision = "wound_comparison_zoom"
+      )
+      
       p <- p %>%
         plotly::layout(
-          title = sprintf("Wound Correction: Before vs After (%s, %s)", toupper(sensor), method),
-          xaxis = list(title = "Date", showgrid = TRUE, gridcolor = "lightgray"),
-          yaxis = list(title = "Velocity (cm/hr)", showgrid = TRUE, gridcolor = "lightgray"),
-          hovermode = "closest",
-          legend = list(x = 0.02, y = 0.98),
-          margin = list(l = 60, r = 40, t = 60, b = 60),
-          uirevision = "wound_comparison_zoom"
-        )
+          title = base_layout$title,
+          xaxis = base_layout$xaxis,
+          yaxis = base_layout$yaxis,
+          showlegend = TRUE,
+          legend = base_layout$legend,
+          hovermode = base_layout$hovermode,
+          uirevision = base_layout$uirevision,
+          plot_bgcolor = base_layout$plot_bgcolor,
+          paper_bgcolor = base_layout$paper_bgcolor,
+          margin = base_layout$margin
+        ) %>%
+        apply_standard_plotly_config(filename = "wound_correction_comparison", add_csv_download = TRUE) %>%
+        plotly::event_register("plotly_relayout")
 
       return(p)
     })
+
+    # Use plotlyProxy to add/remove Raw and Spacing Corrected overlays (preserves zoom)
+    observe({
+      req(wound_plot_data())
+      
+      data_list <- wound_plot_data()
+      before <- data_list$before
+
+      # First, try to remove existing overlay traces (Traces 1 and 2)
+      tryCatch({
+        plotly::plotlyProxy("wound_correction_comparison", session) %>%
+          plotly::plotlyProxyInvoke("deleteTraces", list(1))
+        plotly::plotlyProxy("wound_correction_comparison", session) %>%
+          plotly::plotlyProxyInvoke("deleteTraces", list(1))
+      }, error = function(e) {})
+
+      # Add Raw Data overlay (Red)
+      if (isTRUE(input$show_raw_data)) {
+        raw_col <- "Vh_cm_hr"
+        
+        plotly::plotlyProxy("wound_correction_comparison", session) %>%
+          plotly::plotlyProxyInvoke(
+            "addTraces",
+            list(
+              x = before$datetime,
+              y = before[[raw_col]],
+              type = "scatter",
+              mode = "lines",
+              name = "Raw Data",
+              line = list(color = "#d62728", width = 1.0),
+              hovertemplate = paste(
+                "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
+                "<b>Raw:</b> %{y:.2f} cm/hr<br>",
+                "<extra></extra>"
+              )
+            )
+          )
+      }
+
+      # Add Spacing Corrected overlay (Orange)
+      if (isTRUE(input$show_spacing_corrected)) {
+        sc_col <- if ("Vh_cm_hr_sc" %in% names(before)) "Vh_cm_hr_sc" else "Vh_cm_hr"
+
+        plotly::plotlyProxy("wound_correction_comparison", session) %>%
+          plotly::plotlyProxyInvoke(
+            "addTraces",
+            list(
+              x = before$datetime,
+              y = before[[sc_col]],
+              type = "scatter",
+              mode = "lines",
+              name = "Spacing Corrected",
+              line = list(color = "#ff7f0e", width = 1.2),
+              hovertemplate = paste(
+                "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
+                "<b>Spacing Corrected:</b> %{y:.2f} cm/hr<br>",
+                "<extra></extra>"
+              )
+            )
+          )
+      }
+    }) %>% bindEvent(input$show_raw_data, input$show_spacing_corrected, input$plot_sensor_position, rv$wound_corrected_data)
 
     # Wound coefficients table
     output$wound_coefficients_table <- renderText({
@@ -1055,6 +1108,67 @@ woundCorrectionServer <- function(id,
       }
 
       return(table_text)
+    })
+
+    # Initialise date/time range inputs when wound corrected data becomes available
+    observe({
+      req(rv$wound_corrected_data)
+      date_range <- range(rv$wound_corrected_data$datetime, na.rm = TRUE)
+      if (is.null(input$wc_start_datetime)) {
+        shinyWidgets::updateAirDateInput(session, "wc_start_datetime", value = date_range[1])
+      }
+      if (is.null(input$wc_end_datetime)) {
+        shinyWidgets::updateAirDateInput(session, "wc_end_datetime", value = date_range[2])
+      }
+    })
+
+    # Update datetime inputs when user zooms the wound comparison plot
+    wc_relayout_debounced <- debounce(reactive({
+      event_data("plotly_relayout", source = "wound_comparison")
+    }), 500)
+
+    observeEvent(wc_relayout_debounced(), {
+      rd <- wc_relayout_debounced()
+      if (is.null(rd)) return()
+
+      if (!is.null(rd$xaxis.range) && length(rd$xaxis.range) == 2) {
+        shinyWidgets::updateAirDateInput(session, "wc_start_datetime",
+          value = as.POSIXct(rd$xaxis.range[1], tz = "UTC"))
+        shinyWidgets::updateAirDateInput(session, "wc_end_datetime",
+          value = as.POSIXct(rd$xaxis.range[2], tz = "UTC"))
+      } else if (!is.null(rd$`xaxis.range[0]`)) {
+        shinyWidgets::updateAirDateInput(session, "wc_start_datetime",
+          value = as.POSIXct(rd$`xaxis.range[0]`, tz = "UTC"))
+        shinyWidgets::updateAirDateInput(session, "wc_end_datetime",
+          value = as.POSIXct(rd$`xaxis.range[1]`, tz = "UTC"))
+      } else if (isTRUE(rd$`xaxis.autorange`)) {
+        req(rv$wound_corrected_data)
+        date_range <- range(rv$wound_corrected_data$datetime, na.rm = TRUE)
+        shinyWidgets::updateAirDateInput(session, "wc_start_datetime", value = date_range[1])
+        shinyWidgets::updateAirDateInput(session, "wc_end_datetime", value = date_range[2])
+      }
+    })
+
+    # Apply user-entered time range to wound comparison plot
+    observeEvent(input$wc_apply_range, {
+      req(input$wc_start_datetime, input$wc_end_datetime)
+      plotly::plotlyProxy("wound_correction_comparison", session) %>%
+        plotly::plotlyProxyInvoke("relayout", list(
+          "xaxis.range" = list(
+            format(input$wc_start_datetime, "%Y-%m-%d %H:%M:%S"),
+            format(input$wc_end_datetime, "%Y-%m-%d %H:%M:%S")
+          )
+        ))
+    })
+
+    # Reset wound comparison plot to full range
+    observeEvent(input$wc_reset_zoom, {
+      req(rv$wound_corrected_data)
+      date_range <- range(rv$wound_corrected_data$datetime, na.rm = TRUE)
+      shinyWidgets::updateAirDateInput(session, "wc_start_datetime", value = date_range[1])
+      shinyWidgets::updateAirDateInput(session, "wc_end_datetime", value = date_range[2])
+      plotly::plotlyProxy("wound_correction_comparison", session) %>%
+        plotly::plotlyProxyInvoke("relayout", list("xaxis.autorange" = TRUE))
     })
 
     # Return values for downstream modules

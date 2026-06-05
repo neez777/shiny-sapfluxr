@@ -28,14 +28,25 @@ methodsUI <- function(id) {
 
           p("Select one or more heat pulse velocity calculation methods:"),
 
+          selectInput(
+            ns("baseline_method"),
+            HTML('Pre-pulse baseline method: <span style="color: #999; cursor: help;" title="Method used to estimate the pre-pulse reference temperature. mean_30s averages the 30 seconds before the pulse (default). mean_3s uses only the last 3 seconds, better for dynamic conditions. slope_intercept fits a linear trend to correct for gradual drift."><i class="fa fa-circle-question"></i></span>'),
+            choices = c(
+              "30-second average (default)" = "mean_30s",
+              "3-second average" = "mean_3s",
+              "Slope-intercept (drift correction)" = "slope_intercept"
+            ),
+            selected = "mean_30s"
+          ),
+
+          hr(),
+
           checkboxGroupInput(
             ns("methods"),
             NULL,
             choices = c(
               "HRM - Heat Ratio Method (low/reverse flows)" = "HRM",
               "MHR - Maximum Heat Ratio (moderate to high flows)" = "MHR",
-              "HRMXa - Modified HRM variant A" = "HRMXa",
-              "HRMXb - Modified HRM variant B" = "HRMXb",
               "Tmax (Cohen) - Time-to-peak method" = "Tmax_Coh",
               "Tmax (Kluitenberg) - Time-to-peak method" = "Tmax_Klu"
             ),
@@ -278,6 +289,7 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties, co
               methods = input$methods,
               probe_config = probe,
               wood_properties = wood,
+              baseline_method = input$baseline_method,
               confirm_parameters = FALSE,
               show_progress = TRUE
             )
@@ -358,6 +370,12 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties, co
             ""
           }
 
+          baseline_arg <- if (input$baseline_method != "mean_30s") {
+            sprintf('  baseline_method = "%s",\n', input$baseline_method)
+          } else {
+            ""
+          }
+
           code_tracker$add_step(
             step_name = "Calculate Heat Pulse Velocity",
             code = sprintf(
@@ -366,11 +384,13 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties, co
                 'vh_results <- sapfluxr::calc_heat_pulse_velocity(\n',
                 '  heat_pulse_data = heat_pulse_data,\n',
                 '  methods = c(%s),\n',
+                '%s',
                 '  probe_config = probe_config,\n',
                 '  wood_properties = wood_properties\n',
                 ')%s'
               ),
               paste0('"', input$methods, '"', collapse = ", "),
+              baseline_arg,
               qc_code
             ),
             description = sprintf("Calculated %s for %d measurements with quality control",
@@ -436,13 +456,14 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties, co
       results <- vh_results()
       req(results)
 
-      # Format for display
-      display_results <- results
+      # Format for display — drop internal/deprecated columns
+      hrmx_cols <- grep("^hrmxa|^hrmxb", names(results), value = TRUE)
+      display_results <- results[, !names(results) %in% hrmx_cols, drop = FALSE]
       display_results$datetime <- format(display_results$datetime, "%Y-%m-%d %H:%M:%S")
       display_results$Vh_cm_hr <- round(display_results$Vh_cm_hr, 2)
 
-      if ("hrm_peclet_number" %in% names(display_results)) {
-        display_results$hrm_peclet_number <- round(display_results$hrm_peclet_number, 3)
+      if ("peclet_number" %in% names(display_results)) {
+        display_results$peclet_number <- round(display_results$peclet_number, 3)
       }
 
       DT::datatable(

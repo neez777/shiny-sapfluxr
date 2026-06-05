@@ -54,7 +54,8 @@ plotTimeseriesUI <- function(id) {
             "Start Date/Time:",
             value = NULL,
             timepicker = TRUE,
-            dateFormat = "yyyy-MM-dd HH:mm"
+            dateFormat = "yyyy-mm-dd",
+            timepickerOpts = shinyWidgets::timepickerOptions(timeFormat = "HH:mm")
           ),
 
           shinyWidgets::airDatepickerInput(
@@ -62,7 +63,8 @@ plotTimeseriesUI <- function(id) {
             "End Date/Time:",
             value = NULL,
             timepicker = TRUE,
-            dateFormat = "yyyy-MM-dd HH:mm"
+            dateFormat = "yyyy-mm-dd",
+            timepickerOpts = shinyWidgets::timepickerOptions(timeFormat = "HH:mm")
           ),
 
           actionButton(
@@ -79,7 +81,7 @@ plotTimeseriesUI <- function(id) {
           checkboxInput(
             ns("show_quality_flags"),
             "Show quality flag markers",
-            value = TRUE
+            value = FALSE
           ),
 
           checkboxInput(
@@ -91,12 +93,6 @@ plotTimeseriesUI <- function(id) {
           checkboxInput(
             ns("show_interpolated"),
             "Highlight interpolated points",
-            value = TRUE
-          ),
-
-          checkboxInput(
-            ns("show_peclet"),
-            "Show Peclet number (right axis)",
             value = FALSE
           ),
 
@@ -229,17 +225,6 @@ plotTimeseriesUI <- function(id) {
             style = "width: 100%; margin-bottom: 10px;"
           ),
 
-          conditionalPanel(
-            condition = "output.cleaning_applied",
-            ns = ns,
-            hr(),
-            checkboxInput(
-              ns("show_original"),
-              HTML('Show original data <span style="font-size: 0.85em; color: #666;">(before cleaning)</span>'),
-              value = FALSE
-            )
-          ),
-
           uiOutput(ns("cleaning_summary_ui"))
         ),
 
@@ -289,7 +274,7 @@ plotTimeseriesUI <- function(id) {
 }
 
 # Server ----
-plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), weather_vpd = reactive(NULL)) {
+plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), weather_vpd = reactive(NULL), plot_settings = reactive(NULL), rv = NULL) {
   moduleServer(id, function(input, output, session) {
 
     # Store current axis ranges
@@ -484,15 +469,9 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
       )
     })
 
-    # Choose data source: cleaned or original
+    # Choose data source: cleaned (if applied) or original
     data_for_plot <- reactive({
-      if (cleaning_applied() && !isTRUE(input$show_original)) {
-        # Use cleaned data
-        cleaned_data()
-      } else {
-        # Use original data
-        vh_results()
-      }
+      if (cleaning_applied()) cleaned_data() else vh_results()
     })
 
     # Filtered data based on selections
@@ -627,52 +606,6 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
       )
     })
 
-    # Method colours
-    method_colours <- reactive({
-      tryCatch({
-        methods <- available_methods()
-        req(length(methods) > 0)
-
-        cat("Methods to color:", paste(methods, collapse = ", "), "\n")
-
-        # Define base colour palette (matching pulse trace window colors)
-        base_colours <- c(
-          "HRM" = "#1f77b4",      # Blue (matches HRM window)
-          "MHR" = "#ff7f0e",      # Orange (matches MHR window)
-          "HRMXa" = "#4169E1",    # Royal blue (matches HRMXa window)
-          "HRMXb" = "#d62728",    # Red (matches HRMXb)
-          "Tmax_Coh" = "#9467bd", # Purple
-          "Tmax_Klu" = "#8c564b"  # Brown
-          # sDMA color definitions removed - see R/04j_sdma_methods.R
-        )
-
-        # Generate colors for all methods
-        colours <- character(length(methods))
-        names(colours) <- methods
-
-        for (i in seq_along(methods)) {
-          m <- methods[i]
-          if (m %in% names(base_colours)) {
-            colours[i] <- base_colours[[m]]
-            cat("  ", m, "-> predefined:", colours[i], "\n")
-          } else {
-            # For unknown methods, generate a color
-            set.seed(sum(as.integer(charToRaw(m))))
-            colours[i] <- sprintf("#%06X", sample(0:16777215, 1))
-            cat("  ", m, "-> generated:", colours[i], "\n")
-          }
-        }
-
-        cat("Total colors:", length(colours), "\n")
-        colours
-
-      }, error = function(e) {
-        cat("ERROR in method_colours:", e$message, "\n")
-        print(e)
-        return(c("HRM" = "#1f77b4"))  # Return at least one color
-      })
-    })
-
     # Preview cleaning changes
     observeEvent(input$preview_cleaning, {
       req(vh_results())
@@ -788,10 +721,11 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
         })
         cat(sprintf("\nInterpolation time: %.3f seconds\n", timing_clean["elapsed"]))
 
-        # Store cleaned data
+        # Store cleaned data and propagate to shared session state
         cat("Updating reactive data...\n")
         timing_reactive <- system.time({
           cleaned_data(cleaned)
+          if (!is.null(rv)) rv$vh_results <- cleaned
         })
         cat(sprintf("Reactive update time: %.3f seconds\n", timing_reactive["elapsed"]))
 
@@ -807,7 +741,7 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
         shinyWidgets::sendSweetAlert(
           session = session,
           title = "Cleaning Applied!",
-          text = sprintf("Successfully interpolated %s values. Use the toggle below to compare before/after.",
+          text = sprintf("Successfully interpolated %s values.",
                         format(n_interpolated, big.mark = ",")),
           type = "success",
           timer = 3000
@@ -897,8 +831,10 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
 
       data <- vh_results()
 
-      # Determine which Vh column exists
-      vh_col <- if ("Vh_cm_hr_sc" %in% names(data)) {
+      # Determine which Vh column exists (prefer current best estimate)
+      vh_col <- if ("Vs_cm_hr" %in% names(data)) {
+        "Vs_cm_hr"
+      } else if ("Vh_cm_hr_sc" %in% names(data)) {
         "Vh_cm_hr_sc"
       } else if ("Vh_cm_hr_zf" %in% names(data)) {
         "Vh_cm_hr_zf"
@@ -906,634 +842,290 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
         "Vh_cm_hr"
       }
 
-      # Get non-OK quality flags
+      # Get non-OK quality flags — keep the original column name so renderPlotly
+      # can access it via the same vh_col cascade (renaming to Vh_cm_hr breaks the
+      # Vs_cm_hr reference in the flag-marker traces).
       markers <- data %>%
         dplyr::filter(quality_flag != "OK") %>%
         dplyr::select(datetime, pulse_id, quality_flag, method, sensor_position, !!sym(vh_col)) %>%
         distinct()
 
-      # Rename to standard name for consistency
-      if (vh_col != "Vh_cm_hr") {
-        markers <- markers %>% dplyr::rename(Vh_cm_hr = !!sym(vh_col))
-      }
-
       markers
     })
 
-    # Main time series plot
+    # Main time series plot - Integrated render (handles base lines with persistent zoom)
     output$timeseries_plot <- plotly::renderPlotly({
       tryCatch({
+        style_config <- plot_settings()
         data <- filtered_data()
         req(nrow(data) > 0)
 
-        cat("Data rows:", nrow(data), "\n")
-        cat("Data columns:", paste(names(data), collapse = ", "), "\n")
-        cat("Unique methods in data:", paste(unique(data$method), collapse = ", "), "\n")
-
-        # Determine which Vh column to use (prefer corrected if available)
-        vh_col <- if ("Vh_cm_hr_sc" %in% names(data)) {
-          cat("Using spacing-corrected Vh column\n")
+        # Determine which Vh column to use (prefer current best estimate)
+        is_corrected <- FALSE
+        vh_col <- if ("Vs_cm_hr" %in% names(data)) {
+          is_corrected <- TRUE
+          "Vs_cm_hr"
+        } else if ("Vh_cm_hr_sc" %in% names(data)) {
+          is_corrected <- TRUE
           "Vh_cm_hr_sc"
         } else if ("Vh_cm_hr_zf" %in% names(data)) {
-          cat("Using zero-flow corrected Vh column\n")
+          is_corrected <- TRUE
           "Vh_cm_hr_zf"
         } else {
-          cat("Using original Vh column\n")
           "Vh_cm_hr"
         }
 
-        # Get method colours
-        colours <- method_colours()
-        cat("Colors generated:", length(colours), "\n")
-        cat("Color names:", paste(names(colours), collapse = ", "), "\n")
-        req(!is.null(colours), length(colours) > 0)
-
         # Create base plot with source for event tracking
-        p <- plot_ly(source = "timeseries")
+        p <- plotly::plot_ly(source = "timeseries")
 
         # Add trace for each method
         for (method in unique(data$method)) {
-          cat("Processing method:", method, "\n")
           method_data <- data %>% dplyr::filter(method == !!method)
-          cat("  Rows for this method:", nrow(method_data), "\n")
 
-          # Make sure color exists for this method
-          if (!method %in% names(colours)) {
-            cat("  ERROR: No color for method:", method, "\n")
-            next
-          }
-
-          # Get color safely
-          method_color <- tryCatch(
-            colours[[method]],
-            error = function(e) {
-              cat("  ERROR getting color for", method, ":", e$message, "\n")
-              "#999999"  # Default gray
-            }
-          )
-          cat("  Using color:", method_color, "\n")
-
-          # sDMA special handling removed - see R/04j_sdma_methods.R
-          marker_color <- method_color
-
-        # Separate by sensor position if both selected
-        if (length(input$sensor_position) > 1) {
-          for (pos in unique(method_data$sensor_position)) {
-            pos_data <- method_data %>% dplyr::filter(sensor_position == !!pos)
-
-            trace_name <- paste0(method, " (", pos, ")")
-
-            p <- p %>%
-              add_trace(
-                data = pos_data,
-                x = ~datetime,
-                y = as.formula(paste0("~", vh_col)),
-                customdata = ~pulse_id,
-                type = "scatter",
-                mode = if (input$show_points) "lines+markers" else "lines",
-                name = trace_name,
-                line = list(
-                  color = method_color,
-                  width = 2
-                ),
-                marker = list(size = 4, color = marker_color),
-                hovertemplate = paste0(
-                  "<b>", trace_name, "</b><br>",
-                  "Time: %{x}<br>",
-                  "Vh: %{y:.2f} cm/hr<br>",
-                  "<extra></extra>"
-                )
-              )
-          }
-        } else {
-          # Single sensor position
-          p <- p %>%
-            add_trace(
-              data = method_data,
-              x = ~datetime,
-              y = as.formula(paste0("~", vh_col)),
-              type = "scatter",
-              customdata = ~pulse_id,
-              mode = if (input$show_points) "lines+markers" else "lines",
-              name = method,
-              line = list(
-                color = method_color,
-                width = 2
-              ),
-              marker = list(size = 4, color = marker_color),
-              hovertemplate = paste0(
-                "<b>", method, "</b><br>",
-                "Time: %{x}<br>",
-                "Vh: %{y:.2f} cm/hr<br>",
-                "<extra></extra>"
-              )
-            )
-        }
-      }
-
-      # Add quality flag markers if enabled
-      if (input$show_quality_flags) {
-        markers <- quality_markers()
-
-        if (nrow(markers) > 0) {
-          # Filter markers to displayed methods/positions and selected flags
-          markers <- markers %>%
-            dplyr::filter(method %in% input$methods,
-                   sensor_position %in% input$sensor_position)
-
-          # Also filter by selected quality flags if input exists
-          if (!is.null(input$quality_flags) && length(input$quality_flags) > 0) {
-            markers <- markers %>%
-              dplyr::filter(quality_flag %in% input$quality_flags)
-          }
-
-          if (nrow(markers) > 0) {
-            # Define marker shapes by quality flag
-            flag_shapes <- c(
-              "DATA_OUTLIER" = "x",
-              "DATA_SUSPECT" = "diamond",
-              "DATA_MISSING" = "triangle-up",  # Red triangles on x-axis
-              "DATA_ILLOGICAL" = "square",
-              "CALC_FAILED" = "circle-open",
-              "CALC_INFINITE" = "star",
-              "CALC_EXTREME" = "triangle-down"
-            )
-
-            for (flag in unique(markers$quality_flag)) {
-              flag_data <- markers %>% dplyr::filter(quality_flag == !!flag)
-
-              # Get shape and color using our flag_colors definition
-              flag_shape <- if (flag %in% names(flag_shapes)) {
-                flag_shapes[[flag]]
-              } else {
-                "circle"  # Default shape
-              }
-
-              flag_color <- if (flag %in% names(flag_colors)) {
-                flag_colors[[flag]]
-              } else {
-                "#999999"  # Default gray
-              }
-
-              # Friendly label
-              flag_label <- switch(flag,
-                "DATA_OUTLIER" = "Outlier",
-                "DATA_SUSPECT" = "Suspect",
-                "DATA_MISSING" = "Missing",
-                "DATA_ILLOGICAL" = "Illogical",
-                "CALC_FAILED" = "Calc Failed",
-                "CALC_INFINITE" = "Calc Infinite",
-                "CALC_EXTREME" = "Calc Extreme",
-                flag
-              )
-
-              # For DATA_MISSING, show as red triangles on x-axis (y=0)
-              if (flag == "DATA_MISSING") {
-                p <- p %>%
-                  add_trace(
-                    data = flag_data,
-                    x = ~datetime,
-                    y = 0,  # Place on x-axis
-                    type = "scatter",
-                    customdata = ~pulse_id,
-                    mode = "markers",
-                    name = flag_label,
-                    marker = list(
-                      symbol = "triangle-up",
-                      size = 10,
-                      color = "#d62728",  # Red
-                      line = list(width = 1, color = "white")
-                    ),
-                    hovertemplate = paste0(
-                      "<b>", flag_label, "</b><br>",
-                      "Time: %{x}<br>",
-                      "Data was missing at this timestamp<br>",
-                      "<extra></extra>"
-                    )
-                  )
-              } else {
-                # Other flags: show at actual Vh value
-                p <- p %>%
-                  add_trace(
-                    data = flag_data,
-                    x = ~datetime,
-                    y = as.formula(paste0("~", vh_col)),
-                    type = "scatter",
-                    customdata = ~pulse_id,
-                    mode = "markers",
-                    name = flag_label,
-                    marker = list(
-                      symbol = flag_shape,
-                      size = 8,
-                      color = flag_color,
-                      line = list(width = 1, color = "white")
-                    ),
-                    hovertemplate = paste0(
-                      "<b>", flag_label, "</b><br>",
-                      "Time: %{x}<br>",
-                      "Vh: %{y:.2f} cm/hr<br>",
-                      "<extra></extra>"
-                    )
-                )
-              }
-            }
-          }
-        }
-      }
-
-      # Add interpolated points markers if enabled
-      if (input$show_interpolated) {
-        cat("Show interpolated checkbox:", input$show_interpolated, "\n")
-        cat("is_interpolated column exists:", "is_interpolated" %in% names(data), "\n")
-
-        # Check if cleaned data has is_interpolated column
-        if ("is_interpolated" %in% names(data)) {
-          n_interpolated <- sum(data$is_interpolated, na.rm = TRUE)
-          cat("Number of interpolated points in data:", n_interpolated, "\n")
-
-          if (n_interpolated > 0) {
-            # Get interpolated points
-            interpolated_points <- data %>%
-              dplyr::filter(is_interpolated == TRUE)
-
-          if (nrow(interpolated_points) > 0) {
-            cat("Adding", nrow(interpolated_points), "hollow circle markers\n")
-            # Group by method to apply method-specific colors
-            for (method in unique(interpolated_points$method)) {
-              method_interp <- interpolated_points %>% dplyr::filter(method == !!method)
-
-              # Get method color
-              method_color <- if (method %in% names(colours)) {
-                colours[[method]]
-              } else {
-                "#2ca02c"  # Default green
-              }
+          # Separate by sensor position if both selected
+          if (length(input$sensor_position) > 1) {
+            for (pos in unique(method_data$sensor_position)) {
+              pos_data <- method_data %>% dplyr::filter(sensor_position == !!pos)
+              trace_name <- paste0(method, " (", pos, ")")
+              
+              style <- get_plot_style(method = method, sensor = pos, is_corrected = is_corrected, config = style_config)
 
               p <- p %>%
-                add_trace(
-                  data = method_interp,
+                plotly::add_trace(
+                  data = pos_data,
                   x = ~datetime,
                   y = as.formula(paste0("~", vh_col)),
                   customdata = ~pulse_id,
                   type = "scatter",
-                  mode = "markers",
-                  name = paste0(method, " (Interpolated)"),
-                  marker = list(
-                    symbol = "circle-open",  # Hollow circles
-                    size = 8,
-                    color = method_color,
-                    line = list(width = 2, color = method_color)
-                  ),
+                  mode = if (input$show_points) "lines+markers" else "lines",
+                  name = trace_name,
+                  line = style,
+                  marker = if (input$show_points) list(size = 4, color = style$color) else NULL,
+                  legendgroup = trace_name,
+                  showlegend = TRUE,
                   hovertemplate = paste0(
-                    "<b>Interpolated - ", method, "</b><br>",
+                    "<b>", trace_name, "</b><br>",
                     "Time: %{x}<br>",
                     "Vh: %{y:.2f} cm/hr<br>",
                     "<extra></extra>"
                   )
                 )
             }
-          }
-        }
-        } else {
-          cat("No interpolated points found or column missing\n")
-        }
-
-        # Also show markers for originally missing data that was then interpolated
-        if ("quality_flag_original" %in% names(data) && "is_interpolated" %in% names(data)) {
-          originally_missing <- data %>%
-            dplyr::filter(quality_flag_original == "DATA_MISSING" & is_interpolated == TRUE)
-
-          if (nrow(originally_missing) > 0) {
+          } else {
+            # Single sensor position
+            pos <- input$sensor_position[1]
+            style <- get_plot_style(method = method, sensor = pos, is_corrected = is_corrected, config = style_config)
+            
             p <- p %>%
-              add_trace(
-                data = originally_missing,
+              plotly::add_trace(
+                data = method_data,
                 x = ~datetime,
+                y = as.formula(paste0("~", vh_col)),
+                type = "scatter",
                 customdata = ~pulse_id,
-                y = 0,  # On x-axis
-                type = "scatter",
-                mode = "markers",
-                name = "Originally Missing (now interpolated)",
-                marker = list(
-                  symbol = "triangle-up",
-                  size = 8,
-                  color = "#d62728",  # Red
-                  line = list(width = 1, color = "white")
-                ),
-                hovertemplate = paste0(
-                  "<b>Originally Missing</b><br>",
-                  "Time: %{x}<br>",
-                  "Was missing, now interpolated<br>",
-                  "<extra></extra>"
-                )
-              )
-          }
-        }
-      }
-
-      # Add Peclet number if enabled
-      if (input$show_peclet) {
-        # Get Peclet data from full results (not filtered by method selection)
-        # This allows Peclet to be displayed even when HRM velocity trace is hidden
-        full_data <- vh_results()
-
-        # Check if peclet_number column exists
-        if ("hrm_peclet_number" %in% names(full_data)) {
-          # Filter Peclet data by sensor position and quality flags (but not by method)
-          peclet_data <- full_data %>%
-            dplyr::filter(!is.na(hrm_peclet_number))
-
-          # Filter by sensor position to match displayed data
-          if (!is.null(input$sensor_position) && length(input$sensor_position) > 0) {
-            peclet_data <- peclet_data %>%
-              dplyr::filter(sensor_position %in% input$sensor_position)
-          }
-
-          # Filter by quality flags to match displayed data
-          if (!is.null(input$quality_flags) && length(input$quality_flags) > 0) {
-            if ("quality_flag" %in% names(peclet_data)) {
-              peclet_data <- peclet_data %>%
-                dplyr::filter(quality_flag %in% input$quality_flags)
-            }
-          }
-
-          if (nrow(peclet_data) > 0) {
-            # Separate by sensor position if both are selected
-            if (length(input$sensor_position) > 1 && "sensor_position" %in% names(peclet_data)) {
-              # Add separate traces for inner and outer
-              for (pos in unique(peclet_data$sensor_position)) {
-                pos_peclet <- peclet_data %>% dplyr::filter(sensor_position == !!pos)
-
-                trace_name <- paste0("Peclet Number (", pos, ")")
-                line_dash <- if (pos == "inner") "dot" else "dashdot"
-
-                p <- p %>%
-                  add_trace(
-                    data = pos_peclet,
-                    customdata = ~pulse_id,
-                    x = ~datetime,
-                    y = ~hrm_peclet_number,
-                    type = "scatter",
-                    mode = "lines",
-                    name = trace_name,
-                    line = list(
-                      color = "#666666",
-                      width = 1.5,
-                      dash = line_dash
-                    ),
-                    yaxis = "y2",
-                    hovertemplate = paste0(
-                      "<b>", trace_name, "</b><br>",
-                      "Time: %{x}<br>",
-                      "Pe: %{y:.3f}<br>",
-                      "<extra></extra>"
-                    )
-                  )
-              }
-            } else {
-              # Single sensor position - single trace
-              p <- p %>%
-                add_trace(
-                  customdata = ~pulse_id,
-                  data = peclet_data,
-                  x = ~datetime,
-                  y = ~hrm_peclet_number,
-                  type = "scatter",
-                  mode = "lines",
-                  name = "Peclet Number",
-                  line = list(
-                    color = "#666666",
-                    width = 1.5,
-                    dash = "dot"
-                  ),
-                  yaxis = "y2",
-                  hovertemplate = paste0(
-                    "<b>Peclet Number</b><br>",
-                    "Time: %{x}<br>",
-                    "Pe: %{y:.3f}<br>",
-                    "<extra></extra>"
-                  )
-                )
-            }
-
-            # Add horizontal line at Pe = 1.0
-            p <- p %>%
-              add_trace(
-                x = range(peclet_data$datetime, na.rm = TRUE),
-                y = c(1, 1),
-                type = "scatter",
-                mode = "lines",
-                name = "Pe = 1.0",
-                line = list(
-                  color = "black",
-                  width = 1,
-                  dash = "dash"
-                ),
-                yaxis = "y2",
+                mode = if (input$show_points) "lines+markers" else "lines",
+                name = method,
+                line = style,
+                marker = if (input$show_points) list(size = 4, color = style$color) else NULL,
+                legendgroup = method,
                 showlegend = TRUE,
-                hoverinfo = "skip"
-              )
-          }
-        }
-      }
-
-      # Add VPD overlay if enabled
-      if (input$show_vpd) {
-        vpd_data <- weather_vpd()
-
-        if (!is.null(vpd_data) && nrow(vpd_data) > 0) {
-          # Get date range from filtered data
-          date_range <- range(data$datetime, na.rm = TRUE)
-
-          # Filter VPD to match plot range
-          # Ensure both use POSIXct for comparison
-          vpd_filtered <- vpd_data %>%
-            dplyr::filter(datetime >= date_range[1] & datetime <= date_range[2])
-
-          if (nrow(vpd_filtered) > 0) {
-            # Add VPD trace
-            p <- p %>%
-              add_trace(
-                data = vpd_filtered,
-                x = ~datetime,
-                y = ~vpd_kpa,
-                type = "scatter",
-                mode = "lines",  # Lines only for high-res data
-                name = "VPD (kPa)",
-                line = list(
-                  color = "orange",
-                  width = 1.5
-                ),
-                yaxis = "y2",
                 hovertemplate = paste0(
-                  "<b>VPD</b><br>",
+                  "<b>", method, "</b><br>",
                   "Time: %{x}<br>",
-                  "VPD: %{y:.2f} kPa<br>",
+                  "Vh: %{y:.2f} cm/hr<br>",
                   "<extra></extra>"
                 )
               )
           }
         }
-      }
 
-      # Layout with range slider
-      # Build xaxis config
-      xaxis_config <- list(
-        title = "Date/Time",
-        showgrid = TRUE,
-        gridcolor = "#E5E5E5",
-        rangeslider = list(
-          visible = TRUE,
-          thickness = 0.1
-        ),
-        rangeselector = list(
-          buttons = list(
-            list(count = 1, label = "1d", step = "day", stepmode = "backward"),
-            list(count = 7, label = "1w", step = "day", stepmode = "backward"),
-            list(count = 1, label = "1m", step = "month", stepmode = "backward"),
-            list(count = 3, label = "3m", step = "month", stepmode = "backward"),
-            list(step = "all", label = "All")
-          )
+        # Apply standard layout
+        base_layout <- get_standard_layout(
+          title = "",
+          xtitle = "Date/Time",
+          ytitle = "Heat Pulse Velocity (cm/hr)",
+          uirevision = "timeseries_main"
         )
-      )
-
-      # If we have a stored range (from user zoom/pan), preserve it
-      # This maintains zoom level when changing methods/sensors
-      stored_range <- current_xrange()
-      if (!is.null(stored_range) && length(stored_range) == 2) {
-        xaxis_config$range <- stored_range
-        cat("Preserving zoom range:", stored_range[1], "to", stored_range[2], "\n")
-      }
-
-      # Apply layout - conditionally add yaxis2 for Peclet or VPD
-      use_secondary_axis <- FALSE
-      secondary_axis_title <- ""
-
-      # Check for Peclet
-      if (input$show_peclet) {
-        full_data <- vh_results()
-        if (!is.null(full_data) && "hrm_peclet_number" %in% names(full_data)) {
-          has_any_peclet <- any(!is.na(full_data$hrm_peclet_number))
-          if (has_any_peclet) {
-            use_secondary_axis <- TRUE
-            secondary_axis_title <- "Peclet Number (Pe)"
-          }
+        
+        # Explicit Zoom Range tracking to enforce persistence across redraws
+        if (!is.null(current_xrange())) {
+          base_layout$xaxis$range <- current_xrange()
+          base_layout$xaxis$autorange <- FALSE
         }
-      }
 
-      # Check for VPD (only if Peclet not already selected)
-      if (!use_secondary_axis && input$show_vpd) {
-        vpd_data <- weather_vpd()
-        if (!is.null(vpd_data) && nrow(vpd_data) > 0) {
-          use_secondary_axis <- TRUE
-          secondary_axis_title <- "VPD (kPa)"
-        }
-      }
-
-      if (use_secondary_axis) {
-        # Simple approach: use rangemode tozero for both axes
-        # This ensures zero is included, though they may not perfectly align
-        # For perfect alignment, both axes would need identical scale ratios
-
-        # Layout with secondary y-axis for Peclet
-        p <- p %>%
-          layout(
-            xaxis = xaxis_config,
-            yaxis = list(
-              title = "Heat Pulse Velocity (cm/hr)",
-              rangemode = "tozero",
-              showgrid = TRUE,
-              gridcolor = "#E5E5E5",
-              zeroline = TRUE,
-              zerolinecolor = "#969696",
-              zerolinewidth = 1
-            ),
-            yaxis2 = list(
-              title = "Peclet Number (Pe)",
-              overlaying = "y",
-              side = "right",
-              rangemode = "tozero",
-              showgrid = FALSE,
-              zerolinecolor = "#969696",
-              zerolinewidth = 1,
-              zeroline = TRUE
-            ),
-            hovermode = "closest",
-            legend = list(
-              orientation = "h",
-              x = 0,
-              y = -0.45,
-              xanchor = "left",
-              yanchor = "top"
-            ),
-            plot_bgcolor = "white",
-            paper_bgcolor = "white",
-            margin = list(b = 150, r = 80)
-          )
-      } else {
-        # Standard single-axis layout
-        p <- p %>%
-          layout(
-            xaxis = xaxis_config,
-            yaxis = list(
-              title = "Heat Pulse Velocity (cm/hr)",
-              rangemode = "tozero",
-              showgrid = TRUE,
-              gridcolor = "#E5E5E5",
-              zeroline = TRUE,
-              zerolinecolor = "#969696",
-              zerolinewidth = 1
-            ),
-            hovermode = "closest",
-            legend = list(
-              orientation = "h",
-              x = 0,
-              y = -0.45,
-              xanchor = "left",
-              yanchor = "top"
-            ),
-            plot_bgcolor = "white",
-            paper_bgcolor = "white",
-            margin = list(b = 150)
-          )
-      }
-
-      p <- p %>%
-        config(
-          displayModeBar = TRUE,
-          displaylogo = FALSE,
-          modeBarButtonsToRemove = c("lasso2d", "select2d", "autoScale2d"),
-          toImageButtonOptions = list(
-            format = "png",
-            filename = "heat_pulse_velocity_timeseries",
-            height = 600,
-            width = 1200,
-            scale = 2
-          )
+        p <- p %>% plotly::layout(
+          xaxis = base_layout$xaxis,
+          yaxis = base_layout$yaxis,
+          yaxis2 = base_layout$yaxis2,
+          plot_bgcolor = base_layout$plot_bgcolor,
+          paper_bgcolor = base_layout$paper_bgcolor,
+          showlegend = TRUE,
+          legend = base_layout$legend,
+          hovermode = base_layout$hovermode,
+          uirevision = base_layout$uirevision,
+          margin = base_layout$margin
         ) %>%
-        event_register("plotly_relayout") %>%
-        event_register("plotly_click")
+          apply_standard_plotly_config(filename = "heat_pulse_velocity_timeseries", add_csv_download = TRUE) %>%
+          plotly::event_register("plotly_relayout") %>%
+          plotly::event_register("plotly_click")
 
-        p
+        return(p)
 
       }, error = function(e) {
-        # Show error in plot area
-        cat("Error in time series plot:", e$message, "\n")
-        cat("Available methods:", paste(available_methods(), collapse = ", "), "\n")
-
         # Return empty plot with error message
-        plot_ly(source = "timeseries") %>%
-          layout(
-            title = list(
-              text = paste("Plot Error:", e$message),
-              font = list(color = "red")
-            ),
+        plotly::plot_ly(source = "timeseries") %>%
+          plotly::layout(
+            title = list(text = paste("Plot Error:", e$message), font = list(color = "red")),
             xaxis = list(title = "Time"),
-            yaxis = list(title = "Vh (cm/hr)")
+            yaxis = list(title = "Vh (cm/hr)", fixedrange = TRUE),
+            uirevision = "timeseries_main"
           ) %>%
-          event_register("plotly_relayout") %>%
-          event_register("plotly_click")
+          plotly::event_register("plotly_relayout") %>%
+          plotly::event_register("plotly_click")
       })
     })
+
+    # Use plotlyProxy to handle dynamic overlays (VPD, Flags, Interpolation)
+    observe({
+      req(vh_results())
+      data <- filtered_data()
+      style_config <- plot_settings()
+      
+      # Determine base line count (one for each method/sensor)
+      n_base <- length(input$methods) * length(input$sensor_position)
+      
+      # Step 1: Clear all previous overlays (Traces at indices n_base..END)
+      tryCatch({
+        for (i in 1:100) { 
+          plotly::plotlyProxy("timeseries_plot", session) %>%
+            plotly::plotlyProxyInvoke("deleteTraces", list(n_base))
+        }
+      }, error = function(e) {})
+
+      # Determine column names for markers
+      vh_col <- if ("Vs_cm_hr" %in% names(data)) "Vs_cm_hr" else 
+                if ("Vh_cm_hr_sc" %in% names(data)) "Vh_cm_hr_sc" else "Vh_cm_hr"
+      is_corrected <- (vh_col != "Vh_cm_hr")
+
+      # Step 2: Add Quality Flag Markers
+      if (isTRUE(input$show_quality_flags)) {
+        markers <- quality_markers()
+        if (!is.null(markers) && nrow(markers) > 0) {
+          # Filter markers to visible methods/positions
+          markers <- markers %>%
+            dplyr::filter(method %in% input$methods, sensor_position %in% input$sensor_position)
+          
+          # Also filter by selected flags
+          if (!is.null(input$quality_flags) && length(input$quality_flags) > 0) {
+            markers <- markers %>% dplyr::filter(quality_flag %in% input$quality_flags)
+          }
+
+          if (nrow(markers) > 0) {
+            flag_shapes <- c("DATA_OUTLIER" = "x", "DATA_SUSPECT" = "diamond", "DATA_MISSING" = "triangle-up",
+                           "DATA_ILLOGICAL" = "square", "CALC_FAILED" = "circle-open")
+            
+            for (flag in unique(markers$quality_flag)) {
+              flag_data <- markers %>% dplyr::filter(quality_flag == !!flag)
+              shape <- flag_shapes[[flag]] %||% "circle"
+              col <- flag_colors[[flag]] %||% "#999999"
+              y_val <- if (flag == "DATA_MISSING") rep(0, nrow(flag_data)) else flag_data[[vh_col]]
+
+              plotly::plotlyProxy("timeseries_plot", session) %>%
+                plotly::plotlyProxyInvoke("addTraces", list(
+                  x = flag_data$datetime, y = y_val,
+                  type = "scatter", mode = "markers", name = flag,
+                  marker = list(symbol = shape, size = 8, color = col, line = list(width = 1, color = "white")),
+                  hovertemplate = paste0("<b>", flag, "</b><br>Time: %{x}<br>Vel: %{y:.2f}<extra></extra>")
+                ))
+            }
+          }
+        }
+      }
+
+      # Step 3: Add Interpolation Markers
+      if (isTRUE(input$show_interpolated) && "is_interpolated" %in% names(data)) {
+        interp_data <- data %>% dplyr::filter(is_interpolated == TRUE)
+        if (nrow(interp_data) > 0) {
+          for (m in unique(interp_data$method)) {
+            m_interp <- interp_data %>% dplyr::filter(method == !!m)
+            style <- get_plot_style(method = m, sensor = "outer", is_corrected = is_corrected, config = style_config)
+            
+            plotly::plotlyProxy("timeseries_plot", session) %>%
+              plotly::plotlyProxyInvoke("addTraces", list(
+                x = m_interp$datetime, y = m_interp[[vh_col]],
+                type = "scatter", mode = "markers", name = paste(m, "(Interp)"),
+                marker = list(symbol = "circle-open", size = 8, color = style$color, line = list(width = 2, color = style$color)),
+                hovertemplate = paste0("<b>Interpolated</b><br>Method: ", m, "<br>Time: %{x}<br>Vel: %{y:.2f}<extra></extra>")
+              ))
+          }
+        }
+      }
+
+      # Step 4: Add VPD Trace (Right Axis)
+      if (isTRUE(input$show_vpd) && !is.null(weather_vpd())) {
+        vpd <- weather_vpd()
+        # Filter to current data range
+        dr <- range(data$datetime, na.rm = TRUE)
+        vpd_f <- vpd %>% dplyr::filter(datetime >= dr[1], datetime <= dr[2])
+        
+        if (nrow(vpd_f) > 0) {
+          # 1. Determine Velocity axis range explicitly
+          vh_vals <- data[[vh_col]]
+          vh_max_data <- max(vh_vals, na.rm = TRUE)
+          vh_min_data <- min(vh_vals, na.rm = TRUE)
+          
+          # Add 5% padding
+          vh_pad <- (vh_max_data - vh_min_data) * 0.05
+          if (vh_pad == 0) vh_pad <- 1
+          
+          v_min <- min(0, vh_min_data - vh_pad)
+          v_max <- max(0, vh_max_data + vh_pad)
+          if (v_max <= 0) v_max <- 1 # Prevent division by zero
+          
+          # 2. Determine VPD axis range proportional to Velocity
+          vpd_max_data <- max(vpd_f$vpd_kpa, na.rm = TRUE)
+          p_max <- vpd_max_data * 1.1 # 10% headroom
+          
+          # Zero alignment: p_min / p_max = v_min / v_max
+          p_min <- (v_min / v_max) * p_max
+
+          plotly::plotlyProxy("timeseries_plot", session) %>%
+            plotly::plotlyProxyInvoke("addTraces", list(
+              x = vpd_f$datetime, y = vpd_f$vpd_kpa,
+              type = "scatter", mode = "lines", name = "VPD (kPa)",
+              line = get_plot_style(is_vpd = TRUE, config = style_config),
+              yaxis = "y2", hovertemplate = "<b>VPD</b><br>Time: %{x}<br>VPD: %{y:.2f} kPa<extra></extra>"
+            )) %>%
+            plotly::plotlyProxyInvoke("relayout", list(
+              # Important: We must set BOTH ranges to force alignment
+              yaxis = list(title = "Heat Pulse Velocity (cm/hr)", range = c(v_min, v_max), autorange = FALSE,
+                           showline = TRUE, linecolor = "black", showgrid = FALSE,
+                           zeroline = TRUE, zerolinecolor = "black", zerolinewidth = 0.5),
+              yaxis2 = list(title = "VPD (kPa)", overlaying = "y", side = "right", range = c(p_min, p_max),
+                            showgrid = FALSE, zeroline = TRUE, zerolinecolor = "black", zerolinewidth = 0.5,
+                            showline = TRUE, linecolor = "black", fixedrange = TRUE),
+              "margin.r" = 80
+            ))
+        }
+      } else {
+        # Ensure axis reset and restore standard theme (black lines, no grid)
+        plotly::plotlyProxy("timeseries_plot", session) %>%
+          plotly::plotlyProxyInvoke("relayout", list(
+            yaxis = list(
+              title = "Heat Pulse Velocity (cm/hr)", 
+              autorange = TRUE,
+              showline = TRUE, 
+              linecolor = "black", 
+              showgrid = FALSE,
+              zeroline = TRUE, 
+              zerolinecolor = "black", 
+              zerolinewidth = 0.5
+            ),
+            yaxis2 = NULL, 
+            "margin.r" = 40
+          ))
+      }
+    }) %>% bindEvent(input$show_quality_flags, input$quality_flags, input$show_interpolated, input$show_vpd, input$methods, input$sensor_position, cleaning_applied())
 
     # Capture current plot zoom/ranges when user interacts with range slider
     # Use debouncing to prevent excessive updates while dragging
@@ -1545,117 +1137,41 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
       relayout_data <- relayout_debounced()
 
       if (!is.null(relayout_data)) {
-        cat("\n=== PLOTLY RELAYOUT EVENT ===\n")
-        cat("Event data fields:", paste(names(relayout_data), collapse = ", "), "\n")
+        # Filter out non-relevant relayout events (autosize, axis additions, etc.)
+        # We only care about X-axis range changes for zoom persistence
+        is_zoom_event <- any(c("xaxis.range", "xaxis.range[0]", "xaxis.autorange") %in% names(relayout_data))
 
-        # Print all values for debugging
-        for (name in names(relayout_data)) {
-          cat("  ", name, "=", relayout_data[[name]], "\n")
-        }
+        if (!is_zoom_event) return()
 
-        # Filter out non-relevant relayout events (autosize, etc.)
-        # Only respond to actual range changes from user interaction
-        is_relevant <- any(c("xaxis.range", "xaxis.range[0]", "xaxis.autorange",
-                             "yaxis.range", "yaxis.range[0]", "yaxis.autorange") %in% names(relayout_data))
-
-        if (!is_relevant) {
-          cat("Ignoring non-relevant relayout event\n")
-          return()
-        }
-
-        # Check if this is a range update
-        # Plotly can send either "xaxis.range" (a vector) or "xaxis.range[0]" and "xaxis.range[1]"
+        # Handle X-axis range update
         if (!is.null(relayout_data$xaxis.range) && length(relayout_data$xaxis.range) == 2) {
-          # Single field with vector [start, end]
           xrange <- relayout_data$xaxis.range
-
-          cat("xaxis.range vector:", xrange[1], "to", xrange[2], "\n")
-
-          # Parse dates - plotly sends ISO strings
-          start_date <- as.POSIXct(xrange[1], tz = "UTC")
-          end_date <- as.POSIXct(xrange[2], tz = "UTC")
-
-          cat("Converted start_date:", as.character(start_date), "\n")
-          cat("Converted end_date:", as.character(end_date), "\n")
-
+          
           # Update date inputs
-          shinyWidgets::updateAirDateInput(
-            session = session,
-            inputId = "start_datetime",
-            value = start_date
-          )
-
-          shinyWidgets::updateAirDateInput(
-            session = session,
-            inputId = "end_datetime",
-            value = end_date
-          )
+          shinyWidgets::updateAirDateInput(session, "start_datetime", value = as.POSIXct(xrange[1], tz = "UTC"))
+          shinyWidgets::updateAirDateInput(session, "end_datetime", value = as.POSIXct(xrange[2], tz = "UTC"))
 
           # Store current range
           current_xrange(xrange)
-
-          cat("Date inputs updated\n")
 
         } else if (!is.null(relayout_data$`xaxis.range[0]`)) {
-          # Separate fields for start and end
           xrange <- c(relayout_data$`xaxis.range[0]`, relayout_data$`xaxis.range[1]`)
 
-          cat("xaxis.range[0]:", relayout_data$`xaxis.range[0]`, "\n")
-          cat("xaxis.range[1]:", relayout_data$`xaxis.range[1]`, "\n")
-
-          # Parse dates
-          start_date <- as.POSIXct(xrange[1], tz = "UTC")
-          end_date <- as.POSIXct(xrange[2], tz = "UTC")
-
-          cat("Converted start_date:", as.character(start_date), "\n")
-          cat("Converted end_date:", as.character(end_date), "\n")
-
           # Update date inputs
-          shinyWidgets::updateAirDateInput(
-            session = session,
-            inputId = "start_datetime",
-            value = start_date
-          )
-
-          shinyWidgets::updateAirDateInput(
-            session = session,
-            inputId = "end_datetime",
-            value = end_date
-          )
+          shinyWidgets::updateAirDateInput(session, "start_datetime", value = as.POSIXct(xrange[1], tz = "UTC"))
+          shinyWidgets::updateAirDateInput(session, "end_datetime", value = as.POSIXct(xrange[2], tz = "UTC"))
 
           # Store current range
           current_xrange(xrange)
-
-          cat("Date inputs updated\n")
-        }
-
-        if (!is.null(relayout_data$`yaxis.range[0]`)) {
-          current_yrange(c(relayout_data$`yaxis.range[0]`, relayout_data$`yaxis.range[1]`))
         }
 
         # Handle autorange reset
-        if (!is.null(relayout_data$`xaxis.autorange`) && relayout_data$`xaxis.autorange`) {
+        if (isTRUE(relayout_data$`xaxis.autorange`)) {
           current_xrange(NULL)
-
-          # Reset date/time inputs to full range
           req(vh_results())
           date_range <- range(vh_results()$datetime, na.rm = TRUE)
-
-          shinyWidgets::updateAirDateInput(
-            session = session,
-            inputId = "start_datetime",
-            value = date_range[1]
-          )
-
-          shinyWidgets::updateAirDateInput(
-            session = session,
-            inputId = "end_datetime",
-            value = date_range[2]
-          )
-        }
-
-        if (!is.null(relayout_data$`yaxis.autorange`) && relayout_data$`yaxis.autorange`) {
-          current_yrange(NULL)
+          shinyWidgets::updateAirDateInput(session, "start_datetime", value = date_range[1])
+          shinyWidgets::updateAirDateInput(session, "end_datetime", value = date_range[2])
         }
       }
     })

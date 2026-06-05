@@ -26,7 +26,7 @@ configUI <- function(id) {
     fluidRow(
       # Probe Configuration
       column(
-        width = 6,
+        width = 5,
         box(
           width = NULL,
           title = "Probe Configuration",
@@ -78,17 +78,18 @@ configUI <- function(id) {
         )
       ),
 
-      # Wood Properties Configuration
+      # Tree Properties Configuration
       column(
-        width = 6,
+        width = 7,
         box(
           width = NULL,
-          title = "Wood Properties",
+          title = "Tree Properties",
           status = "primary",
           solidHeader = TRUE,
           collapsible = TRUE,
           collapsed = FALSE,
 
+          # Wood Properties Configuration
           # Mode selection
           radioButtons(
             ns("wood_mode"),
@@ -96,7 +97,8 @@ configUI <- function(id) {
             choices = c(
               "Use Default (Generic Softwood)" = "builtin",
               "Upload YAML File" = "upload",
-              "Manual Entry" = "manual"
+              "Manual Entry" = "manual",
+              "Use Sample (Eucalyptus marginata)" = "sample"
             ),
             selected = "builtin"
           ),
@@ -112,8 +114,16 @@ configUI <- function(id) {
           ),
 
           conditionalPanel(
+            condition = sprintf("input['%s'] == 'sample'", ns("wood_mode")),
+            div(
+              class = "alert alert-info",
+              icon("flask"),
+              " Using the bundled sample configuration (Eucalyptus marginata, Perth)."
+            )
+          ),
+
+          conditionalPanel(
             condition = sprintf("input['%s'] == 'upload' || input['%s'] == 'manual'", ns("wood_mode"), ns("wood_mode")),
-            # Embed the wood properties tool UI
             toolWoodUI(ns("wood_tool"))
           ),
 
@@ -167,6 +177,31 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
     probe_config <- reactiveVal(NULL)
     wood_properties <- reactiveVal(NULL)
 
+    # Geometrically correct sapwood area, always recomputed from the tree
+    # dimensions via the canonical sapfluxr::calc_sapwood_areas() so that a stale
+    # cached value in a loaded config can never be displayed or saved. Falls back
+    # to the stored value only when the dimensions are incomplete.
+    derive_sapwood_area <- function(tm) {
+      if (is.null(tm)) return(NULL)
+      have <- function(x) !is.null(x) && !is.na(x) && is.numeric(x)
+      if (!have(tm$dbh) || !have(tm$bark_thickness_dbh) || !have(tm$sapwood_thickness)) {
+        return(tm$sapwood_area)
+      }
+      # Total area does not depend on the probe-site bark; default it to the DBH
+      # bark when absent so the canonical function's validation is satisfied.
+      probe <- tm$bark_thickness_probe
+      if (!have(probe)) probe <- tm$bark_thickness_dbh
+      tryCatch(
+        sapfluxr::calc_sapwood_areas(
+          dbh                  = tm$dbh,
+          bark_thickness_dbh   = tm$bark_thickness_dbh,
+          bark_thickness_probe = probe,
+          sapwood_thickness    = tm$sapwood_thickness
+        )$total_sapwood_area_cm2,
+        error = function(e) tm$sapwood_area
+      )
+    }
+
     # Call the wood properties tool server
     wood_tool_return <- toolWoodServer("wood_tool", heat_pulse_data = heat_pulse_data)
 
@@ -204,6 +239,34 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
             step_name = "Configure Wood Properties",
             code = 'wood_properties <- sapfluxr::load_wood_properties("generic_sw")',
             description = "Using default generic softwood properties"
+          )
+        }
+      } else if (input$wood_mode == "sample") {
+        # Load the bundled sample configuration from the sapfluxr package
+        sample_path <- system.file(
+          "extdata", "Sample_Wood_Config.yml", package = "sapfluxr"
+        )
+        if (nzchar(sample_path)) {
+          sample_config <- sapfluxr::load_wood_properties(sample_path)
+          wood_properties(sample_config)
+
+          # Track code generation
+          if (!isTRUE(code_tracker)) {
+            code_tracker$add_step(
+              step_name = "Configure Wood Properties",
+              code = paste0(
+                '# Load bundled sample wood configuration\n',
+                'wood_properties <- sapfluxr::load_wood_properties(\n',
+                '  system.file("extdata", "Sample_Wood_Config.yml", package = "sapfluxr")\n',
+                ')'
+              ),
+              description = "Using bundled sample configuration (Eucalyptus marginata)"
+            )
+          }
+        } else {
+          showNotification(
+            "Bundled sample wood config not found. Is sapfluxr installed?",
+            type = "error", duration = 10
           )
         }
       }
@@ -400,11 +463,14 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
           if (!is.null(config$tree_measurements$dbh)) {
             updateNumericInput(session, "dbh", value = config$tree_measurements$dbh)
           }
-          if (!is.null(config$tree_measurements$bark_thickness)) {
-            updateNumericInput(session, "bark_thickness", value = config$tree_measurements$bark_thickness)
+          if (!is.null(config$tree_measurements$bark_thickness_dbh)) {
+            updateNumericInput(session, "bark_thickness_dbh", value = config$tree_measurements$bark_thickness_dbh)
           }
-          if (!is.null(config$tree_measurements$sapwood_depth)) {
-            updateNumericInput(session, "sapwood_depth", value = config$tree_measurements$sapwood_depth)
+          if (!is.null(config$tree_measurements$bark_thickness_probe)) {
+            updateNumericInput(session, "bark_thickness_probe", value = config$tree_measurements$bark_thickness_probe)
+          }
+          if (!is.null(config$tree_measurements$sapwood_thickness)) {
+            updateNumericInput(session, "sapwood_thickness", value = config$tree_measurements$sapwood_thickness)
           }
         if (!is.null(config$tree_measurements$sapwood_area) && !is.na(config$tree_measurements$sapwood_area)) {
           updateNumericInput(session, "sapwood_area", value = config$tree_measurements$sapwood_area)
@@ -510,11 +576,14 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
         if (!is.null(config$tree_measurements$dbh) && !is.na(config$tree_measurements$dbh)) {
           updateNumericInput(session, "dbh", value = config$tree_measurements$dbh)
         }
-        if (!is.null(config$tree_measurements$bark_thickness) && !is.na(config$tree_measurements$bark_thickness)) {
-          updateNumericInput(session, "bark_thickness", value = config$tree_measurements$bark_thickness)
+        if (!is.null(config$tree_measurements$bark_thickness_dbh) && !is.na(config$tree_measurements$bark_thickness_dbh)) {
+          updateNumericInput(session, "bark_thickness_dbh", value = config$tree_measurements$bark_thickness_dbh)
         }
-        if (!is.null(config$tree_measurements$sapwood_depth) && !is.na(config$tree_measurements$sapwood_depth)) {
-          updateNumericInput(session, "sapwood_depth", value = config$tree_measurements$sapwood_depth)
+        if (!is.null(config$tree_measurements$bark_thickness_probe) && !is.na(config$tree_measurements$bark_thickness_probe)) {
+          updateNumericInput(session, "bark_thickness_probe", value = config$tree_measurements$bark_thickness_probe)
+        }
+        if (!is.null(config$tree_measurements$sapwood_thickness) && !is.na(config$tree_measurements$sapwood_thickness)) {
+          updateNumericInput(session, "sapwood_thickness", value = config$tree_measurements$sapwood_thickness)
         }
         if (!is.null(config$tree_measurements$sapwood_area) && !is.na(config$tree_measurements$sapwood_area)) {
           updateNumericInput(session, "sapwood_area", value = config$tree_measurements$sapwood_area)
@@ -629,14 +698,14 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
 
             h5("Compatible Methods"),
             checkboxGroupInput(ns("compatible_methods"), NULL,
-                             choices = c("HRM", "MHR", "Tmax_Coh", "Tmax_Klu", "HRMx"),
-                             selected = c("HRM", "MHR", "Tmax_Coh", "Tmax_Klu", "HRMx")),
+                             choices = c("HRM", "MHR", "Tmax_Coh", "Tmax_Klu"),
+                             selected = c("HRM", "MHR", "Tmax_Coh", "Tmax_Klu")),
 
             br(),
             h5("Recommended Methods"),
             p(class = "help-text", "Select the subset of methods recommended for this configuration."),
             checkboxGroupInput(ns("recommended_methods"), NULL,
-                             choices = c("HRM", "MHR", "Tmax_Coh", "Tmax_Klu", "HRMx"),
+                             choices = c("HRM", "MHR", "Tmax_Coh", "Tmax_Klu"),
                              selected = c("HRM", "Tmax_Coh", "MHR"))
           )
         ),
@@ -838,7 +907,7 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
       )
     })
 
-    # Calculate and update sapwood area when DBH or sapwood_depth changes
+    # Calculate and update sapwood area when DBH or sapwood_thickness changes
     # Apply manual probe configuration
     observeEvent(input$apply_probe_manual, {
       # Create probe config from manual inputs
@@ -1141,14 +1210,20 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
               if (!is.null(config$tree_measurements$dbh)) {
                 tags$li(paste("DBH:", config$tree_measurements$dbh, "cm"))
               },
-              if (!is.null(config$tree_measurements$bark_thickness)) {
-                tags$li(paste("Bark thickness:", config$tree_measurements$bark_thickness, "cm"))
+              if (!is.null(config$tree_measurements$bark_thickness_dbh)) {
+                tags$li(paste("Bark thickness (DBH):", config$tree_measurements$bark_thickness_dbh, "cm"))
               },
-              if (!is.null(config$tree_measurements$sapwood_depth)) {
-                tags$li(paste("Sapwood depth:", config$tree_measurements$sapwood_depth, "cm"))
+              if (!is.null(config$tree_measurements$bark_thickness_probe)) {
+                tags$li(paste("Bark thickness (probe):", config$tree_measurements$bark_thickness_probe, "cm"))
               },
-              if (!is.null(config$tree_measurements$sapwood_area)) {
-                tags$li(paste("Sapwood area:", round(config$tree_measurements$sapwood_area, 1), "cm²"))
+              if (!is.null(config$tree_measurements$sapwood_thickness)) {
+                tags$li(paste("Sapwood depth:", config$tree_measurements$sapwood_thickness, "cm"))
+              },
+              {
+                sa <- derive_sapwood_area(config$tree_measurements)
+                if (!is.null(sa) && !is.na(sa)) {
+                  tags$li(paste("Sapwood area:", round(sa, 1), "cm²"))
+                }
               }
             ),
 
@@ -1228,8 +1303,9 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
       cat("DEBUG validation_data reactive triggered\n")
       if (!is.null(wp$tree_measurements)) {
         cat("  DBH:", if(!is.null(wp$tree_measurements$dbh)) wp$tree_measurements$dbh else "NULL", "\n")
-        cat("  Bark thickness:", if(!is.null(wp$tree_measurements$bark_thickness)) wp$tree_measurements$bark_thickness else "NULL", "\n")
-        cat("  Sapwood depth:", if(!is.null(wp$tree_measurements$sapwood_depth)) wp$tree_measurements$sapwood_depth else "NULL", "\n")
+        cat("  Bark thickness (DBH):", if(!is.null(wp$tree_measurements$bark_thickness_dbh)) wp$tree_measurements$bark_thickness_dbh else "NULL", "\n")
+        cat("  Bark thickness (probe):", if(!is.null(wp$tree_measurements$bark_thickness_probe)) wp$tree_measurements$bark_thickness_probe else "NULL", "\n")
+        cat("  Sapwood depth:", if(!is.null(wp$tree_measurements$sapwood_thickness)) wp$tree_measurements$sapwood_thickness else "NULL", "\n")
       }
 
 
@@ -1312,7 +1388,7 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
           tags$ul(
             tags$li(paste("Tree radius:", round(val$radius, 2), "cm")),
             tags$li(paste("Bark depth:", round(val$bark_depth, 2), "cm")),
-            tags$li(paste("Sapwood depth:", round(val$sapwood_depth, 2), "cm")),
+            tags$li(paste("Sapwood depth:", round(val$sapwood_thickness, 2), "cm")),
             tags$li(paste("Sapwood/heartwood boundary:", round(val$sapwood_boundary, 2), "cm from bark surface")),
             tags$li(paste("Outer sensor depth:", round(val$outer_sensor_depth, 2), "cm from bark surface")),
             tags$li(paste("Inner sensor depth:", round(val$inner_sensor_depth, 2), "cm from bark surface"))
@@ -1436,15 +1512,21 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
               dbh = if (!is.null(config$tree_measurements$dbh)) {
                 list(value = config$tree_measurements$dbh, units = "cm")
               } else NULL,
-              bark_thickness = if (!is.null(config$tree_measurements$bark_thickness)) {
-                list(value = config$tree_measurements$bark_thickness, units = "cm")
+              bark_thickness_dbh = if (!is.null(config$tree_measurements$bark_thickness_dbh)) {
+                list(value = config$tree_measurements$bark_thickness_dbh, units = "cm")
               } else NULL,
-              sapwood_depth = if (!is.null(config$tree_measurements$sapwood_depth)) {
-                list(value = config$tree_measurements$sapwood_depth, units = "cm")
+              bark_thickness_probe = if (!is.null(config$tree_measurements$bark_thickness_probe)) {
+                list(value = config$tree_measurements$bark_thickness_probe, units = "cm")
               } else NULL,
-              sapwood_area = if (!is.null(config$tree_measurements$sapwood_area)) {
-                list(value = config$tree_measurements$sapwood_area, units = "cm²")
-              } else NULL
+              sapwood_thickness = if (!is.null(config$tree_measurements$sapwood_thickness)) {
+                list(value = config$tree_measurements$sapwood_thickness, units = "cm")
+              } else NULL,
+              sapwood_area = {
+                sa <- derive_sapwood_area(config$tree_measurements)
+                if (!is.null(sa) && !is.na(sa)) {
+                  list(value = round(sa, 2), units = "cm²")
+                } else NULL
+              }
             )
           } else NULL,
           quality_thresholds = if (!is.null(config$quality_thresholds)) {
@@ -1459,6 +1541,17 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
                   max_degC = config$quality_thresholds$temperature_range[2]
                 )
               } else NULL
+            )
+          } else NULL,
+          site_location = if (!is.null(config$site_location) &&
+                              !is.null(config$site_location$latitude)) {
+            list(
+              latitude  = config$site_location$latitude,
+              longitude = config$site_location$longitude,
+              timezone  = if (!is.null(config$site_location$timezone) &&
+                               nzchar(config$site_location$timezone))
+                            config$site_location$timezone
+                          else NULL
             )
           } else NULL
         )

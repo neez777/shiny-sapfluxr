@@ -46,6 +46,17 @@ toolWoodUI <- function(id) {
           placeholder = "No file selected"
         ),
 
+        tags$div(
+          style = "margin-top: -5px; margin-bottom: 10px;",
+          tags$span(class = "help-text", "or load the bundled sample "),
+          actionButton(
+            ns("load_sample"),
+            label = "Load Sample Configuration",
+            icon = icon("flask"),
+            class = "btn-info btn-sm"
+          )
+        ),
+
         uiOutput(ns("upload_status"))
       ),
 
@@ -69,16 +80,12 @@ toolWoodUI <- function(id) {
         tabsetPanel(
           id = ns("wood_tabs"),
 
-          # Wood Measurements Tab
+          # 1. Wood Measurement Tab
           tabPanel(
-            "Wood Measurements",
+            "Wood Measurement",
             br(),
+            p(class = "help-text", "Primary measurements for wood density and moisture content."),
 
-            # Calculate button (visible on all tabs)
-            div(
-            ),
-
-            # Method selector
             radioButtons(
               ns("wood_input_method"),
               "Input Method:",
@@ -89,29 +96,16 @@ toolWoodUI <- function(id) {
               selected = "method1"
             ),
 
-            # Help text
             uiOutput(ns("method_help_text")),
 
             # Method 1 inputs
             conditionalPanel(
               condition = sprintf("input['%s'] == 'method1'", ns("wood_input_method")),
+              p(class = "help-text", "Measure fresh weight immediately after sampling, then oven-dry until weight is stable."),
+              numericInput(ns("fresh_weight_g"), "Fresh Weight (g):", value = NULL, min = 0.01, max = 100, step = 0.0001),
+              numericInput(ns("dry_weight_g"), "Dry Weight (g):", value = NULL, min = 0.01, max = 100, step = 0.0001),
+              numericInput(ns("fresh_volume_cm3"), "Fresh Volume (cm³):", value = NULL, min = 0.01, max = 100, step = 0.0001),
 
-              p(class = "help-text",
-                "Measure fresh weight immediately after sampling, then oven-dry until weight is stable."),
-
-              numericInput(ns("fresh_weight_g"),
-                          "Fresh Weight (g):",
-                          value = NULL, min = 0.01, max = 100, step = 0.0001),
-
-              numericInput(ns("dry_weight_g"),
-                          "Dry Weight (g):",
-                          value = NULL, min = 0.01, max = 100, step = 0.0001),
-
-              numericInput(ns("fresh_volume_cm3"),
-                          "Fresh Volume (cm³):",
-                          value = NULL, min = 0.01, max = 100, step = 0.0001),
-
-              # Auto-calculated densities
               hr(),
               div(
                 style = "background-color: #f0f8ff; padding: 10px; border-radius: 4px; border-left: 4px solid #007bff;",
@@ -120,14 +114,10 @@ toolWoodUI <- function(id) {
                   "These are calculated automatically from your weight and volume measurements."),
                 fluidRow(
                   column(width = 6,
-                    numericInput(ns("density_dry_kg_m3_calc"),
-                                "Dry Wood Density (kg/m³):",
-                                value = NULL, min = 200, max = 1000, step = 10)
+                    numericInput(ns("density_dry_kg_m3_calc"), "Dry Wood Density (kg/m³):", value = NULL, min = 200, max = 1000, step = 10)
                   ),
                   column(width = 6,
-                    numericInput(ns("density_fresh_kg_m3_calc"),
-                                "Fresh Wood Density (kg/m³):",
-                                value = NULL, min = 400, max = 1400, step = 10)
+                    numericInput(ns("density_fresh_kg_m3_calc"), "Fresh Wood Density (kg/m³):", value = NULL, min = 400, max = 1400, step = 10)
                   )
                 )
               )
@@ -136,191 +126,108 @@ toolWoodUI <- function(id) {
             # Method 2 inputs
             conditionalPanel(
               condition = sprintf("input['%s'] == 'method2'", ns("wood_input_method")),
-
               h5("Dual Density Measurements:"),
-              p(class = "help-text",
-                "Measure BOTH densities on the same sample. Volume cancels out!"),
-
-              numericInput(ns("density_dry_kg_m3"),
-                          "Dry Wood Density (kg/m³):",
-                          value = NULL, min = 200, max = 1000, step = 10),
-
-              numericInput(ns("density_fresh_kg_m3"),
-                          "Fresh Wood Density (kg/m³):",
-                          value = NULL, min = 400, max = 1400, step = 10)
+              p(class = "help-text", "Measure BOTH densities on the same sample. Volume cancels out!"),
+              numericInput(ns("density_dry_kg_m3"), "Dry Wood Density (kg/m³):", value = NULL, min = 200, max = 1000, step = 10),
+              numericInput(ns("density_fresh_kg_m3"), "Fresh Wood Density (kg/m³):", value = NULL, min = 400, max = 1400, step = 10)
             )
           ),
 
-          # Wood Constants Tab
-          tabPanel(
-            "Wood Constants",
-            br(),
-
-            # Calculate button
-            div(
-            ),
-
-            p(class = "help-text",
-              "Physical constants for wood and sap. Defaults from Burgess et al. (2001)."),
-
-            h5("Basic Properties:"),
-            textInput(ns("species"), "Species:", value = "unknown"),
-
-            textInput(ns("config_name"), "Configuration Name:", value = "Custom Wood Properties"),
-
-            selectInput(ns("wood_type"), "Wood Type:",
-                       choices = c("Softwood" = "softwood",
-                                  "Hardwood" = "hardwood",
-                                  "Unknown" = "unknown"),
-                       selected = "softwood"),
-
-            hr(),
-
-            h5("Thermal Constants:"),
-
-            fluidRow(
-              column(
-                width = 6,
-                numericInput(ns("c_sap_J_kg_K"),
-                            "Sap Specific Heat (J/(kg·K)):",
-                            value = 4186, min = 4000, max = 4400, step = 10),
-
-                numericInput(ns("rho_cell_wall_kg_m3"),
-                            "Cell Wall Density (kg/m³):",
-                            value = 1530, min = 1400, max = 1600, step = 10)
-              ),
-              column(
-                width = 6,
-                numericInput(ns("rho_sap_kg_m3"),
-                            "Sap Density (kg/m³):",
-                            value = 1000, min = 900, max = 1100, step = 10),
-
-                numericInput(ns("K_sap_W_m_K"),
-                            "Sap Thermal Conductivity (W/(m·K)):",
-                            value = 0.5984, min = 0.5, max = 0.7, step = 0.01),
-
-                numericInput(ns("c_dry_wood_J_kg_K"),
-                            "Dry Wood Specific Heat (J/(kg·K)):",
-                            value = 1200, min = 1000, max = 1400, step = 10)
-              )
-            )
-          ),
-
-          # Wound Correction Tab
+          # 2. Wound Correction Tab
           tabPanel(
             "Wound Correction",
             br(),
-
-            # Calculate button
-            div(
-            ),
+            p(class = "help-text", "The wound around the probe affects the measured sapwood area."),
 
             h5("Initial Wound Configuration:"),
-            p(class = "help-text",
-              "The wound around the probe affects the measured sapwood area."),
-
-            numericInput(ns("drill_bit_diameter_mm"),
-                        "Drill Bit Diameter (mm):",
-                        value = 2.0, min = 1.0, max = 5.0, step = 0.1),
-
-            numericInput(ns("wound_addition_mm"),
-                        "Wound Addition per Side (mm):",
-                        value = 0.3, min = 0.0, max = 1.0, step = 0.05),
-
+            numericInput(ns("drill_bit_diameter_mm"), "Drill Bit Diameter (mm):", value = 2.0, min = 1.0, max = 5.0, step = 0.1),
+            numericInput(ns("wound_addition_mm"), "Wound Addition per Side (mm):", value = 0.3, min = 0.0, max = 1.0, step = 0.05),
             uiOutput(ns("initial_wound_display")),
 
             hr(),
-
             h5("Temporal Wound Tracking (Optional):"),
-            checkboxInput(ns("enable_temporal_wound"),
-                         "Enable temporal wound expansion tracking",
-                         value = FALSE),
-
+            checkboxInput(ns("enable_temporal_wound"), "Enable temporal wound expansion tracking", value = FALSE),
             conditionalPanel(
               condition = sprintf("input['%s'] == true", ns("enable_temporal_wound")),
-
-              dateInput(ns("wound_initial_date"),
-                       "Installation Date:",
-                       value = NULL),
-
-              dateInput(ns("wound_final_date"),
-                       "Final Measurement Date:",
-                       value = NULL),
-
-              numericInput(ns("wound_final_diameter_mm"),
-                          "Final Wound Diameter (mm):",
-                          value = NULL, min = 1.0, max = 10.0, step = 0.1),
-
+              dateInput(ns("wound_initial_date"), "Installation Date:", value = NULL),
+              dateInput(ns("wound_final_date"), "Final Measurement Date:", value = NULL),
+              numericInput(ns("wound_final_diameter_mm"), "Final Wound Diameter (mm):", value = NULL, min = 1.0, max = 10.0, step = 0.1)
             ),
-
-            p(class = "text-muted",
             p(class = "help-text", style = "margin-top: 10px; font-size: 0.9em;",
               icon("info-circle"),
               " Dates auto-populate from loaded heat pulse data range (after any trimming). ",
               "Adjust manually if needed to match original sensor installation dates."
             ),
-
-              "Initial wound = drill bit + 2 × wound addition. Default: 2.0 + 2(0.3) = 2.6 mm")
+            p(class = "text-muted", "Initial wound = drill bit + 2 × wound addition. Default: 2.0 + 2(0.3) = 2.6 mm")
           ),
 
-          # Derived Properties Tab
-          tabPanel(
-            "Derived Properties",
-            br(),
-
-            # Calculate button
-            div(
-            ),
-
-            p(class = "help-text",
-              "Calculate wood properties based on your measurements. Requires Method 1 or Method 2 measurements."),
-
-            uiOutput(ns("derived_properties_display"))
-          ),
-
-          # Tree Measurements Tab
+          # 3. Tree Measurements Tab
           tabPanel(
             "Tree Measurements",
             br(),
-
-            # Calculate button
-            div(
-            ),
-
             p(class = "help-text", "Optional - tree-specific measurements for scaling calculations."),
-
-            numericInput(ns("dbh"), "DBH - Diameter at Breast Height (cm):",
-                        value = NULL, min = 1, max = 300, step = 0.1),
-
-            numericInput(ns("bark_thickness"), "Bark Thickness (cm):",
-                        value = NULL, min = 0.1, max = 5, step = 0.1),
-
-            numericInput(ns("sapwood_depth"), "Sapwood Depth (cm):",
-                        value = NULL, min = 0.1, max = 50, step = 0.1),
-
-            numericInput(ns("sapwood_area"), "Sapwood Area (cm²):",
-                        value = NULL, min = 1, max = 10000, step = 1)
+            numericInput(ns("dbh"), "DBH - Diameter at Breast Height (cm):", value = NULL, min = 1, max = 300, step = 0.1),
+            numericInput(ns("bark_thickness_dbh"), "Bark Thickness at DBH (cm):", value = NULL, min = 0, max = 5, step = 0.1),
+            numericInput(ns("bark_thickness_probe"), "Bark Thickness at Probe Site (cm, after shaving):", value = NULL, min = 0, max = 5, step = 0.1),
+            numericInput(ns("sapwood_thickness"), "Sapwood Thickness (cm):", value = NULL, min = 0.1, max = 50, step = 0.1),
+            numericInput(ns("sapwood_area"), "Sapwood Area (cm²):", value = NULL, min = 1, max = 10000, step = 1)
           ),
 
-          # Quality Thresholds Tab
+          # 4. Tree Location Tab
+          tabPanel(
+            "Tree Location",
+            br(),
+            p(class = "help-text", "Site coordinates for predawn window calculation."),
+            fluidRow(
+              column(6, numericInput(ns("site_latitude"), "Latitude (°N):", value = NULL, min = -90, max = 90, step = 0.0001)),
+              column(6, numericInput(ns("site_longitude"), "Longitude (°E):", value = NULL, min = -180, max = 180, step = 0.0001))
+            ),
+            selectizeInput(ns("site_timezone"), "Timezone:", choices = c("(not set)" = "", OlsonNames()), selected = "", options = list(placeholder = "Search timezones…")),
+            leaflet::leafletOutput(ns("site_map"), height = "320px"),
+            actionButton(ns("apply_site_location"), "Save Location", icon = icon("map-marker"), class = "btn-primary", style = "width: 100%; margin-top: 10px;"),
+            uiOutput(ns("site_location_status"))
+          ),
+
+          # 5. Wood Constant Tab
+          tabPanel(
+            "Wood Constant",
+            br(),
+            p(class = "help-text", "Physical constants for wood and sap. Defaults from Burgess et al. (2001)."),
+            h5("Basic Properties:"),
+            textInput(ns("species"), "Species:", value = "unknown"),
+            textInput(ns("config_name"), "Configuration Name:", value = "Custom Wood Properties"),
+            selectInput(ns("wood_type"), "Wood Type:", choices = c("Softwood" = "softwood", "Hardwood" = "hardwood", "Unknown" = "unknown"), selected = "softwood"),
+            hr(),
+            h5("Thermal Constants:"),
+            fluidRow(
+              column(width = 6,
+                numericInput(ns("c_sap_J_kg_K"), "Sap Specific Heat (J/(kg·K)):", value = 4186, min = 4000, max = 4400, step = 10),
+                numericInput(ns("rho_cell_wall_kg_m3"), "Cell Wall Density (kg/m³):", value = 1530, min = 1400, max = 1600, step = 10)
+              ),
+              column(width = 6,
+                numericInput(ns("rho_sap_kg_m3"), "Sap Density (kg/m³):", value = 1000, min = 900, max = 1100, step = 10),
+                numericInput(ns("K_sap_W_m_K"), "Sap Thermal Conductivity (W/(m·K)):", value = 0.5984, min = 0.5, max = 0.7, step = 0.01),
+                numericInput(ns("c_dry_wood_J_kg_K"), "Dry Wood Specific Heat (J/(kg·K)):", value = 1200, min = 1000, max = 1400, step = 10)
+              )
+            )
+          ),
+
+          # 6. Derived Properties Tab
+          tabPanel(
+            "Derived Properties",
+            br(),
+            p(class = "help-text", "Automatically calculated properties based on measurements."),
+            uiOutput(ns("derived_properties_display"))
+          ),
+
+          # 7. Quality Thresholds Tab
           tabPanel(
             "Quality Thresholds",
             br(),
-
-            # Calculate button
-            div(
-            ),
-
             p(class = "help-text", "Set acceptable ranges for quality control."),
-
-            numericInput(ns("max_velocity"), "Maximum Velocity (cm/hr):",
-                        value = 200, min = 50, max = 500, step = 10),
-
-            numericInput(ns("min_velocity"), "Minimum Velocity (cm/hr):",
-                        value = -50, min = -100, max = 0, step = 5),
-
-            sliderInput(ns("temp_range"), "Temperature Range (°C):",
-                       min = -20, max = 80, value = c(-10, 60), step = 1)
+            numericInput(ns("max_velocity"), "Maximum Velocity (cm/hr):", value = 200, min = 50, max = 500, step = 10),
+            numericInput(ns("min_velocity"), "Minimum Velocity (cm/hr):", value = -50, min = -100, max = 0, step = 5),
+            sliderInput(ns("temp_range"), "Temperature Range (°C):", min = -20, max = 80, value = c(-10, 60), step = 1)
           )
         )
       )
@@ -435,19 +342,9 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
     })
 
     # Upload YAML and parse
-    observeEvent(input$upload_yaml, {
-      req(input$upload_yaml)
-
-      tryCatch({
-        # Store uploaded filename
-        original_name <- input$upload_yaml$name
-        uploaded_filename(original_name)
-
-        # Update filename to <original>_edited.yaml
-        new_filename <- sub("\\.ya?ml$", "_edited.yaml", original_name, ignore.case = TRUE)
-        updateTextInput(session, "filename", value = new_filename)
-
-        config <- sapfluxr::load_wood_properties(input$upload_yaml$datapath)
+    # Shared: populate the editor fields from a loaded WoodProperties config.
+    # Used by both the YAML upload and the "Load Sample Configuration" button.
+    apply_loaded_config <- function(config) {
         current_config(config)
 
         # Populate UI fields from loaded config
@@ -534,14 +431,33 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
           if (!is.null(config$tree_measurements$dbh)) {
             updateNumericInput(session, "dbh", value = config$tree_measurements$dbh)
           }
-          if (!is.null(config$tree_measurements$bark_thickness)) {
-            updateNumericInput(session, "bark_thickness", value = config$tree_measurements$bark_thickness)
+          if (!is.null(config$tree_measurements$bark_thickness_dbh)) {
+            updateNumericInput(session, "bark_thickness_dbh", value = config$tree_measurements$bark_thickness_dbh)
           }
-          if (!is.null(config$tree_measurements$sapwood_depth)) {
-            updateNumericInput(session, "sapwood_depth", value = config$tree_measurements$sapwood_depth)
+          if (!is.null(config$tree_measurements$bark_thickness_probe)) {
+            updateNumericInput(session, "bark_thickness_probe", value = config$tree_measurements$bark_thickness_probe)
           }
-          if (!is.null(config$tree_measurements$sapwood_area)) {
-            updateNumericInput(session, "sapwood_area", value = config$tree_measurements$sapwood_area)
+          if (!is.null(config$tree_measurements$sapwood_thickness)) {
+            updateNumericInput(session, "sapwood_thickness", value = config$tree_measurements$sapwood_thickness)
+          }
+          # Recompute sapwood area from the loaded dimensions rather than trusting
+          # the stored value, which may be stale (e.g. computed with an old
+          # formula). Geometry only: area = π(R_cambium² - R_heartwood²), using
+          # the DBH-site bark. Falls back to the stored value if dimensions are
+          # incomplete.
+          tm <- config$tree_measurements
+          have <- function(x) !is.null(x) && !is.na(x) && is.numeric(x)
+          if (have(tm$dbh) && have(tm$bark_thickness_dbh) && have(tm$sapwood_thickness)) {
+            r_cambium  <- tm$dbh / 2 - tm$bark_thickness_dbh
+            r_heartwood <- max(0, r_cambium - tm$sapwood_thickness)
+            if (r_cambium > 0) {
+              updateNumericInput(session, "sapwood_area",
+                                 value = round(pi * (r_cambium^2 - r_heartwood^2), 2))
+            } else if (!is.null(tm$sapwood_area)) {
+              updateNumericInput(session, "sapwood_area", value = tm$sapwood_area)
+            }
+          } else if (!is.null(tm$sapwood_area)) {
+            updateNumericInput(session, "sapwood_area", value = tm$sapwood_area)
           }
         }
 
@@ -566,11 +482,62 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
           }
         }
 
+    }
+
+    # Load configuration from an uploaded YAML file
+    observeEvent(input$upload_yaml, {
+      req(input$upload_yaml)
+
+      tryCatch({
+        # Store uploaded filename
+        original_name <- input$upload_yaml$name
+        uploaded_filename(original_name)
+
+        # Update filename to <original>_edited.yaml
+        new_filename <- sub("\\.ya?ml$", "_edited.yaml", original_name, ignore.case = TRUE)
+        updateTextInput(session, "filename", value = new_filename)
+
+        config <- sapfluxr::load_wood_properties(input$upload_yaml$datapath)
+        apply_loaded_config(config)
+
       }, error = function(e) {
         showNotification(
           paste("Error loading YAML:", e$message),
           type = "error",
           duration = 10
+        )
+      })
+    })
+
+    # Load the bundled sample configuration from the sapfluxr package
+    observeEvent(input$load_sample, {
+      tryCatch({
+        sample_path <- system.file(
+          "extdata", "Sample_Wood_Config.yml", package = "sapfluxr"
+        )
+        if (!nzchar(sample_path)) {
+          showNotification(
+            "Bundled sample wood config not found. Is sapfluxr installed?",
+            type = "error", duration = 10
+          )
+          return()
+        }
+
+        uploaded_filename("Sample_Wood_Config.yml")
+        updateTextInput(session, "filename", value = "Sample_Wood_Config_edited.yaml")
+
+        config <- sapfluxr::load_wood_properties(sample_path)
+        apply_loaded_config(config)
+
+        showNotification(
+          "Sample wood configuration loaded (Eucalyptus marginata)",
+          type = "message", duration = 5
+        )
+
+      }, error = function(e) {
+        showNotification(
+          paste("Error loading sample:", e$message),
+          type = "error", duration = 10
         )
       })
     })
@@ -709,11 +676,14 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
         if (!is.null(input$dbh) && !is.na(input$dbh)) {
           config$tree_measurements$dbh <- input$dbh
         }
-        if (!is.null(input$bark_thickness) && !is.na(input$bark_thickness)) {
-          config$tree_measurements$bark_thickness <- input$bark_thickness
+        if (!is.null(input$bark_thickness_dbh) && !is.na(input$bark_thickness_dbh)) {
+          config$tree_measurements$bark_thickness_dbh <- input$bark_thickness_dbh
         }
-        if (!is.null(input$sapwood_depth) && !is.na(input$sapwood_depth)) {
-          config$tree_measurements$sapwood_depth <- input$sapwood_depth
+        if (!is.null(input$bark_thickness_probe) && !is.na(input$bark_thickness_probe)) {
+          config$tree_measurements$bark_thickness_probe <- input$bark_thickness_probe
+        }
+        if (!is.null(input$sapwood_thickness) && !is.na(input$sapwood_thickness)) {
+          config$tree_measurements$sapwood_thickness <- input$sapwood_thickness
         }
         if (!is.null(input$sapwood_area) && !is.na(input$sapwood_area)) {
           config$tree_measurements$sapwood_area <- input$sapwood_area
@@ -727,6 +697,16 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
         )
         # Calculate derived properties
         config <- sapfluxr::calculate_wood_properties(config)
+
+        # Preserve site_location set via the Tree Location tab.
+        # isolate() prevents this read from registering current_config as a
+        # reactive dependency of whatever observer called calculate_derived(),
+        # which would create an infinite invalidation loop.
+        prev <- isolate(current_config())
+        if (!is.null(prev) && !is.null(prev$site_location) &&
+            (!is.null(prev$site_location$latitude) || !is.null(prev$site_location$longitude))) {
+          config$site_location <- prev$site_location
+        }
 
         # Store configuration
         current_config(config)
@@ -743,23 +723,32 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
 
     # All calculate buttons trigger the same function
 
-    # Auto-calculate sapwood area when DBH, bark thickness, and sapwood depth are provided
+    # Auto-calculate sapwood area when DBH, bark thickness (DBH), and sapwood depth are provided
     observe({
-      req(input$dbh, input$bark_thickness, input$sapwood_depth)
+      req(input$dbh, input$bark_thickness_dbh, input$sapwood_thickness)
 
-      # Calculate sapwood area
-      # Sapwood area = π * (R_sapwood² - R_heartwood²)
-      # R_sapwood = DBH/2 - bark_thickness
-      # R_heartwood = R_sapwood - sapwood_depth
+      # Sapwood area = π * (R_cambium² - R_heartwood²)
+      # R_cambium  = DBH/2 - bark_thickness_dbh   (uses full bark at DBH measurement site)
+      # R_heartwood = R_cambium - sapwood_thickness (sapwood_thickness is IB→HW directly)
 
-      R_sapwood <- (input$dbh / 2) - input$bark_thickness
-      R_heartwood <- R_sapwood - input$sapwood_depth
+      bark_dbh       <- input$bark_thickness_dbh
+      R_cambium      <- (input$dbh / 2) - bark_dbh
+      actual_sapwood <- input$sapwood_thickness
 
-      if (R_heartwood < 0) R_heartwood <- 0  # No heartwood
+      if (actual_sapwood <= 0 || R_cambium <= 0) return()
 
-      sapwood_area <- pi * (R_sapwood^2 - R_heartwood^2)
+      # Validate probe site bark <= DBH bark
+      if (!is.null(input$bark_thickness_probe) && !is.na(input$bark_thickness_probe)) {
+        if (input$bark_thickness_probe > bark_dbh) {
+          showNotification("Probe-site bark cannot exceed DBH bark thickness.", type = "warning", duration = 4)
+          return()
+        }
+      }
 
-      # Update the sapwood area input
+      R_heartwood <- R_cambium - actual_sapwood
+      if (R_heartwood < 0) R_heartwood <- 0
+
+      sapwood_area <- pi * (R_cambium^2 - R_heartwood^2)
       updateNumericInput(session, "sapwood_area", value = round(sapwood_area, 2))
     })
 
@@ -983,11 +972,14 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
           if (!is.null(input$dbh) && !is.na(input$dbh)) {
             config$tree_measurements$dbh <- input$dbh
           }
-          if (!is.null(input$bark_thickness) && !is.na(input$bark_thickness)) {
-            config$tree_measurements$bark_thickness <- input$bark_thickness
+          if (!is.null(input$bark_thickness_dbh) && !is.na(input$bark_thickness_dbh)) {
+            config$tree_measurements$bark_thickness_dbh <- input$bark_thickness_dbh
           }
-          if (!is.null(input$sapwood_depth) && !is.na(input$sapwood_depth)) {
-            config$tree_measurements$sapwood_depth <- input$sapwood_depth
+          if (!is.null(input$bark_thickness_probe) && !is.na(input$bark_thickness_probe)) {
+            config$tree_measurements$bark_thickness_probe <- input$bark_thickness_probe
+          }
+          if (!is.null(input$sapwood_thickness) && !is.na(input$sapwood_thickness)) {
+            config$tree_measurements$sapwood_thickness <- input$sapwood_thickness
           }
           if (!is.null(input$sapwood_area) && !is.na(input$sapwood_area)) {
             config$tree_measurements$sapwood_area <- input$sapwood_area
@@ -1050,6 +1042,19 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
             yaml_data$derived_properties <- config$derived_properties
           }
 
+          # Add site_location if coordinates are entered
+          lat_dl <- input$site_latitude
+          lon_dl <- input$site_longitude
+          tz_dl  <- input$site_timezone
+          if (!is.null(lat_dl) && !is.na(lat_dl) &&
+              !is.null(lon_dl) && !is.na(lon_dl)) {
+            yaml_data$site_location <- list(
+              latitude  = lat_dl,
+              longitude = lon_dl,
+              timezone  = if (!is.null(tz_dl) && nzchar(tz_dl)) tz_dl else NULL
+            )
+          }
+
           # Write YAML file
           yaml::write_yaml(yaml_data, file)
 
@@ -1069,6 +1074,126 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
       }
     )
 
+
+    # --- Tree Location tab ---
+
+    # Render the leaflet map once; updates via leafletProxy
+    output$site_map <- leaflet::renderLeaflet({
+      cfg <- isolate(current_config())
+      loc <- if (!is.null(cfg)) cfg$site_location else NULL
+      has_loc <- !is.null(loc) && !is.null(loc$latitude) && !is.null(loc$longitude)
+      lat0  <- if (has_loc) loc$latitude  else -25
+      lng0  <- if (has_loc) loc$longitude else 133
+      zoom0 <- if (has_loc) 8L else 4L
+
+      lf <- leaflet::leaflet() %>%
+        leaflet::addTiles() %>%
+        leaflet::setView(lng = lng0, lat = lat0, zoom = zoom0)
+      if (has_loc) {
+        lf <- lf %>% leaflet::addMarkers(lng = lng0, lat = lat0)
+      }
+      lf
+    })
+
+    # Map click → update numeric inputs
+    observeEvent(input$site_map_click, {
+      click <- input$site_map_click
+      updateNumericInput(session, "site_latitude",  value = round(click$lat, 4L))
+      updateNumericInput(session, "site_longitude", value = round(click$lng, 4L))
+    })
+
+    # Auto-detect IANA timezone whenever coordinates change
+    observe({
+      lat <- input$site_latitude
+      lng <- input$site_longitude
+      req(!is.null(lat), !is.na(lat), !is.null(lng), !is.na(lng))
+      if (!requireNamespace("lutz", quietly = TRUE)) return()
+      detected <- tryCatch(
+        lutz::tz_lookup_coords(lat, lng, method = "fast", warn = FALSE),
+        error = function(e) NULL
+      )
+      if (!is.null(detected) && nzchar(detected) && detected %in% OlsonNames()) {
+        updateSelectizeInput(session, "site_timezone", selected = detected)
+      }
+    })
+
+    # Numeric inputs change → update marker without full map redraw
+    observe({
+      lat <- input$site_latitude
+      lng <- input$site_longitude
+      req(!is.null(lat), !is.na(lat), !is.null(lng), !is.na(lng))
+      leaflet::leafletProxy("site_map", session) %>%
+        leaflet::clearMarkers() %>%
+        leaflet::addMarkers(lng = lng, lat = lat) %>%
+        leaflet::setView(lng = lng, lat = lat, zoom = 8L)
+    })
+
+    # Pre-populate inputs when a config with site_location is loaded
+    observe({
+      cfg <- current_config()
+      req(!is.null(cfg))
+      loc <- cfg$site_location
+      if (is.null(loc)) return()
+      if (!is.null(loc$latitude))
+        updateNumericInput(session,   "site_latitude",  value = loc$latitude)
+      if (!is.null(loc$longitude))
+        updateNumericInput(session,   "site_longitude", value = loc$longitude)
+      if (!is.null(loc$timezone) && nzchar(loc$timezone))
+        updateSelectizeInput(session, "site_timezone",  selected = loc$timezone)
+    })
+
+    # Save Location button → persist into current_config
+    observeEvent(input$apply_site_location, {
+      lat <- input$site_latitude
+      lon <- input$site_longitude
+      tz  <- input$site_timezone
+
+      if (is.null(lat) || is.null(lon) || is.na(lat) || is.na(lon)) {
+        shinyWidgets::sendSweetAlert(session, title = "Missing Values",
+          text = "Please enter both latitude and longitude.", type = "warning")
+        return()
+      }
+      if (abs(lat) > 90 || abs(lon) > 180) {
+        shinyWidgets::sendSweetAlert(session, title = "Invalid Coordinates",
+          text = "Latitude must be −90 to 90 and longitude −180 to 180.",
+          type = "error")
+        return()
+      }
+
+      cfg <- current_config()
+      if (is.null(cfg)) {
+        cfg <- sapfluxr::WoodProperties$new(config_name = "Custom Wood Properties")
+      }
+      cfg$site_location <- list(
+        latitude  = lat,
+        longitude = lon,
+        timezone  = if (!is.null(tz) && nzchar(tz)) tz else NULL
+      )
+      # R6 is reference-typed; force reactiveVal to invalidate dependents
+      current_config(NULL)
+      current_config(cfg)
+
+      shinyWidgets::sendSweetAlert(session, title = "Location Saved",
+        text = sprintf("%.4f°N, %.4f°E%s", lat, lon,
+                       if (!is.null(tz) && nzchar(tz)) paste0(" (", tz, ")") else ""),
+        type = "success", timer = 3000)
+    })
+
+    # Status indicator below Save button
+    output$site_location_status <- renderUI({
+      cfg <- current_config()
+      if (is.null(cfg)) return(NULL)
+      loc <- cfg$site_location
+      if (is.null(loc) || is.null(loc$latitude) || is.null(loc$longitude)) return(NULL)
+      tz_label <- if (!is.null(loc$timezone) && nzchar(loc$timezone))
+                    loc$timezone else "UTC (default)"
+      div(
+        style = "margin-top: 10px; padding: 8px 12px; background: #dff0d8;
+                 border-radius: 4px; color: #3c763d;",
+        icon("check-circle"),
+        sprintf(" %.4f°N, %.4f°E — %s", loc$latitude, loc$longitude, tz_label)
+      )
+    })
 
     # Return the current_config reactive for use in workflows
     return(list(
