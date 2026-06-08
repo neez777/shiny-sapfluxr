@@ -1,10 +1,9 @@
 %% Simplified Shiny-sapfluxr Workflow
-%% Main path: Upload → Calculate → Correct → Calibrate → Export
+%% Main path: Upload -> Configure -> Calculate -> Correct -> Calibrate -> Flux -> Aggregate
 
 graph LR
     subgraph "Tab 1: Upload"
-        A[Upload Heat Pulse Data] --> B[Upload Wood Properties]
-        B --> C[Upload Weather optional]
+        A[Upload Heat Pulse Data] --> C[Upload Weather optional]
     end
 
     subgraph "Tab 2: Configure"
@@ -12,42 +11,42 @@ graph LR
     end
 
     subgraph "Tab 3: Calculate"
-        D --> E[Select HPV Methods<br/>HRM, MHR, HRMXb, etc.]
-        E --> F[Calculate Velocities<br/>Vh_cm_hr]
+        D --> E[Select HPV Methods<br/>HRM, MHR, Tmax_Coh, Tmax_Klu]
+        E --> F[Calculate Velocities<br/>+ Quality Flags<br/>Vh_cm_hr]
     end
 
-    subgraph "Tab 4: Visualize Raw"
+    subgraph "Tab 4: Visualise Raw"
         F --> G[Interactive Plots<br/>Identify Issues]
     end
 
-    subgraph "Tab 5a: Spacing Correction"
-        G --> H[Choose Method:<br/>PELT / Manual / VPD / Heartwood]
-        H --> I[Apply Spacing Correction<br/>Burgess method]
+    subgraph "Tab 5: Spacing Correction"
+        G --> H[Step 1: Identify Zeros<br/>PELT / Manual / Dual-Stable]
+        H --> I[Step 2: Apply Correction<br/>Model: Segment / Gradient<br/>Math: Burgess / Linear]
     end
 
     subgraph "Tab 5b: Wound Correction"
         I --> J[Add Reinstallation Dates]
-        J --> K[Apply Wound Correction<br/>Vc_cm_hr]
+        J --> K[Apply Wound Correction<br/>Vs_cm_hr updated]
     end
 
-    subgraph "Tab 6: Calibration & sDMA NEW"
-        K --> L[Select Primary Method<br/>usually HRM]
-        L --> M[Select Secondary Methods<br/>to calibrate]
-        M --> N[Enable sDMA?<br/>auto-switch based on Pe]
-        N --> O[Apply Calibration & sDMA]
+    subgraph "Tabs 6a-7a: Calibration & sDMA"
+        K --> L[Calibrate Secondary<br/>Methods to HRM]
+        L --> M[Transform Methods<br/>Vh_cm_hr_*_cal]
+        M --> N[sDMA switching<br/>based on Peclet]
     end
 
-    subgraph "Tab 7: Visualize Final"
-        O --> P[View Final Data<br/>with sDMA methods]
+    subgraph "Tab 8: Flux Density"
+        N --> Q[Calculate Flux Density<br/>Jv cm3/cm2/hr]
+        Q --> R[Radial Integration<br/>Linear Decay / Constant Velocity<br/>Q L/day]
     end
 
-    subgraph "Future: Flux Density"
-        P --> Q[Calculate Flux Density<br/>kg/m²/hr]
-        Q --> R[Tree Water Use<br/>L/day]
+    subgraph "Tab 9: Aggregation"
+        R --> AG[Daily / Hourly Totals<br/>+ Plots]
     end
 
     subgraph "Code Export"
-        O -.-> S[Generate R Script]
+        N -.-> S[Generate R Script]
+        AG -.-> S
         S -.-> T[Download /<br/>Copy Code]
     end
 
@@ -59,10 +58,10 @@ graph LR
     classDef phaseVis fill:#fce4ec,stroke:#c2185b,stroke-width:2px
     classDef phaseCode fill:#e0f2f1,stroke:#00897b,stroke-width:2px
 
-    class A,B,C,D phaseUpload
+    class A,C,D phaseUpload
     class E,F phaseCalc
     class H,I,J,K phaseCorrect
-    class L,M,N,O phaseCalib
-    class G,P phaseVis
-    class Q,R phaseFuture
+    class L,M,N phaseCalib
+    class G phaseVis
+    class Q,R,AG phaseCalc
     class S,T phaseCode

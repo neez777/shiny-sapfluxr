@@ -1,45 +1,51 @@
 %% Module Interaction Diagram
-%% Shows how Shiny modules pass data to each other
+%% Shows how Shiny modules pass data to each other and which
+%% sapfluxr functions each module calls.
 
 graph TB
     subgraph "Data Input Modules"
-        M1[mod_data_upload<br/>Data file → hp_raw]
-        M2[mod_weather_upload<br/>Weather file → weather]
-        M3[mod_clock_drift<br/>Optional time correction]
-        M4[mod_config<br/>Probe & Wood → configs]
+        M1["mod_1_data_upload<br/>read_heat_pulse_data()<br/>-> hp_raw"]
+        M2["mod_util_weather_upload<br/>read_weather_data() + calc_vpd()<br/>-> weather"]
+        M3["mod_util_clock_drift<br/>fix_clock_drift() (optional)"]
+        M4["mod_2_config<br/>load_probe_config()<br/>load_wood_properties()<br/>-> configs"]
     end
 
     subgraph "Calculation Modules"
-        M5[mod_methods<br/>HPV Calculation<br/>→ vh_results]
+        M5["mod_3_methods<br/>calc_heat_pulse_velocity()<br/>flag_vh_quality()<br/>-> vh_results"]
     end
 
-    subgraph "Visualization Modules"
-        M6[mod_plot_timeseries<br/>Interactive plots]
-        M7[mod_pulse_trace<br/>Individual pulse traces]
+    subgraph "Visualisation Modules"
+        M6["mod_4_plot_timeseries<br/>Interactive plots"]
+        M7["mod_4_pulse_trace<br/>Individual pulse traces"]
     end
 
     subgraph "Correction Modules"
-        M8[mod_corrections<br/>Spacing Correction<br/>→ vh_corrected]
-        M9[mod_wound_correction<br/>Wound Expansion<br/>→ vh_wound_corrected]
+        M8["mod_5a_corrections_spacing<br/>detect_changepoints() /<br/>find_dual_stable_periods()<br/>apply_spacing_correction()<br/>-> vh_corrected"]
+        M9["mod_5b_corrections_wound<br/>apply_wound_correction()<br/>-> vh_wound_corrected"]
     end
 
-    subgraph "Advanced Processing NEW"
-        M10[mod_calibration_sdma<br/>Calibration & sDMA<br/>→ vh_calibrated_sdma]
-        M11[mod_flux_density<br/>Future: Flux conversion]
+    subgraph "Calibration & sDMA"
+        M10a["mod_6a_calibration<br/>compare_methods_enhanced()<br/>calibrate_method_to_primary()<br/>transform_multiple_methods()<br/>-> vh_calibrated"]
+        M10b["mod_7_sdma<br/>recalculate_peclet()<br/>apply_sdma_processing()<br/>-> vh_sdma"]
+    end
+
+    subgraph "Flux & Aggregation"
+        M11["mod_8_flux_density<br/>calc_sap_flux_density()<br/>Jv conversion + plot<br/>-> flux_results"]
+        M15["mod_8b_radial_integration<br/>apply_sap_flux_integration()<br/>tree water use + plots<br/>-> radial_results"]
+        M16["mod_9_aggregation<br/>aggregate_daily()"]
     end
 
     subgraph "Code Generation"
-        M12[mod_code_generation<br/>Reproducible R scripts]
+        M12["mod_util_code_generation<br/>Reproducible R scripts"]
     end
 
-    subgraph "Utilities"
-        M13[mod_tool_probe<br/>Probe config builder]
-        M14[mod_tool_wood<br/>Wood properties builder]
+    subgraph "Utilities (Tools)"
+        M13["mod_tools_probe<br/>Probe config builder"]
+        M14["mod_tools_wood<br/>Wood properties builder"]
     end
 
     %% Data Flow
-    M1 -->|hp_raw| M5
-    M2 -->|weather| M8
+    M1 -->|hp_raw| M3
     M3 -->|corrected_data| M5
     M4 -->|probe_config| M5
     M4 -->|wood_properties| M5
@@ -48,34 +54,39 @@ graph TB
     M5 -->|vh_results| M7
     M5 -->|vh_results| M8
 
+    M2 -->|weather + vpd| M8
     M8 -->|vh_corrected| M9
     M8 -->|vh_corrected| M6
 
-    M9 -->|vh_wound_corrected| M10
+    M9 -->|vh_wound_corrected| M10a
+    M10a -->|vh_calibrated| M10b
+    M10b -->|vh_sdma| M11
+    M10a -->|vh_calibrated| M11
 
-    M10 -->|vh_calibrated_sdma| M6
-    M10 -->|vh_calibrated_sdma| M11
-
-    M11 -->|flux_density| M6
+    M11 -->|flux_results| M15
+    M11 -->|tree_water_use| M16
 
     %% Code Tracking
     M5 -.->|track step| M12
     M8 -.->|track step| M12
     M9 -.->|track step| M12
-    M10 -.->|track step| M12
+    M10a -.->|track step| M12
+    M10b -.->|track step| M12
     M11 -.->|track step| M12
+    M16 -.->|track step| M12
 
     %% Config builders
     M13 -.->|create config| M4
     M14 -.->|create config| M4
 
     %% Reactive Dependencies
-    M1 -->|reactive hp_raw| RV1((rv$corrected_data))
-    M4 -->|reactive configs| RV2((configs$probe_config<br/>configs$wood_properties))
-    M5 -->|reactive vh| RV3((vh_results))
-    M8 -->|reactive corrected| RV4((corrected_vh))
-    M9 -->|reactive wound| RV5((vh_wound_corrected))
-    M10 -->|reactive calib| RV6((vh_calibrated_sdma))
+    M1 -->|reactive| RV1((rv$corrected_data))
+    M4 -->|reactive| RV2((configs$probe_config<br/>configs$wood_properties))
+    M5 -->|reactive| RV3((vh_results))
+    M8 -->|reactive| RV4((corrected_vh))
+    M9 -->|reactive| RV5((vh_wound_corrected))
+    M10b -->|reactive| RV6((vh_sdma))
+    M11 -->|reactive| RV7((rv$flux_data))
 
     %% Styling
     classDef inputMod fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
@@ -89,9 +100,9 @@ graph TB
 
     class M1,M2,M3,M4 inputMod
     class M5 calcMod
-    class M6,M7 visMod
+    class M6,M7,M15 visMod
     class M8,M9 correctMod
-    class M10,M11 advMod
+    class M10a,M10b,M11,M16 advMod
     class M12 codeMod
     class M13,M14 utilMod
-    class RV1,RV2,RV3,RV4,RV5,RV6 reactiveVal
+    class RV1,RV2,RV3,RV4,RV5,RV6,RV7 reactiveVal

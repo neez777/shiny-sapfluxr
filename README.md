@@ -176,8 +176,6 @@ GPL-3
 ## Authors
 
 - Grant Joyce (Developer)
-- Gavan McGrath (Original R script development)
-- Tim Bleby (Scientific review and Excel workflow design)
 
 ## Issues & Feedback
 

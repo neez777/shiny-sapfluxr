@@ -1,5 +1,5 @@
 %% Data Structure Transformations
-%% Shows how data columns evolve through the workflow
+%% Shows how data columns evolve through the workflow (non-destructive design)
 
 graph TD
     subgraph "1. RAW IMPORT"
@@ -18,7 +18,7 @@ graph TD
     subgraph "2. WOOD PROPERTIES"
         B[wood_properties<br/>List object]
         B1[basic properties:<br/>density, diffusivity,<br/>conductivity, dbh]
-        B2[derived properties:<br/>volumetric_heat_capacity,<br/>thermal_diffusivity_cm2_s]
+        B2[derived properties:<br/>volumetric_heat_capacity,<br/>thermal_diffusivity_cm2_s,<br/>sap_flux_conversion_factor Z]
 
         B --> B1
         B1 --> B2
@@ -27,8 +27,8 @@ graph TD
     subgraph "3. HPV CALCULATION"
         C[vh_results tibble]
         C1[Core columns:<br/>datetime, pulse_id,<br/>method, sensor_position,<br/>Vh_cm_hr]
-        C2[HRM-specific:<br/>hrm_Tr, hrm_v1, hrm_v2,<br/>hrm_peclet_number,<br/>hrm_window_start_sec]
-        C3[MHR-specific:<br/>mhr_Tr_max, mhr_t_Tr_max,<br/>mhr_window_start_sec]
+        C2[HRM-specific:<br/>hrm_Tr, hrm_window_start_sec]
+        C3[MHR / Tmax-specific:<br/>mhr_Tr_max, tmax_*]
         C4[Quality flags:<br/>quality_flag,<br/>quality_issues]
 
         C --> C1
@@ -42,35 +42,39 @@ graph TD
 
     subgraph "4. SPACING CORRECTION"
         D[vh_corrected tibble]
-        D1[Original columns from vh_results<br/>PLUS:]
-        D2[Updated Vh_cm_hr:<br/>corrected velocities<br/>using adjusted k]
-        D3[Correction metadata:<br/>segment_id,<br/>k_value_used,<br/>correction_applied]
+        D1[All vh_results columns PLUS:]
+        D2[Vh_cm_hr_sc:<br/>spacing-corrected diagnostic]
+        D3[Vs_cm_hr:<br/>current best estimate]
+        D4[Metadata:<br/>segment_id,<br/>baseline_offset_cm_hr]
 
         D --> D1
         D --> D2
         D --> D3
+        D --> D4
     end
 
     C --> D
 
     subgraph "5. WOUND CORRECTION"
         E[vh_wound_corrected tibble]
-        E1[All vh_corrected columns<br/>PLUS:]
-        E2[Vc_cm_hr:<br/>wound-corrected velocities<br/>accounting for wound expansion]
-        E3[Wound metadata:<br/>wound_diameter_cm,<br/>effective_probe_spacing,<br/>wound_correction_factor]
+        E1[All vh_corrected columns PLUS:]
+        E2[Vh_cm_hr_wc:<br/>wound-corrected velocities]
+        E3[Vs_cm_hr updated]
+        E4[Metadata:<br/>wound_diameter_cm,<br/>wound_correction_factor]
 
         E --> E1
         E --> E2
         E --> E3
+        E --> E4
     end
 
     D --> E
 
     subgraph "6. CALIBRATION"
         F[vh_calibrated tibble]
-        F1[Methods:<br/>- HRM unchanged<br/>- MHR calibrated<br/>- HRMXb calibrated]
-        F2[Updated Vc_cm_hr or Vh_cm_hr:<br/>Calibrated = slope × Primary + intercept]
-        F3[Calibration metadata:<br/>calibration_applied,<br/>calibration_slope,<br/>calibration_intercept]
+        F1[Methods:<br/>- HRM unchanged<br/>- MHR / Tmax calibrated]
+        F2[Vh_cm_hr_*_cal:<br/>Calibrated = slope x Primary + intercept]
+        F3[Calibration metadata:<br/>calibration_slope,<br/>calibration_intercept, R2]
 
         F --> F1
         F --> F2
@@ -79,11 +83,11 @@ graph TD
 
     E --> F
 
-    subgraph "7. sDMA METHODS"
-        G[vh_with_sdma tibble]
-        G1[Original + Calibrated methods<br/>PLUS:]
-        G2[sDMA methods:<br/>method = sDMA:MHR<br/>method = sDMA:HRMXb]
-        G3[sDMA metadata:<br/>selected_method<br/>shows which method was used<br/>for each measurement]
+    subgraph "7. sDMA SWITCHING"
+        G[vh_sdma tibble]
+        G1[Calibrated methods PLUS:]
+        G2[Vh_cm_hr_sdma:<br/>Pe < threshold -> HRM<br/>Pe >= threshold -> secondary]
+        G3[Metadata:<br/>method_used,<br/>Pe_corrected]
 
         G --> G1
         G --> G2
@@ -92,11 +96,11 @@ graph TD
 
     F --> G
 
-    subgraph "8. FLUX DENSITY future"
-        H[flux_density tibble]
-        H1[Qps_cm3_cm2_hr:<br/>sap flux density per unit area<br/>uses sapwood properties]
-        H2[Q_cm3_hr:<br/>total sap flux<br/>scaled by sapwood area]
-        H3[Method tracking:<br/>same method column<br/>including sDMA methods]
+    subgraph "8. FLUX DENSITY & TREE WATER USE"
+        H[flux / tree_water_use tibble]
+        H1[Jv_cm3_cm2_hr:<br/>sap flux density (Jv = Z x Vh)]
+        H2[Q_total_cm3_hr / Q_total_L_day:<br/>radial integration<br/>(linear_decay / constant_velocity)]
+        H3[Method tracking carried through]
 
         H --> H1
         H --> H2
@@ -105,25 +109,33 @@ graph TD
 
     G --> H
 
+    subgraph "9. AGGREGATION"
+        AGG[daily tibble]
+        AGG1[Daily totals:<br/>Q_total_L_day, mean flux density]
+        AGG --> AGG1
+    end
+
+    H --> AGG
+
     subgraph "Column Evolution Summary"
-        S1[datetime ✓<br/>Always present]
-        S2[Vh_cm_hr → Vh_cm_hr corrected → Vc_cm_hr<br/>Velocity evolution]
-        S3[method:<br/>HRM → HRM calibrated → sDMA:MHR<br/>Method evolution]
-        S4[Quality tracking:<br/>quality_flag present throughout]
+        S2[Vh_cm_hr -> Vh_cm_hr_sc -> Vh_cm_hr_wc -> Vh_cm_hr_*_cal -> Vh_cm_hr_sdma]
+        S2b[Vs_cm_hr = current best estimate throughout]
+        S3[method: HRM -> calibrated -> sDMA]
+        S4[quality_flag present throughout]
     end
 
     %% Key Columns Highlighted
-    KC1[KEY: Vh_cm_hr]
-    KC2[KEY: Vc_cm_hr]
+    KC1[KEY: Vh_cm_hr - raw, preserved]
+    KC2[KEY: Vs_cm_hr - current best]
     KC3[KEY: method]
-    KC4[KEY: selected_method]
-    KC5[KEY: hrm_peclet_number]
+    KC4[KEY: method_used - sDMA selection]
+    KC5[KEY: Jv_cm3_cm2_hr / Q_total_L_day]
 
     C1 -.-> KC1
-    E2 -.-> KC2
+    D3 -.-> KC2
     C1 -.-> KC3
     G3 -.-> KC4
-    C2 -.-> KC5
+    H1 -.-> KC5
 
     %% Styling
     classDef rawData fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
@@ -135,7 +147,7 @@ graph TD
 
     class A,A1,A2,A3,A4,B,B1,B2 rawData
     class C,C1,C2,C3,C4 processedData
-    class D,D1,D2,D3,E,E1,E2,E3 correctedData
+    class D,D1,D2,D3,D4,E,E1,E2,E3,E4 correctedData
     class F,F1,F2,F3,G,G1,G2,G3 calibData
-    class H,H1,H2,H3 finalData
+    class H,H1,H2,H3,AGG,AGG1 finalData
     class KC1,KC2,KC3,KC4,KC5 keyCol

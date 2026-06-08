@@ -3,6 +3,11 @@
 # Interactive interface for heat pulse velocity data analysis
 #
 
+# This app dir is also an R package (has DESCRIPTION/NAMESPACE), so shiny warns
+# that it might auto-source an R/ subdirectory. There is no R/ dir to source, so
+# disable the autoload to silence the (false-alarm) "Loading R/ subdirectory" warning.
+options(shiny.autoload.r = FALSE)
+
 library(shiny)
 library(shinydashboard)
 library(shinyWidgets)

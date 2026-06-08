@@ -47,6 +47,7 @@ toolWoodUI <- function(id) {
         ),
 
         tags$div(
+          class = "demo-only",
           style = "margin-top: -5px; margin-bottom: 10px;",
           tags$span(class = "help-text", "or load the bundled sample "),
           actionButton(
