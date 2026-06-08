@@ -1195,9 +1195,14 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
       )
     })
 
-    # Return the current_config reactive for use in workflows
+    # Return the current_config reactive for use in workflows.
+    # uploaded_filename is the basename of a YAML loaded via upload / sample (NULL
+    # when the user entered properties manually); download_filename is the name the
+    # tool would save under. Both feed reproducible code generation in mod_2_config.
     return(list(
-      config = current_config
+      config = current_config,
+      uploaded_filename = uploaded_filename,
+      download_filename = reactive(input$filename)
     ))
   })
 }

@@ -18,8 +18,9 @@ library(ggplot2)
 library(waiter)
 library(fresh)
 
-# Load sapfluxr package
-devtools::load_all("E:/r/project/sapfluxr")
+# Load sapfluxr package (use library() to avoid namespace conflicts with shinydashboard::box)
+# During development, install first with: devtools::install("E:/R/project/sapfluxr")
+library(sapfluxr)
 
 # Source modules
 source("modules/notify_helper.R")
@@ -40,9 +41,11 @@ source("modules/mod_6b_calibration_validation.R")
 source("modules/mod_7_sdma.R")
 source("modules/mod_7b_sdma_validation.R")
 source("modules/mod_8_flux_density.R")
-source("modules/mod_8b_flux_validation.R")
+source("modules/mod_8b_radial_integration.R")
 source("modules/mod_9_aggregation.R")
 source("modules/mod_util_code_generation.R")
+source("modules/mod_util_data_download.R")
+source("modules/mod_tools_settings.R")
 
 # Increase file upload size limit
 # Default is 5MB - we need to handle large sap flow data files (100s of MB)
@@ -112,7 +115,25 @@ ui <- tagList(
       # tags$img(src = "sapfluxr.png", height = "40px", style = "margin-top: -5px; margin-right: 5px;"),
       "sapfluxr Dashboard"
     ),
-    titleWidth = 250
+    titleWidth = 250,
+
+    # Demo mode toggle (top-right). When on, example/sample data controls become
+    # visible and the header turns amber (see body.demo-mode rules in custom.css).
+    tags$li(
+      class = "dropdown",
+      style = "padding: 10px 15px;",
+      tags$div(
+        style = "display: flex; align-items: center; gap: 8px;",
+        tags$span(style = "color: #fff; font-weight: 600;", "Demo mode"),
+        shinyWidgets::materialSwitch(
+          inputId = "demo_mode",
+          label = NULL,
+          value = FALSE,
+          status = "warning",
+          inline = TRUE
+        )
+      )
+    )
   ),
 
   ## Sidebar ----
@@ -139,16 +160,24 @@ ui <- tagList(
           menuSubItem("sDMA Calculation", tabName = "sdma", icon = icon("calculator")),
           menuSubItem("sDMA Validation", tabName = "sdma_validation", icon = icon("chart-line"))
         ),
-        menuItem("8. Flux Density", icon = icon("tint"),
-          menuSubItem("Conversion & Integration", tabName = "flux_density", icon = icon("calculator")),
-          menuSubItem("Flux & Water Use Validation", tabName = "flux_validation", icon = icon("chart-line"))
-        ),
-        menuItem("9. Temporal Aggregation", tabName = "aggregation", icon = icon("chart-bar")),
+        menuItem("8. Sap Flux Density", tabName = "flux_density", icon = icon("tint")),
+        menuItem("9. Radial Integration", tabName = "radial_integration", icon = icon("tree")),
+        menuItem("10. Temporal Aggregation", tabName = "aggregation", icon = icon("chart-bar")),
         tags$hr(style = "margin: 10px 0; border-color: #555;"),
         menuItem("Tools", icon = icon("wrench"),
           menuSubItem("Probe Configuration", tabName = "tool_probe", icon = icon("ruler")),
           menuSubItem("Wood Properties", tabName = "tool_wood", icon = icon("tree")),
-          menuSubItem("Code Generator", tabName = "code_generation", icon = icon("code"))
+          menuSubItem("Code Generator", tabName = "code_generation", icon = icon("code")),
+          menuSubItem("Data Export", tabName = "data_export", icon = icon("download"))
+        ),
+        menuItem("Settings", tabName = "settings", icon = icon("cog")),
+        tags$li(
+          tags$a(
+            href = "#",
+            onclick = "Shiny.setInputValue('start_over', Math.random()); return false;",
+            icon("redo"),
+            tags$span(" Start Over")
+          )
         ),
         tags$hr(style = "margin: 10px 0; border-color: #555;")
       ),
@@ -157,7 +186,10 @@ ui <- tagList(
           p("Interactive interface for processing heat pulse velocity data from ICT SFM1x sensors."),
           p("Built on ", code("sapfluxr"), " package."),
           hr(),
-          p(strong("Version:"), " 0.2.0"),
+          # Read the Shiny app version dynamically from the local DESCRIPTION file
+          p(strong("shiny-sapfluxr:"), read.dcf("DESCRIPTION", fields = "Version")[1]),
+          # Read the loaded sapfluxr package version
+          p(strong("sapfluxr:"), as.character(packageVersion("sapfluxr"))),
           p(a("Report Issues",
               href = "https://github.com/neez777/sapfluxr/issues",
               target = "_blank"))
@@ -236,6 +268,29 @@ ui <- tagList(
         }, 500);
 
         console.log('Notification auto-close script loaded (polling method)');
+      ")),
+
+      # Stage completion tick helper — updates sidebar icons in-place without re-rendering the menu
+      tags$script(HTML("
+        function updateStageIndicator(tabName, complete) {
+          var link = $('.sidebar-menu a[data-value=\"' + tabName + '\"]').first();
+          if (!link.length) return;
+          link.find('.stage-tick').remove();
+          var cls = complete ? 'stage-tick complete' : 'stage-tick incomplete';
+          link.append('<span class=\"pull-right-container\"><i class=\"fa fa-check-circle ' + cls + '\"></i></span>');
+        }
+        Shiny.addCustomMessageHandler('initStageTicks', function(x){});
+      ")),
+
+      # Demo mode label — injected next to the sidebar (hamburger) toggle.
+      # Visibility is driven purely by the body.demo-mode class (see custom.css).
+      tags$script(HTML("
+        $(document).on('shiny:connected', function() {
+          if ($('.demo-mode-label').length === 0) {
+            $('<span class=\"demo-mode-label\">Demo mode enabled</span>')
+              .insertAfter('.main-header .sidebar-toggle');
+          }
+        });
       "))
     ),
 
@@ -386,25 +441,25 @@ ui <- tagList(
         sdmaValidationUI("sdma_validation")
       ),
 
-      # Tab 8: Flux Density ----
+      # Tab 8: Sap Flux Density ----
       tabItem(
         tabName = "flux_density",
-        h2("Sap Flux Density Conversion & Tree Water Use"),
-        p(class = "text-muted", "Convert corrected heat pulse velocity (Vh) to sap flux density (Jv) and integrate across sapwood area for whole-tree water use."),
+        h2("Sap Flux Density (Jv)"),
+        p(class = "text-muted", "Convert corrected heat pulse velocity (Vh) to sap flux density (Jv), with an inline time-series plot."),
 
         fluxDensityUI("flux_density")
       ),
 
-      # Tab 8b: Flux & Water Use Validation ----
+      # Tab 9: Radial Integration ----
       tabItem(
-        tabName = "flux_validation",
-        h2("Flux Density & Water Use Validation"),
-        p(class = "text-muted", "Interactive visualization of flux density and tree water use results with filtering and time range controls."),
+        tabName = "radial_integration",
+        h2("Radial Integration — Tree Water Use"),
+        p(class = "text-muted", "Integrate sap flux density across the sapwood area for whole-tree water use (Q), with inline hourly and daily plots."),
 
-        fluxValidationUI("flux_validation")
+        radialIntegrationUI("radial_integration")
       ),
 
-      # Tab 9: Temporal Aggregation ----
+      # Tab 10: Temporal Aggregation ----
       tabItem(
         tabName = "aggregation",
         h2("Temporal Aggregation"),
@@ -451,6 +506,24 @@ ui <- tagList(
         p(class = "text-muted", "Generate executable R scripts that reproduce your Shiny analysis workflow using sapfluxr functions."),
 
         codeGenerationUI("code_generation")
+      ),
+
+      # Tool: Data Export ----
+      tabItem(
+        tabName = "data_export",
+        h2("Data Export"),
+        p(class = "text-muted", "Download any dataset produced in the pipeline as CSV or R binary (.rds / .rda) at any time."),
+
+        dataDownloadUI("data_export")
+      ),
+
+      # Tool: Settings ----
+      tabItem(
+        tabName = "settings",
+        h2("Application Settings"),
+        p(class = "text-muted", "Configure global application settings and plot visual styles."),
+
+        settingsUI("settings")
       )
     )
   )
@@ -463,6 +536,31 @@ server <- function(input, output, session) {
   # Initialize code tracker FIRST (other modules will use this)
   code_tracker <- codeGenerationServer("code_generation")
 
+  # Demo mode: toggle the body.demo-mode class, which reveals the example/sample data
+  # controls (.demo-only) and the amber header styling. CSS lives in www/custom.css.
+  observeEvent(input$demo_mode, {
+    shinyjs::toggleClass(
+      selector = "body", class = "demo-mode",
+      condition = isTRUE(input$demo_mode)
+    )
+  }, ignoreNULL = FALSE)
+
+  # Pipeline stage order and sidebar tabName mapping
+  STAGE_ORDER <- c("upload", "config", "methods", "corrections", "wound",
+                   "calibration", "sdma", "flux", "radial", "aggregation")
+  STAGE_TAB <- c(
+    upload = "upload", config = "config", methods = "methods",
+    corrections = "corrections", wound = "wound_correction",
+    calibration = "calibration", sdma = "sdma", flux = "flux_density",
+    radial = "radial_integration", aggregation = "aggregation"
+  )
+
+  # Prevent config tick firing before the user has visited the tab
+  config_visited <- reactiveVal(FALSE)
+  observeEvent(input$sidebar, {
+    if (isTRUE(input$sidebar == "config")) config_visited(TRUE)
+  }, ignoreNULL = TRUE)
+
   # Reactive values to store data across modules
   rv <- reactiveValues(
     heat_pulse_data = NULL,
@@ -474,8 +572,80 @@ server <- function(input, output, session) {
     weather_data = NULL,
     weather_vpd = NULL,
     daily_vpd = NULL,
-    flux_data = NULL
+    flux_data = NULL,
+    stage_complete = list(
+      upload = FALSE, config = FALSE, methods = FALSE, corrections = FALSE,
+      wound = FALSE, calibration = FALSE, sdma = FALSE, flux = FALSE,
+      radial = FALSE, aggregation = FALSE
+    )
   )
+
+  # Marks a stage complete and cascades resets of all downstream ticks + script lines.
+  # All rv$stage_complete access is isolated: assigning rv$stage_complete[[x]] reads the
+  # list before writing it, so without isolate() every caller would take a reactive
+  # dependency on the list AND write to it — an infinite loop where upstream observers
+  # reset downstream stages that downstream observers immediately re-assert.
+  mark_stage_done <- function(stage) {
+    isolate({
+      idx <- match(stage, STAGE_ORDER)
+      rv$stage_complete[[stage]] <- TRUE
+      if (idx < length(STAGE_ORDER)) {
+        for (s in STAGE_ORDER[(idx + 1):length(STAGE_ORDER)]) {
+          rv$stage_complete[[s]] <- FALSE
+        }
+      }
+    })
+    code_tracker$remove_steps_after(stage)
+  }
+
+  # Initialize plot settings
+  plot_settings_rv <- reactiveVal(NULL)
+
+  # Load plot settings from YAML
+  observe({
+    config_path <- "inst/configurations/plot_settings.yaml"
+    loaded_settings <- NULL
+    if (file.exists(config_path)) {
+      tryCatch({
+        loaded_settings <- yaml::read_yaml(config_path)
+      }, error = function(e) {
+        message("Error reading plot settings: ", e$message)
+      })
+    }
+
+    # If loading failed or file doesn't exist, use defaults
+    if (is.null(loaded_settings)) {
+      default_method <- function(outer, inner) {
+        list(outer = outer, inner = inner, raw_width = 1.0, raw_style = "solid", corrected_width = 0.7, corrected_style = "solid")
+      }
+      
+      loaded_settings <- list(
+        methods = list(
+          HRM = default_method("#1f77b4", "#aec7e8"),
+          MHR = default_method("#ff7f0e", "#ffbb78"),
+          Tmax_Klu = default_method("#2ca02c", "#98df8a"),
+          Tmax_Coh = default_method("#d62728", "#ff9896"),
+          sDMA = default_method("#9467bd", "#c5b0d5")
+        ),
+        special_traces = list(
+          vpd = list(
+            color = "#000000",
+            width = 1.0,
+            dash = "dash"
+          ),
+          peclet = list(
+            color = "#666666",
+            width = 1.0,
+            dash = "dot"
+          )
+        )
+      )
+    }
+    plot_settings_rv(loaded_settings)
+  })
+
+  # Module: Settings (Tab: settings)
+  settingsServer("settings", plot_settings_rv)
 
   # Module: Data Upload
   uploaded_data <- dataUploadServer("data_upload", code_tracker = code_tracker)
@@ -488,7 +658,8 @@ server <- function(input, output, session) {
 
   # Module: Weather Upload
   weather_outputs <- weatherUploadServer("weather_upload",
-                                         heat_pulse_data = reactive(rv$corrected_data))
+                                         heat_pulse_data = reactive(rv$corrected_data),
+                                         code_tracker = code_tracker)
 
   # Store weather data
   observe({
@@ -498,7 +669,8 @@ server <- function(input, output, session) {
   })
 
   # Module: Clock Drift Correction
-  corrected_data <- clockDriftServer("clock_drift", uploaded_data)
+  corrected_data <- clockDriftServer("clock_drift", uploaded_data,
+                                     code_tracker = code_tracker)
 
   # Store corrected data (or use original if no correction)
   observe({
@@ -530,52 +702,17 @@ server <- function(input, output, session) {
     code_tracker = code_tracker
   )
 
-  # Store results and pre-compute splits for visualisation
+  # Store results for downstream stages and visualisation.
+  # (The old per-method×sensor pre-splitting was removed — Tab 4 now updates its
+  # plotly traces incrementally, so rv$vh_splits/rv$vh_lookup are no longer needed.)
   observe({
     req(vh_results())
-
-    cat("\n")
-    cat("=======================================================================\n")
-    cat("PRE-COMPUTING DATA SPLITS FOR VISUALISATION\n")
-    cat("=======================================================================\n")
-
     rv$vh_results <- vh_results()
-    vh_data <- vh_results()
-
-    # Pre-split data by method × sensor_position for faster Tab 4 rendering
-    # This happens in the background while user reviews results on Tab 3
-    timing <- system.time({
-      # Create splits
-      splits <- vh_data %>%
-        group_by(method, sensor_position) %>%
-        group_split(.keep = TRUE)
-
-      # Create lookup table for quick access
-      lookup <- vh_data %>%
-        group_by(method, sensor_position) %>%
-        group_keys()
-
-      # Store both
-      rv$vh_splits <- splits
-      rv$vh_lookup <- lookup
-    })
-
-    cat(sprintf("Created %d data splits in %.3f seconds\n", length(splits), timing["elapsed"]))
-    cat("\nSplits breakdown:\n")
-    for (i in seq_along(splits)) {
-      method <- lookup$method[i]
-      sensor <- lookup$sensor_position[i]
-      n_rows <- nrow(splits[[i]])
-      cat(sprintf("  %s × %s: %s rows\n",
-                  method, sensor, format(n_rows, big.mark = ",")))
-    }
-    cat("=======================================================================\n\n")
-    cat("Data ready for visualisation! Navigate to Tab 4 when ready.\n\n")
   })
 
   # Module: Visualise Raw (Tab 4) - Always shows uncorrected data
-  selected_pulse_id_raw <- plotTimeseriesServer("plot_timeseries_raw", vh_results, reactive(rv$daily_vpd), reactive(rv$weather_vpd))
-  pulseTraceServer("pulse_trace_raw", reactive(rv$corrected_data), selected_pulse_id_raw, vh_results)
+  selected_pulse_id_raw <- plotTimeseriesServer("plot_timeseries_raw", vh_results, reactive(rv$daily_vpd), reactive(rv$weather_vpd), plot_settings = plot_settings_rv, rv = rv)
+  pulseTraceServer("pulse_trace_raw", reactive(rv$corrected_data), selected_pulse_id_raw, vh_results, plot_settings = plot_settings_rv)
 
   # Module: Corrections (Tab 5) - Spacing Correction & k Estimation
   # Store calculation methods for Phase 3 recalculation
@@ -584,24 +721,28 @@ server <- function(input, output, session) {
     rv$calc_methods <- unique(vh_results()$method)
   })
 
-  corrected_vh <- correctionsServer(
+  corrections_module <- correctionsServer(
     "corrections",
-    vh_results = vh_results,
+    vh_results = reactive(rv$vh_results),
     heat_pulse_data = reactive(rv$corrected_data),
     probe_config = configs$probe_config,
     wood_properties = configs$wood_properties,
     calc_methods = reactive(rv$calc_methods),
     daily_vpd = reactive(rv$daily_vpd),
     weather_vpd = reactive(rv$weather_vpd),
-    code_tracker = code_tracker
+    code_tracker = code_tracker,
+    plot_settings = plot_settings_rv
   )
+  # Passthrough corrected-velocity reactive (original data until a correction is committed)
+  corrected_vh <- corrections_module$vh
   # Module: Wound Correction (Tab 5b) - Apply wound corrections
   wound_module <- woundCorrectionServer(
     "wound_correction",
     vh_data = corrected_vh,
     wood_properties = configs$wood_properties,
     probe_config = configs$probe_config,
-    code_tracker = code_tracker
+    code_tracker = code_tracker,
+    plot_settings = plot_settings_rv
   )
 
   # Module: Calibration (Tab 6a)
@@ -628,7 +769,8 @@ server <- function(input, output, session) {
     }),
     vh_calibrated = calibration_results$vh_transformed,  # Use transformed (long format) data
     weather_data = reactive(rv$weather_data),
-    code_tracker = code_tracker
+    code_tracker = code_tracker,
+    plot_settings = plot_settings_rv
   )
 
   # Module: sDMA (Tab 7a)
@@ -644,14 +786,12 @@ server <- function(input, output, session) {
   # Module: sDMA Validation (Tab 7b)
   sdmaValidationServer(
     "sdma_validation",
-    vh_hrm_peclet = reactive({
-      # Get wound-corrected or spacing-corrected HRM baseline with Peclet
-      wound_data <- wound_module$wound_corrected_data()
-      if (!is.null(wound_data)) wound_data else corrected_vh()
-    }),
+    vh_hrm_peclet = sdma_results$vh_with_peclet,
     vh_calibrated = calibration_results$vh_transformed,
-    vh_sdma = reactive(sdma_results$vh_sdma()),
-    code_tracker = code_tracker
+    vh_sdma = sdma_results$vh_sdma,
+    sdma_threshold = reactive(input[["sdma-peclet_threshold"]] %||% 1.0),
+    code_tracker = code_tracker,
+    plot_settings = plot_settings_rv
   )
 
   # Consolidate results for downstream use
@@ -663,7 +803,7 @@ server <- function(input, output, session) {
     calibration_results$vh_calibrated()
   })
 
-  # Module: Flux Density (Tab 8)
+  # Module: Sap Flux Density (Tab 8)
   flux_results <- fluxDensityServer(
     "flux_density",
     vh_raw = reactive(rv$vh_results),
@@ -677,7 +817,8 @@ server <- function(input, output, session) {
     }),
     vh_sdma = reactive(sdma_results$vh_sdma()),
     wood_properties = reactive(rv$wood_properties),
-    code_tracker = code_tracker
+    code_tracker = code_tracker,
+    plot_settings = plot_settings_rv
   )
 
   # Store flux data
@@ -685,22 +826,125 @@ server <- function(input, output, session) {
     rv$flux_data <- flux_results$flux_data()
   })
 
-  # Module: Flux & Water Use Validation (Tab 8b)
-  fluxValidationServer(
-    "flux_validation",
+  # Module: Radial Integration → Tree Water Use (Tab 9)
+  radial_results <- radialIntegrationServer(
+    "radial_integration",
     flux_data = flux_results$flux_data,
-    tree_water_use_data = flux_results$tree_water_use_data,
-    tree_dimensions = flux_results$tree_dimensions,
-    code_tracker = code_tracker
+    wood_properties = reactive(rv$wood_properties),
+    code_tracker = code_tracker,
+    plot_settings = plot_settings_rv
   )
 
-  # Module: Aggregation (Tab 9)
-  aggregationServer(
+  # Module: Aggregation (Tab 10)
+  agg_out <- aggregationServer(
     "aggregation",
     flux_density_data = flux_results$flux_data,
-    tree_water_use_data = flux_results$tree_water_use_data,
-    code_tracker = code_tracker
+    tree_water_use_data = radial_results$tree_water_use_data,
+    code_tracker = code_tracker,
+    plot_settings = plot_settings_rv
   )
+
+  # Module: Data Export (Tools) — surfaces every pipeline dataset for download
+  # at any time. The reactive is lazy, so unfinished stages simply read NULL and
+  # are filtered out by the module's availability logic.
+  dataDownloadServer(
+    "data_export",
+    datasets = reactive({
+      list(
+        "Raw heat-pulse measurements"    = tryCatch(rv$heat_pulse_data$measurements, error = function(e) NULL),
+        "Aligned/corrected measurements" = tryCatch(rv$corrected_data$measurements, error = function(e) NULL),
+        "Heat-pulse velocity (Vh)"       = rv$vh_results,
+        "Sap flux density (Jv)"          = rv$flux_data,
+        "Tree water use (Q)"             = tryCatch(radial_results$tree_water_use_data(), error = function(e) NULL),
+        "Temporal aggregation"           = tryCatch(agg_out$aggregated(), error = function(e) NULL),
+        "Weather"                        = rv$weather_data
+      )
+    })
+  )
+
+  # ---- Stage completion observers ----
+  # Upload uses a plain reactiveValues field — observeEvent works fine here.
+  observeEvent(rv$heat_pulse_data, mark_stage_done("upload"), ignoreNULL = TRUE)
+
+  # Config: gated by config_visited so defaults loaded on startup don't auto-tick.
+  observe({
+    req(config_visited())
+    if (!is.null(rv$probe_config) && !is.null(rv$wood_properties)) mark_stage_done("config")
+  })
+
+  # All other stages return eventReactives that throw a silent error (not NULL) before
+  # their trigger button is clicked. observeEvent + ignoreNULL silently fails in that case,
+  # so we use observe + tryCatch to handle the error and re-establish the reactive dependency.
+  observe({
+    result <- tryCatch(vh_results(), error = function(e) NULL)
+    req(!is.null(result))
+    mark_stage_done("methods")
+  })
+  # Corrections ticks only on an actual committed correction (not the passthrough),
+  # and reverts to grey if the user resets the correction.
+  observe({
+    if (isTRUE(corrections_module$applied())) {
+      mark_stage_done("corrections")
+    } else {
+      isolate(rv$stage_complete[["corrections"]] <- FALSE)
+    }
+  })
+  observe({
+    result <- tryCatch(wound_module$wound_corrected_data(), error = function(e) NULL)
+    req(!is.null(result))
+    mark_stage_done("wound")
+  })
+  observe({
+    result <- tryCatch(calibration_results$vh_transformed(), error = function(e) NULL)
+    req(!is.null(result))
+    mark_stage_done("calibration")
+  })
+  observe({
+    result <- tryCatch(sdma_results$vh_sdma(), error = function(e) NULL)
+    req(!is.null(result))
+    mark_stage_done("sdma")
+  })
+  observe({
+    result <- tryCatch(flux_results$flux_data(), error = function(e) NULL)
+    req(!is.null(result))
+    mark_stage_done("flux")
+  })
+  observe({
+    result <- tryCatch(radial_results$tree_water_use_data(), error = function(e) NULL)
+    req(!is.null(result))
+    mark_stage_done("radial")
+  })
+  observe({
+    result <- tryCatch(agg_out$aggregated(), error = function(e) NULL)
+    req(!is.null(result))
+    mark_stage_done("aggregation")
+  })
+
+  # Push tick state to the sidebar via JS (one observer per stage).
+  # Self-guarding: any JS error here is swallowed so it can never abort the
+  # surrounding websocket message batch (which would blank out outputs).
+  lapply(STAGE_ORDER, function(stg) {
+    observe({
+      shinyjs::runjs(sprintf(
+        "try { if (typeof updateStageIndicator === 'function') { updateStageIndicator('%s', %s); } } catch (e) { console.error('updateStageIndicator failed:', e); }",
+        STAGE_TAB[[stg]], tolower(as.character(rv$stage_complete[[stg]]))
+      ))
+    })
+  })
+
+  # ---- Start Over ----
+  observeEvent(input$start_over, {
+    shinyWidgets::confirmSweetAlert(
+      session = session, inputId = "start_over_confirmed",
+      title = "Start over?",
+      text = "This clears all uploaded data and resets every stage of the pipeline.",
+      type = "warning", btn_labels = c("Cancel", "Yes, start over"), danger_mode = TRUE
+    )
+  }, ignoreNULL = TRUE)
+  observeEvent(input$start_over_confirmed, {
+    req(isTRUE(input$start_over_confirmed))
+    shinyjs::runjs("location.reload();")
+  })
 
   # Fallback data flow: use calibrated data if available, else wound corrected, else spacing corrected
   final_vh <- reactive({
@@ -718,8 +962,8 @@ server <- function(input, output, session) {
   })
 
   # Module: Visualise Corrected (Tab 8) - Shows corrected data
-  selected_pulse_id_corrected <- plotTimeseriesServer("plot_timeseries_corrected", final_vh, reactive(rv$daily_vpd), reactive(rv$weather_vpd))
-  pulseTraceServer("pulse_trace_corrected", reactive(rv$corrected_data), selected_pulse_id_corrected, final_vh)
+  selected_pulse_id_corrected <- plotTimeseriesServer("plot_timeseries_corrected", final_vh, reactive(rv$daily_vpd), reactive(rv$weather_vpd), plot_settings = plot_settings_rv)
+  pulseTraceServer("pulse_trace_corrected", reactive(rv$corrected_data), selected_pulse_id_corrected, final_vh, plot_settings = plot_settings_rv)
 
   # Data Summary Output
   output$data_summary <- renderPrint({

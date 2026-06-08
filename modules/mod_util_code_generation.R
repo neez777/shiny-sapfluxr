@@ -4,6 +4,29 @@
 # Tracks all user actions in the Shiny app and generates executable R script
 # that reproduces the analysis using sapfluxr package functions
 
+# Canonical pipeline steps — only these names are recorded in the generated script.
+# Visualisation/validation step names are silently dropped by add_step().
+CALC_STEPS <- c(
+  "Load Heat Pulse Data", "Apply Clock Drift Correction", "Trim Incomplete Days",
+  "Upload Weather Data", "Calculate VPD",
+  "Configure Probe", "Configure Wood Properties",
+  "Calculate Heat Pulse Velocity",
+  "Detect Changepoints", "Apply Spacing Correction",
+  "Apply Wound Correction", "Apply Calibration", "Apply sDMA Switching",
+  "Convert to Sap Flux Density", "Calculate Tree Water Use", "Temporal Aggregation"
+)
+# Highest CALC_STEPS index each tick-stage "owns" — used by remove_steps_after().
+# Clock drift / trimming / weather / VPD have no tick of their own: they live in the
+# upload region (re-uploading wipes them) but survive re-runs of config and later
+# heat-pulse stages, so weather/VPD inputs are not lost when recalculating the chain.
+# Corrections owns both changepoint detection and the spacing correction it feeds.
+# Flux owns only the Jv conversion (step 14); radial integration owns tree water use
+# (step 15) so the two split pages trim independently in the cascade.
+STAGE_MAX_STEP <- c(
+  upload = 1L, config = 7L, methods = 8L, corrections = 10L, wound = 11L,
+  calibration = 12L, sdma = 13L, flux = 14L, radial = 15L, aggregation = 16L
+)
+
 # R6 Class for Code Tracking ----
 CodeTracker <- R6::R6Class(
   "CodeTracker",
@@ -17,21 +40,31 @@ CodeTracker <- R6::R6Class(
     },
 
     add_step = function(step_name, code, description = NULL, params = list()) {
+      ord <- match(step_name, CALC_STEPS)
+      if (is.na(ord)) return(invisible(self))  # drop viz/validation steps silently
       step <- list(
-        number = length(self$steps) + 1,
-        name = step_name,
-        code = code,
-        description = description,
-        params = params,
-        timestamp = Sys.time()
+        name = step_name, code = code, description = description,
+        params = params, order = ord, timestamp = Sys.time()
       )
-
-      self$steps[[length(self$steps) + 1]] <- step
+      existing <- which(vapply(self$steps, function(s) s$name == step_name, logical(1)))
+      if (length(existing)) {
+        self$steps[[existing[1]]] <- step  # upsert: overwrite in place
+      } else {
+        self$steps[[length(self$steps) + 1]] <- step
+      }
       invisible(self)
     },
 
     clear = function() {
       self$steps <- list()
+      invisible(self)
+    },
+
+    remove_steps_after = function(stage) {
+      boundary <- STAGE_MAX_STEP[[stage]]
+      if (is.null(boundary) || length(self$steps) == 0) return(invisible(self))
+      keep <- vapply(self$steps, function(s) s$order <= boundary, logical(1))
+      self$steps <- self$steps[keep]
       invisible(self)
     },
 
@@ -59,15 +92,18 @@ CodeTracker <- R6::R6Class(
         ""
       )
 
+      # Sort steps by canonical pipeline order before emitting
+      ordered_steps <- self$steps[order(vapply(self$steps, function(s) s$order, numeric(1)))]
+
       # Add each step
-      for (i in seq_along(self$steps)) {
-        step <- self$steps[[i]]
+      for (i in seq_along(ordered_steps)) {
+        step <- ordered_steps[[i]]
 
         # Step header
         script <- c(
           script,
           paste0("#", rep("=", 50), collapse = ""),
-          paste0("# Step ", step$number, ": ", step$name),
+          paste0("# Step ", i, ": ", step$name),
           paste0("#", rep("=", 50), collapse = "")
         )
 
@@ -82,7 +118,7 @@ CodeTracker <- R6::R6Class(
 
         # Code
         script <- c(script, step$code, "", "")
-      }
+      }  # end for ordered_steps
 
       # Footer
       script <- c(
@@ -366,7 +402,11 @@ codeGenerationServer <- function(id) {
       tracker = tracker,
       add_step = function(step_name, code, description = NULL, params = list()) {
         tracker$add_step(step_name, code, description, params)
-        trigger(isolate(trigger()) + 1) # Trigger update
+        trigger(isolate(trigger()) + 1)
+      },
+      remove_steps_after = function(stage) {
+        tracker$remove_steps_after(stage)
+        trigger(isolate(trigger()) + 1)
       }
     ))
   })

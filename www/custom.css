@@ -169,3 +169,37 @@
 .main-header .logo a:hover {
   color: #8FBC96 !important; /* Lighter green on hover */
 }
+
+/* Stage completion tick indicators */
+.sidebar-menu .stage-tick { font-size: 13px; }
+.sidebar-menu .stage-tick.complete   { color: #00a65a; }
+.sidebar-menu .stage-tick.incomplete { color: #7f7f7f; opacity: 0.45; }
+.sidebar-menu .pull-right-container { right: 10px; }
+
+/* ============================================================
+   Demo mode
+   ============================================================ */
+
+/* Example/sample data controls are hidden unless demo mode is on. */
+.demo-only { display: none !important; }
+body.demo-mode .demo-only { display: block !important; }
+
+/* The "Use Sample (Eucalyptus marginata)" wood-config radio option is demo-only. */
+#config-wood_mode .radio:has(input[value="sample"]) { display: none; }
+body.demo-mode #config-wood_mode .radio:has(input[value="sample"]) { display: block; }
+
+/* "Demo mode enabled" label injected next to the sidebar (hamburger) toggle. */
+.demo-mode-label { display: none; }
+body.demo-mode .demo-mode-label {
+  display: inline-block;
+  line-height: 50px;
+  margin-left: 6px;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+/* Amber header while demo mode is active. */
+body.demo-mode .main-header .navbar { background-color: #f39c12 !important; }
+body.demo-mode .main-header .logo { background-color: #e08e0b !important; }
+body.demo-mode .main-header .logo:hover { background-color: #d4850a !important; }
+body.demo-mode .main-header .sidebar-toggle { color: #1a1a1a !important; }

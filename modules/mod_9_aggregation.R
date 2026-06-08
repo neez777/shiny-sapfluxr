@@ -109,18 +109,6 @@ aggregationUI <- function(id) {
             type = 6,
             color = "#3c8dbc"
           )
-        ),
-
-        # Data table
-        box(
-          width = NULL,
-          title = "Aggregated Data",
-          status = "info",
-          solidHeader = TRUE,
-          collapsible = TRUE,
-          collapsed = TRUE,
-
-          DT::DTOutput(ns("aggregated_table"))
         )
       )
     )
@@ -459,47 +447,26 @@ aggregationServer <- function(id,
       HTML(stats_html)
     })
 
-    # Data table
-    output$aggregated_table <- DT::renderDT({
-      req(aggregated_data())
-
-      data <- aggregated_data()
-
-      DT::datatable(
-        data,
-        options = list(
-          pageLength = 25,
-          scrollX = TRUE,
-          dom = 'Bfrtip',
-          buttons = c('copy', 'csv', 'excel')
-        ),
-        extensions = 'Buttons',
-        rownames = FALSE
-      ) %>%
-        DT::formatRound(columns = c("aggregated_value"), digits = 4)
-    })
-
-    # Code generation
-    observe({
+    # Code generation — fires when aggregation is first calculated
+    observeEvent(aggregated_data(), {
       if (!is.null(code_tracker) && !is.logical(code_tracker)) {
-        if (!is.null(input$aggregation_period) &&
-            !is.null(input$aggregation_function) &&
-            !is.null(input$data_type)) {
-
-          data_label <- if (input$data_type == "water_use") "water use" else "flux density"
-
-          code_tracker$add_step(
-            step_name = "Temporal Aggregation",
-            code = sprintf(
-              "# Aggregate %s data (%s %s)",
-              data_label,
-              input$aggregation_period,
-              input$aggregation_function
-            )
-          )
-        }
+        data_label <- if (input$data_type == "water_use") "water use" else "flux density"
+        agg_period <- input$aggregation_period %||% "daily"
+        code_tracker$add_step(
+          step_name = "Temporal Aggregation",
+          code = paste0(
+            "# Aggregate ", data_label, " data to ", agg_period, " totals\n",
+            "aggregated_data <- sapfluxr::aggregate_flux(\n",
+            "  flux_data = flux_data,\n",
+            '  period = "', agg_period, '",\n',
+            '  agg_fun = "sum")'
+          ),
+          description = paste0("Temporal aggregation: ", agg_period, " sums of ", data_label)
+        )
       }
-    })
+    }, ignoreNULL = TRUE)
+
+    return(list(aggregated = aggregated_data))
 
   })
 }

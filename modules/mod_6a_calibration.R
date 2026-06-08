@@ -746,7 +746,45 @@ calibrationServer <- function(id, vh_corrected, wood_properties, probe_config = 
         )
         
         showNotification("Calibration applied successfully!", type = "message")
-        
+
+        if (!is.null(code_tracker)) {
+          # Resolve the velocity column now (we know which one exists) so the
+          # script reads as a plain literal instead of an inline conditional.
+          vh_col_resolved <- vh_col
+          vh_col_comment <- if (identical(vh_col_resolved, "Vs_cm_hr")) {
+            "# Calibrate on the spacing-corrected velocity"
+          } else {
+            "# Calibrate on the raw heat-pulse velocity (no spacing correction applied)"
+          }
+          calib_lines <- vapply(names(all_calibrations), function(key) {
+            parts  <- strsplit(key, "_", fixed = TRUE)[[1]]
+            sensor <- parts[1]
+            method <- paste(parts[-1], collapse = "_")
+            thr    <- all_calibrations[[key]]$optimal_threshold
+            sprintf(
+              'all_calibrations[["%s"]] <- list(\n  optimal_calibration = sapfluxr::calibrate_method_to_primary(\n    vh_corrected = vh_corrected, primary_method = "HRM",\n    secondary_method = "%s", sensor_position = "%s",\n    threshold_velocity = %g, velocity_col = vh_col),\n  optimal_threshold = %g)',
+              key, method, sensor, thr, thr
+            )
+          }, character(1))
+          code_tracker$add_step(
+            step_name = "Apply Calibration",
+            code = paste0(
+              "# Calibrate secondary methods against HRM at committed thresholds\n",
+              vh_col_comment, "\n",
+              "vh_col <- \"", vh_col_resolved, "\"\nall_calibrations <- list()\n",
+              paste(calib_lines, collapse = "\n"),
+              "\n\n# Apply the calibration transformation\n",
+              "vh_calibrated <- sapfluxr::transform_multiple_methods(\n",
+              "  vh_corrected = vh_corrected, calibrations = all_calibrations,\n",
+              "  velocity_col = vh_col)"
+            ),
+            description = sprintf(
+              "Calibrated %d method/sensor combination(s) against HRM",
+              length(all_calibrations)
+            )
+          )
+        }
+
       }, error = function(e) {
         showNotification(paste("Error applying calibration:", e$message), type = "error", duration = 10)
       })

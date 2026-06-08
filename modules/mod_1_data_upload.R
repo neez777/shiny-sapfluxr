@@ -24,6 +24,7 @@ dataUploadUI <- function(id) {
       p(class = "help-text",
         "Supported formats: ICT JSON, CSV, Legacy text files (.txt, .csv, .json, .dat)"),
       tags$div(
+        class = "demo-only",
         style = "margin-top: 10px;",
         tags$span(class = "help-text", "No data of your own? "),
         actionButton(

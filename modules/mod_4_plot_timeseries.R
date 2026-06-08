@@ -1043,8 +1043,20 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
       }
 
       # Step 3: Add Interpolation Markers
-      if (isTRUE(input$show_interpolated) && "is_interpolated" %in% names(data)) {
-        interp_data <- data %>% dplyr::filter(is_interpolated == TRUE)
+      # Source interpolated points straight from the cleaned dataset (data_for_plot),
+      # NOT filtered_data(): interpolated rows carry the "INTERPOLATED" quality_flag,
+      # which is absent from the original vh_results() flag list, so the quality-flag
+      # display filter would otherwise drop every interpolated point and the highlight
+      # would show nothing.
+      interp_src <- data_for_plot()
+      if (isTRUE(input$show_interpolated) && !is.null(interp_src) &&
+          "is_interpolated" %in% names(interp_src)) {
+        interp_data <- interp_src %>%
+          dplyr::filter(
+            method %in% input$methods,
+            sensor_position %in% input$sensor_position,
+            is_interpolated == TRUE
+          )
         if (nrow(interp_data) > 0) {
           for (m in unique(interp_data$method)) {
             m_interp <- interp_data %>% dplyr::filter(method == !!m)

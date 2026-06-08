@@ -25,6 +25,7 @@ weatherUploadUI <- function(id) {
       p(class = "help-text",
         "CSV format with datetime, temperature, and relative humidity columns"),
       tags$div(
+        class = "demo-only",
         style = "margin-top: 10px;",
         tags$span(class = "help-text", "No data of your own? "),
         actionButton(
@@ -97,9 +98,15 @@ weatherUploadUI <- function(id) {
 }
 
 # Server ----
-weatherUploadServer <- function(id, heat_pulse_data = reactive(NULL)) {
+weatherUploadServer <- function(id, heat_pulse_data = reactive(NULL),
+                                code_tracker = TRUE) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
+
+    # Quote a column name for code generation, or "NULL" when unset (auto-detected).
+    quote_col <- function(x) {
+      if (is.null(x) || !nzchar(x)) "NULL" else sprintf('"%s"', x)
+    }
 
     # Reactive values
     rv <- reactiveValues(
@@ -110,7 +117,9 @@ weatherUploadServer <- function(id, heat_pulse_data = reactive(NULL)) {
     )
 
     # Shared weather import routine used by both the upload and example loader.
-    load_weather <- function(path, display_name) {
+    # code_path_expr is the R expression (as text) used to refer to the source file
+    # in the generated reproducibility script.
+    load_weather <- function(path, display_name, code_path_expr) {
 
       # Clear previous data
       rv$weather_raw <- NULL
@@ -150,6 +159,33 @@ weatherUploadServer <- function(id, heat_pulse_data = reactive(NULL)) {
         rv$weather_raw <- weather
         rv$file_uploaded <- TRUE
 
+        # Track code generation — record the file path and column mapping used
+        if (!isTRUE(code_tracker)) {
+          mapping <- attr(weather, "column_mapping")
+          code_tracker$add_step(
+            step_name = "Upload Weather Data",
+            code = sprintf(
+              paste0(
+                "# Load weather data (temperature + relative humidity)\n",
+                "weather <- sapfluxr::read_weather_data(\n",
+                "  path = %s,\n",
+                "  datetime_col = %s,\n",
+                "  temp_col = %s,\n",
+                "  rh_col = %s,\n",
+                "  pressure_col = %s,\n",
+                "  confirm = FALSE\n)"
+              ),
+              code_path_expr,
+              quote_col(mapping$datetime),
+              quote_col(mapping$temperature),
+              quote_col(mapping$humidity),
+              quote_col(mapping$pressure)
+            ),
+            description = sprintf("Imported %s (%d records)",
+                                  display_name, nrow(weather))
+          )
+        }
+
         # Populate Dropdowns with RAW column names from the file
         # We get these from the attributes of the successfully read weather object
         col_mapping <- attr(weather, "column_mapping")
@@ -188,7 +224,10 @@ weatherUploadServer <- function(id, heat_pulse_data = reactive(NULL)) {
     # Observe file upload
     observeEvent(input$file, {
       req(input$file)
-      load_weather(input$file$datapath, input$file$name)
+      load_weather(
+        input$file$datapath, input$file$name,
+        code_path_expr = sprintf('"%s"', input$file$name)
+      )
     })
 
     # Observe "Load Example Weather" button
@@ -203,7 +242,11 @@ weatherUploadServer <- function(id, heat_pulse_data = reactive(NULL)) {
         )
         return()
       }
-      load_weather(example_path, "Sample_Meteorological_Data.txt")
+      load_weather(
+        example_path, "Sample_Meteorological_Data.txt",
+        code_path_expr =
+          'system.file("extdata", "Sample_Meteorological_Data.txt", package = "sapfluxr")'
+      )
     })
 
     # Reprocess with custom columns
@@ -294,6 +337,40 @@ weatherUploadServer <- function(id, heat_pulse_data = reactive(NULL)) {
         # Store results
         rv$weather_vpd <- weather_vpd
         rv$daily_vpd <- daily_vpd
+
+        # Track code generation — reproduce any date trimming then the VPD calc
+        if (!isTRUE(code_tracker)) {
+          trim_code <- if (input$auto_trim) {
+            paste0(
+              "# Trim weather to the heat pulse data date range\n",
+              "hp_dates <- range(heat_pulse_data$measurements$datetime)\n",
+              "weather <- dplyr::filter(weather, ",
+              "datetime >= hp_dates[1], datetime <= hp_dates[2])\n\n"
+            )
+          } else if (!is.null(input$date_range)) {
+            sprintf(
+              paste0(
+                "# Trim weather to the chosen date range\n",
+                "weather <- dplyr::filter(weather, ",
+                "datetime >= as.POSIXct(\"%s\"), datetime <= as.POSIXct(\"%s\"))\n\n"
+              ),
+              input$date_range[1], input$date_range[2]
+            )
+          } else {
+            ""
+          }
+          code_tracker$add_step(
+            step_name = "Calculate VPD",
+            code = paste0(
+              trim_code,
+              "# Calculate vapour pressure deficit and daily minima\n",
+              "weather_vpd <- sapfluxr::calc_vpd(weather)\n",
+              "daily_vpd  <- sapfluxr::calculate_daily_vpd_minima(weather_vpd)"
+            ),
+            description = sprintf("Calculated VPD (%d records, %d days)",
+                                  nrow(weather_vpd), nrow(daily_vpd))
+          )
+        }
 
         # Remove loading notification
         removeNotification("vpd_calc")

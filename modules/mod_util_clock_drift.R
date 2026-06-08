@@ -103,7 +103,7 @@ dataTrimUI <- function(id) {
 }
 
 # Server ----
-clockDriftServer <- function(id, heat_pulse_data) {
+clockDriftServer <- function(id, heat_pulse_data, code_tracker = TRUE) {
   moduleServer(id, function(input, output, session) {
 
     # Reactive to store corrected data (from clock drift)
@@ -220,6 +220,30 @@ clockDriftServer <- function(id, heat_pulse_data) {
         # Store corrected data
         corrected_data(data)
 
+        # Track code generation
+        if (!isTRUE(code_tracker)) {
+          code_tracker$add_step(
+            step_name = "Apply Clock Drift Correction",
+            code = sprintf(
+              paste0(
+                "# Correct clock drift (first pulse assumed correct, synced at start)\n",
+                "heat_pulse_data <- sapfluxr::fix_clock_drift(\n",
+                "  data = heat_pulse_data,\n",
+                "  device_time_col = \"datetime\",\n",
+                "  observed_device_time = as.POSIXct(\"%s\"),\n",
+                "  observed_actual_time = as.POSIXct(\"%s\")\n)"
+              ),
+              format(device_time_end, "%Y-%m-%d %H:%M:%S"),
+              format(actual_time_end, "%Y-%m-%d %H:%M:%S")
+            ),
+            description = sprintf(
+              "Adjusted timestamps for clock drift (device %s -> actual %s at collection end)",
+              format(device_time_end, "%Y-%m-%d %H:%M:%S"),
+              format(actual_time_end, "%Y-%m-%d %H:%M:%S")
+            )
+          )
+        }
+
         # Close loading notification
         close_notify(session)
 
@@ -307,6 +331,27 @@ clockDriftServer <- function(id, heat_pulse_data) {
         # Calculate how much was trimmed
         n_measurements_removed <- nrow(data_to_trim$measurements) - nrow(trimmed$measurements)
         n_pulses_removed <- nrow(data_to_trim$diagnostics) - nrow(trimmed$diagnostics)
+
+        # Track code generation
+        if (!isTRUE(code_tracker)) {
+          code_tracker$add_step(
+            step_name = "Trim Incomplete Days",
+            code = paste0(
+              "# Remove first/last day if they contain < 23 hours of data\n",
+              "trimmed <- sapfluxr:::trim_incomplete_days(\n",
+              "  measurements = heat_pulse_data$measurements,\n",
+              "  diagnostics  = heat_pulse_data$diagnostics\n)\n",
+              "heat_pulse_data$measurements <- trimmed$measurements\n",
+              "heat_pulse_data$diagnostics  <- trimmed$diagnostics\n",
+              "heat_pulse_data$metadata$n_pulses <- nrow(trimmed$diagnostics)"
+            ),
+            description = sprintf(
+              "Trimmed %s measurements (%s pulses) from incomplete days",
+              format(n_measurements_removed, big.mark = ","),
+              format(n_pulses_removed, big.mark = ",")
+            )
+          )
+        }
 
         # Show success message
         trim_msg <- if (n_measurements_removed > 0) {

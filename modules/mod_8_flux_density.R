@@ -1,15 +1,17 @@
 # mod_8_flux_density.R
-# Module for Sap Flux Density Conversion
+# Module for Sap Flux Density Conversion (Jv)
 #
-# Tab 8: Flux Density
+# Step 8: Sap Flux Density
 # Converts corrected heat pulse velocity to sap flux density using
-# wood-specific conversion factors (sapwood area integration)
+# wood-specific conversion factors, with an inline time-series plot.
+# Radial integration / tree water use lives in mod_8b_radial_integration.R.
 
 # UI ----
 fluxDensityUI <- function(id) {
   ns <- NS(id)
 
   tagList(
+    # ---- Row 1: Conversion controls + summary ----
     fluidRow(
       # Left column: Configuration
       column(
@@ -41,7 +43,7 @@ fluxDensityUI <- function(id) {
             tags$li("Apply spacing correction"),
             tags$li("Apply wound correction (optional)"),
             tags$li("Convert to sap flux density (Jv) - all sensors"),
-            tags$li("Integrate across sapwood area → tree-level water use")
+            tags$li("Integrate across sapwood area → tree-level water use (Step 9)")
           )
         ),
 
@@ -81,136 +83,23 @@ fluxDensityUI <- function(id) {
 
           actionButton(
             ns("convert_to_flux"),
-            "1. Convert to Sap Flux Density (Jv)",
+            "Convert to Sap Flux Density (Jv)",
             icon = icon("exchange-alt"),
             class = "btn-primary",
             width = "100%"
           )
-        ),
-
-        # Tree dimensions for integration
-        box(
-          width = 12,
-          title = "Tree Water Use Integration",
-          status = "warning",
-          solidHeader = TRUE,
-          collapsible = TRUE,
-          collapsed = FALSE,
-
-          helpText(
-            icon("tree"),
-            " Integrate flux density across sapwood area to calculate whole-tree water use (Q)."
-          ),
-
-          conditionalPanel(
-            condition = sprintf("!output['%s']", ns("has_flux_results")),
-            p(em("Convert to flux density first."))
-          ),
-
-          conditionalPanel(
-            condition = sprintf("output['%s']", ns("has_flux_results")),
-
-            h5("Tree Dimensions:"),
-
-            fluidRow(
-              column(6,
-                numericInput(
-                  ns("dbh_cm"),
-                  "DBH (cm):",
-                  value = 30,
-                  min = 1,
-                  max = 200,
-                  step = 0.1
-                )
-              ),
-              column(6,
-                numericInput(
-                  ns("sapwood_thickness_cm"),
-                  "Sapwood Thickness (cm):",
-                  value = 3.0,
-                  min = 0.1,
-                  max = 50,
-                  step = 0.1
-                )
-              )
-            ),
-
-            numericInput(
-              ns("bark_thickness_dbh_cm"),
-              "Bark Thickness at DBH (cm):",
-              value = 0,
-              min = 0,
-              max = 10,
-              step = 0.1
-            ),
-
-            numericInput(
-              ns("bark_thickness_probe_cm"),
-              "Bark Thickness at Probe (cm, after shaving):",
-              value = 0,
-              min = 0,
-              max = 10,
-              step = 0.1
-            ),
-
-            hr(),
-
-            tags$label(
-              "Radial Integration Method:",
-              tags$span(
-                tabindex = "0",
-                style = "margin-left: 6px; color: #3c8dbc; cursor: help;",
-                title = paste(
-                  "Linear decay (Pausch et al. 2000): sap flux declines linearly",
-                  "from the adjacent sensor value to zero across an unmeasured",
-                  "annulus, giving a mean of Jv / 2.\n\n",
-                  "Constant velocity (nearest-neighbour): the adjacent sensor",
-                  "value is applied unchanged across the unmeasured annulus."
-                ),
-                icon("circle-question")
-              )
-            ),
-            selectInput(
-              ns("integration_method"),
-              label = NULL,
-              choices = c(
-                "Linear decay (Pausch et al. 2000)" = "linear_decay",
-                "Constant velocity (nearest-neighbour)" = "constant_velocity"
-              ),
-              selected = "linear_decay"
-            ),
-
-            helpText(
-              icon("info-circle"),
-              " The method only affects sensorless annuli (where the sapwood",
-              " extends past the deepest sensor or no inner sensor is fitted)."
-            ),
-
-            hr(),
-
-            actionButton(
-              ns("calculate_tree_water_use"),
-              "2. Calculate Tree Water Use (Q)",
-              icon = icon("tint"),
-              class = "btn-warning",
-              width = "100%"
-            )
-          )
         )
       ),
 
-      # Right column: Results Summary
+      # Right column: Results (tabbed — Summary | Time Series)
       column(
         width = 8,
 
-        # Step 1: Flux Density Conversion Summary
         box(
           width = 12,
-          title = "1. Flux Density Conversion Summary",
+          title = "Sap Flux Density Results",
           status = "primary",
           solidHeader = TRUE,
-          collapsible = TRUE,
-          collapsed = FALSE,
 
           conditionalPanel(
             condition = sprintf("!output['%s']", ns("has_flux_results")),
@@ -220,61 +109,117 @@ fluxDensityUI <- function(id) {
           conditionalPanel(
             condition = sprintf("output['%s']", ns("has_flux_results")),
 
-            verbatimTextOutput(ns("flux_statistics")),
+            tabsetPanel(
+              id = ns("flux_results_tabs"),
 
-            hr(),
+              tabPanel(
+                "Time Series",
+                br(),
 
-            p(
-              icon("arrow-right"),
-              " Flux density conversion is complete.",
-              strong(" Proceed to calculate tree water use (Q) below,"),
-              " or go to ",
-              strong("Tab 8b: Flux Density Validation"),
-              " to explore interactive plots."
-            ),
+                # ---- Plot controls ----
+                fluidRow(
+                  column(4,
+                    h5("Methods to Display"),
+                    uiOutput(ns("plot_method_checkboxes"))
+                  ),
+                  column(4,
+                    h5("Sensor Position"),
+                    checkboxGroupInput(
+                      ns("plot_sensor_position"),
+                      NULL,
+                      choices = c("Inner" = "inner", "Outer" = "outer"),
+                      selected = c("inner", "outer")
+                    )
+                  ),
+                  column(4,
+                    h5("Display"),
+                    checkboxInput(
+                      ns("show_points"),
+                      "Show data points",
+                      value = FALSE
+                    )
+                  )
+                ),
 
-            hr(),
+                fluidRow(
+                  column(4,
+                    shinyWidgets::airDatepickerInput(
+                      ns("start_datetime"),
+                      "Start Date/Time:",
+                      value = NULL,
+                      timepicker = TRUE,
+                      dateFormat = "yyyy-MM-dd HH:mm"
+                    )
+                  ),
+                  column(4,
+                    shinyWidgets::airDatepickerInput(
+                      ns("end_datetime"),
+                      "End Date/Time:",
+                      value = NULL,
+                      timepicker = TRUE,
+                      dateFormat = "yyyy-MM-dd HH:mm"
+                    )
+                  ),
+                  column(2,
+                    br(),
+                    actionButton(
+                      ns("apply_range"),
+                      "Apply",
+                      icon = icon("clock"),
+                      class = "btn-primary btn-sm",
+                      style = "width: 100%; margin-top: 8px;"
+                    )
+                  ),
+                  column(2,
+                    br(),
+                    actionButton(
+                      ns("reset_zoom"),
+                      "Reset",
+                      icon = icon("refresh"),
+                      class = "btn-default btn-sm",
+                      style = "width: 100%; margin-top: 8px;"
+                    )
+                  )
+                ),
 
-            actionButton(
-              ns("reset_flux"),
-              "Clear Flux Conversion",
-              icon = icon("undo"),
-              class = "btn-warning btn-sm",
-              style = "width: 100%;"
-            )
-          )
-        ),
+                helpText(
+                  icon("info-circle"),
+                  "Sap flux density over time for all selected methods.",
+                  "Click-drag to zoom, double-click to reset zoom."
+                ),
 
-        # Step 2: Tree Water Use Summary
-        box(
-          width = 12,
-          title = "2. Tree Water Use Summary",
-          status = "success",
-          solidHeader = TRUE,
-          collapsible = TRUE,
-          collapsed = FALSE,
+                shinycssloaders::withSpinner(
+                  plotly::plotlyOutput(ns("flux_timeseries_plot"), height = "500px"),
+                  type = 6,
+                  color = "#3c8dbc"
+                )
+              ),
 
-          conditionalPanel(
-            condition = sprintf("!output['%s']", ns("has_tree_water_use")),
-            p(em("No tree water use data yet. Convert flux density first, then click 'Calculate Tree Water Use (Q)'."))
-          ),
+              tabPanel(
+                "Summary",
+                br(),
 
-          conditionalPanel(
-            condition = sprintf("output['%s']", ns("has_tree_water_use")),
+                verbatimTextOutput(ns("flux_statistics")),
 
-            verbatimTextOutput(ns("tree_water_use_summary")),
+                hr(),
 
-            hr(),
+                p(
+                  icon("arrow-right"),
+                  " Flux density conversion is complete.",
+                  strong(" Proceed to Step 9: Radial Integration"),
+                  " to integrate across the sapwood and calculate whole-tree water use."
+                ),
 
-            p(
-              icon("check-circle"),
-              " Tree water use calculation is complete.",
-              " Go to ",
-              strong("Tab 8b: Flux Density Validation"),
-              " to view interactive plots,",
-              " or proceed to ",
-              strong("Tab 9: Aggregation"),
-              " for temporal summaries."
+                hr(),
+
+                actionButton(
+                  ns("reset_flux"),
+                  "Clear Flux Conversion",
+                  icon = icon("undo"),
+                  class = "btn-warning btn-sm",
+                  style = "width: 100%;"
+                )
+              )
             )
           )
         )
@@ -290,8 +235,10 @@ fluxDensityServer <- function(id,
                                vh_wound_corrected = reactive(NULL),
                                vh_sdma = reactive(NULL),
                                wood_properties = reactive(NULL),
-                               code_tracker = TRUE) {
+                               code_tracker = TRUE,
+                               plot_settings = reactive(list())) {
   moduleServer(id, function(input, output, session) {
+    ns <- session$ns
 
     # Reactive values
     rv <- reactiveValues(
@@ -299,10 +246,7 @@ fluxDensityServer <- function(id,
       velocity_source_used = NULL,
       methods_used = NULL,
       sensor_position_used = NULL,
-      conversion_timestamp = NULL,
-      tree_water_use_data = NULL,
-      tree_dimensions = NULL,
-      integration_timestamp = NULL
+      conversion_timestamp = NULL
     )
 
     # Reactive: Consolidate all available velocity data
@@ -366,16 +310,12 @@ fluxDensityServer <- function(id,
         if ("combination" %in% names(data) && "method" %in% names(data)) {
           # sDMA data - extract secondary method from combination
           # Format: "outer_MHR" or "inner_MHR" -> extract "MHR"
-          # We want to show just "sDMA: MHR" (not split by sensor or source)
-
-          # Extract unique secondary methods from combination strings
           combinations <- unique(data$combination)
           secondary_methods <- unique(gsub("^(outer|inner)_", "", combinations))
 
           for (sec_method in secondary_methods) {
             method_label <- paste0("sDMA: ", sec_method)
             method_value <- paste0("sdma:", sec_method)
-            # For checkboxGroupInput: names are labels (what user sees), values are what gets returned
             all_method_choices[[method_label]] <- method_value
           }
 
@@ -396,7 +336,6 @@ fluxDensityServer <- function(id,
               method_label <- paste0(m, " (", data_source_label, ")")
               method_value <- paste0(data_source_label, ":", m)
             }
-            # For checkboxGroupInput: names are labels (what user sees), values are what gets returned
             all_method_choices[[method_label]] <- method_value
           }
         }
@@ -412,36 +351,6 @@ fluxDensityServer <- function(id,
         choices = all_method_choices,
         selected = all_method_choices[[1]]  # Select first value, not first label
       )
-    })
-
-    # Update tree dimension inputs from wood properties
-    observe({
-      req(wood_properties())
-
-      wood <- wood_properties()
-
-      # Extract tree measurements if available
-      if (inherits(wood, "WoodProperties") && !is.null(wood$tree_measurements)) {
-        tree_meas <- wood$tree_measurements
-
-        # Update DBH if available
-        if (!is.null(tree_meas$dbh) && !is.na(tree_meas$dbh)) {
-          updateNumericInput(session, "dbh_cm", value = tree_meas$dbh)
-        }
-
-        # Update sapwood depth if available
-        if (!is.null(tree_meas$sapwood_thickness) && !is.na(tree_meas$sapwood_thickness)) {
-          updateNumericInput(session, "sapwood_thickness_cm", value = tree_meas$sapwood_thickness)
-        }
-
-        # Update bark thickness if available
-        if (!is.null(tree_meas$bark_thickness_dbh) && !is.na(tree_meas$bark_thickness_dbh)) {
-          updateNumericInput(session, "bark_thickness_dbh_cm", value = tree_meas$bark_thickness_dbh)
-        }
-        if (!is.null(tree_meas$bark_thickness_probe) && !is.na(tree_meas$bark_thickness_probe)) {
-          updateNumericInput(session, "bark_thickness_probe_cm", value = tree_meas$bark_thickness_probe)
-        }
-      }
     })
 
     # Display Z factor from wood properties
@@ -543,13 +452,10 @@ fluxDensityServer <- function(id,
 
             if (parts[1] == "sdma") {
               # sDMA data: format is "sdma:secondary_method" (e.g., "sdma:MHR")
-              # Get ALL sensors for this sDMA variant
               secondary_method <- parts[2]
 
               sdma_data <- all_datasets$sdma
               if (!is.null(sdma_data)) {
-                # Filter by secondary method (matches combinations like "outer_MHR", "inner_MHR")
-                # Don't filter by sdma_source - that's internal to sDMA
                 filtered <- sdma_data %>%
                   dplyr::filter(
                     grepl(paste0("_", secondary_method, "$"), combination)
@@ -639,7 +545,6 @@ fluxDensityServer <- function(id,
 
           # Code generation
           if (!isTRUE(code_tracker)) {
-            methods_str <- paste0('"', input$methods_selected, '"', collapse = ", ")
             code_tracker$add_step(
               step_name = "Convert to Sap Flux Density",
               code = paste0(
@@ -671,106 +576,11 @@ fluxDensityServer <- function(id,
       })
     })
 
-    # Calculate tree water use (Q)
-    observeEvent(input$calculate_tree_water_use, {
-      req(rv$flux_data)
-      req(input$dbh_cm, input$sapwood_thickness_cm)
-
-      withProgress(message = "Calculating tree water use...", {
-
-        tryCatch({
-          # Add tree dimensions as columns to flux data
-          flux_with_dims <- rv$flux_data
-          flux_with_dims$dbh <- input$dbh_cm
-          flux_with_dims$sapwood_thickness <- input$sapwood_thickness_cm
-          flux_with_dims$bark_thickness_dbh <- input$bark_thickness_dbh_cm
-          flux_with_dims$bark_thickness_probe <- input$bark_thickness_probe_cm
-
-          # Apply sap flux integration across sapwood area
-          # This integrates flux density from all sensor positions (inner + outer)
-          # using the selected radial method (linear_decay or constant_velocity)
-          tree_water_use_data <- sapfluxr::apply_sap_flux_integration(
-            flux_data = flux_with_dims,
-            dbh_col = "dbh",
-            sapwood_thickness_col = "sapwood_thickness",
-            bark_thickness_dbh_col = "bark_thickness_dbh",
-            bark_thickness_probe_col = "bark_thickness_probe",
-            method = input$integration_method
-          )
-
-          # Store results
-          rv$tree_water_use_data <- tree_water_use_data
-          rv$tree_dimensions <- list(
-            dbh = input$dbh_cm,
-            sapwood_thickness = input$sapwood_thickness_cm,
-            bark_thickness_dbh = input$bark_thickness_dbh_cm,
-            bark_thickness_probe = input$bark_thickness_probe_cm
-          )
-          rv$integration_timestamp <- Sys.time()
-
-          # Code generation
-          if (!isTRUE(code_tracker)) {
-            # Calculate sapwood area
-            r_outer <- (input$dbh_cm / 2) - input$bark_thickness_dbh_cm
-            r_inner <- r_outer - input$sapwood_thickness_cm
-            sapwood_area <- pi * (r_outer^2 - r_inner^2)
-
-            rv$tree_dimensions$sapwood_area <- sapwood_area
-            rv$tree_dimensions$integration_method <- input$integration_method
-
-            code_tracker$add_step(
-              step_name = "Calculate Tree Water Use",
-              code = sprintf(
-                paste0(
-                  '# Add tree dimensions as columns, then integrate across sapwood\n',
-                  'flux_data$dbh                  <- %.2f  # cm\n',
-                  'flux_data$sapwood_thickness        <- %.2f  # cm\n',
-                  'flux_data$bark_thickness_dbh   <- %.2f  # cm (full bark at DBH)\n',
-                  'flux_data$bark_thickness_probe <- %.2f  # cm (remaining bark at probe site)\n',
-                  'tree_water_use <- sapfluxr::apply_sap_flux_integration(\n',
-                  '  flux_data              = flux_data,\n',
-                  '  bark_thickness_dbh_col = "bark_thickness_dbh",\n',
-                  '  bark_thickness_probe_col = "bark_thickness_probe",\n',
-                  '  method                 = "%s"\n',
-                  ')\n',
-                  '# Sapwood area: %.2f cm\u00b2'
-                ),
-                input$dbh_cm,
-                input$sapwood_thickness_cm,
-                input$bark_thickness_dbh_cm,
-                input$bark_thickness_probe_cm,
-                input$integration_method,
-                sapwood_area
-              ),
-              description = sprintf("Integrated flux across sapwood area (DBH: %.1f cm, Sapwood: %.1f cm, Area: %.1f cm²)",
-                                   input$dbh_cm, input$sapwood_thickness_cm, sapwood_area)
-            )
-          }
-
-          showNotification(
-            sprintf("Tree water use calculated! DBH: %.1f cm, Sapwood depth: %.1f cm",
-                    input$dbh_cm, input$sapwood_thickness_cm),
-            type = "message"
-          )
-
-        }, error = function(e) {
-          showNotification(
-            paste("Error calculating tree water use:", e$message),
-            type = "error",
-            duration = 10
-          )
-        })
-      })
-    })
-
     # Reset flux conversion
     observeEvent(input$reset_flux, {
       rv$flux_data <- NULL
       rv$velocity_source_used <- NULL
       rv$conversion_timestamp <- NULL
-      rv$tree_water_use_data <- NULL
-      rv$tree_dimensions <- NULL
-      rv$integration_timestamp <- NULL
       showNotification("Flux conversion cleared", type = "message")
     })
 
@@ -779,12 +589,6 @@ fluxDensityServer <- function(id,
       !is.null(rv$flux_data)
     })
     outputOptions(output, "has_flux_results", suspendWhenHidden = FALSE)
-
-    # Flag for tree water use
-    output$has_tree_water_use <- reactive({
-      !is.null(rv$tree_water_use_data)
-    })
-    outputOptions(output, "has_tree_water_use", suspendWhenHidden = FALSE)
 
     # Flux statistics
     output$flux_statistics <- renderText({
@@ -848,94 +652,288 @@ fluxDensityServer <- function(id,
       )
     })
 
-    # Tree water use summary
-    output$tree_water_use_summary <- renderText({
-      req(rv$tree_water_use_data)
+    # ==================================================================
+    # INLINE TIME-SERIES PLOT
+    # ==================================================================
 
-      q_data <- rv$tree_water_use_data
+    # Reactive: Time range
+    time_range <- reactiveVal(NULL)
 
-      # Get method breakdown if available
-      if ("method_label" %in% names(q_data)) {
-        method_summary <- q_data %>%
-          dplyr::group_by(method_label) %>%
-          dplyr::summarise(
-            n = dplyr::n(),
-            mean_Q = mean(Q_total_L_hr, na.rm = TRUE),
-            mean_daily = mean(Q_total_L_hr, na.rm = TRUE) * 24,  # Mean instantaneous rate × 24 h
-            .groups = "drop"
-          )
+    # Initialise datetime range from data
+    observe({
+      req(rv$flux_data)
 
-        method_text <- paste0(
-          "\nMethod Breakdown:\n",
-          paste(
-            sprintf("  %s: %d points, mean = %.2f L/hr, mean daily = %.1f L/day",
-                    method_summary$method_label,
-                    method_summary$n,
-                    method_summary$mean_Q,
-                    method_summary$mean_daily),
-            collapse = "\n"
-          ),
-          "\n"
-        )
-      } else {
-        method_text <- ""
+      data <- rv$flux_data
+      date_range <- range(data$datetime, na.rm = TRUE)
+
+      shinyWidgets::updateAirDateInput(session, "start_datetime", value = date_range[1])
+      shinyWidgets::updateAirDateInput(session, "end_datetime", value = date_range[2])
+    })
+
+    # Dynamic method checkboxes for the plot
+    output$plot_method_checkboxes <- renderUI({
+      req(rv$flux_data)
+
+      data <- rv$flux_data
+      methods <- c()
+
+      if ("method_label" %in% names(data)) {
+        methods <- unique(data$method_label)
+        methods <- methods[!is.na(methods)]
+      } else if ("method" %in% names(data)) {
+        methods <- unique(data$method)
+        methods <- methods[!is.na(methods)]
+      } else if ("combination" %in% names(data)) {
+        methods <- unique(data$combination)
+        methods <- methods[!is.na(methods)]
       }
 
-      sprintf(
-        paste0(
-          "Tree Water Use Summary\n\n",
-          "Tree Dimensions:\n",
-          "  DBH: %.2f cm\n",
-          "  Sapwood Thickness: %.2f cm\n",
-          "  Sapwood Area: %.2f cm²\n\n",
-          "Integration Method: %s\n",
-          "Calculated: %s\n\n",
-          "Data Points: %d\n",
-          "Date Range: %s to %s\n",
-          "%s",
-          "\nOverall Water Use Statistics:\n",
-          "  Mean: %.3f L/hr\n",
-          "  Median: %.3f L/hr\n",
-          "  Mean Daily Water Use: %.2f L/day\n",
-          "  Min: %.3f L/hr\n",
-          "  Max: %.3f L/hr"
-        ),
-        rv$tree_dimensions$dbh,
-        rv$tree_dimensions$sapwood_thickness,
-        rv$tree_dimensions$sapwood_area,
-        rv$tree_dimensions$integration_method,
-        format(rv$integration_timestamp, "%Y-%m-%d %H:%M:%S"),
-        nrow(q_data),
-        format(min(q_data$datetime), "%Y-%m-%d"),
-        format(max(q_data$datetime), "%Y-%m-%d"),
-        method_text,
-        mean(q_data$Q_total_L_hr, na.rm = TRUE),
-        median(q_data$Q_total_L_hr, na.rm = TRUE),
-        mean(q_data$Q_total_L_hr, na.rm = TRUE) * 24,
-        min(q_data$Q_total_L_hr, na.rm = TRUE),
-        max(q_data$Q_total_L_hr, na.rm = TRUE)
+      if (length(methods) == 0) {
+        return(p(style = "color: #999;", "No methods available"))
+      }
+
+      checkboxGroupInput(
+        ns("plot_methods_selected"),
+        NULL,
+        choices = methods,
+        selected = methods
       )
     })
 
-    # ==================================================================
-    # PLOT OUTPUTS REMOVED
-    # All visualization moved to mod_8b_flux_validation.R
-    # ==================================================================
+    # Reactive: Filtered plot data
+    plot_data_flux <- reactive({
+      req(rv$flux_data)
+      req(input$plot_sensor_position)
 
-    # REMOVED: flux_timeseries_plot - moved to mod_8b
-    # REMOVED: velocity_vs_flux_plot - moved to mod_8b
-    # REMOVED: daily_flux_plot - moved to mod_8b
-    # REMOVED: tree_water_use_plot_hourly - moved to mod_8b
-    # REMOVED: tree_water_use_plot_daily - moved to mod_8b
+      data <- rv$flux_data
+
+      # Filter by sensor position
+      if ("sensor_position" %in% names(data)) {
+        data <- data %>%
+          dplyr::filter(sensor_position %in% input$plot_sensor_position)
+      }
+
+      # Filter by selected methods if specified
+      if (!is.null(input$plot_methods_selected) && length(input$plot_methods_selected) > 0) {
+        if ("method_label" %in% names(data)) {
+          data <- data %>% dplyr::filter(method_label %in% input$plot_methods_selected)
+        } else if ("method" %in% names(data)) {
+          data <- data %>% dplyr::filter(method %in% input$plot_methods_selected)
+        } else if ("combination" %in% names(data)) {
+          data <- data %>% dplyr::filter(combination %in% input$plot_methods_selected)
+        }
+      }
+
+      # Apply time range filter
+      if (!is.null(time_range())) {
+        data <- data %>%
+          dplyr::filter(datetime >= time_range()[1], datetime <= time_range()[2])
+      }
+
+      # Sort to prevent diagonal connection lines
+      if ("method_label" %in% names(data) && "sensor_position" %in% names(data)) {
+        data <- data %>% dplyr::arrange(method_label, sensor_position, datetime)
+      } else if ("method" %in% names(data)) {
+        data <- data %>% dplyr::arrange(method, datetime)
+      } else {
+        data <- data %>% dplyr::arrange(datetime)
+      }
+
+      return(data)
+    })
+
+    # Flux timeseries plot
+    output$flux_timeseries_plot <- plotly::renderPlotly({
+      tryCatch({
+        flux <- plot_data_flux()
+        style_config <- plot_settings()
+
+        if (is.null(flux) || nrow(flux) == 0) {
+          return(
+            plotly::plot_ly() %>%
+              plotly::layout(
+                title = "No data to display - please check your selections",
+                xaxis = list(title = "Datetime"),
+                yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)"),
+                uirevision = "flux_timeseries_zoom"
+              )
+          )
+        }
+
+        # Create base plot
+        p <- plotly::plot_ly(source = "flux_timeseries_plot")
+
+        # Determine mode
+        mode <- if (input$show_points) "lines+markers" else "lines"
+
+        # Determine which methods and sensors are present
+        methods <- unique(flux$method_label %||% flux$method %||% "Sap Flux")
+        sensors <- if ("sensor_position" %in% names(flux)) unique(flux$sensor_position) else "outer"
+
+        # Add traces using loop for consistent styling
+        for (m in methods) {
+          for (s in sensors) {
+            trace_data <- flux
+            if ("method_label" %in% names(flux)) {
+              trace_data <- trace_data %>% dplyr::filter(method_label == m)
+            } else if ("method" %in% names(flux)) {
+              trace_data <- trace_data %>% dplyr::filter(method == m)
+            }
+
+            if ("sensor_position" %in% names(flux)) {
+              trace_data <- trace_data %>% dplyr::filter(sensor_position == s)
+            }
+
+            if (nrow(trace_data) == 0) next
+
+            trace_name <- if (length(sensors) > 1) {
+              paste0(m, " (", toupper(s), ")")
+            } else {
+              m
+            }
+
+            # Get style
+            style_m <- m
+            if (grepl("HRM", style_m)) style_m <- "HRM"
+            else if (grepl("MHR", style_m)) style_m <- "MHR"
+            else if (grepl("Tmax_Coh", style_m)) style_m <- "Tmax_Coh"
+            else if (grepl("Tmax_Klu", style_m)) style_m <- "Tmax_Klu"
+            else if (grepl("sDMA", style_m)) style_m <- "sDMA"
+
+            style <- get_plot_style(method = style_m, sensor = s, is_corrected = TRUE, config = style_config)
+
+            p <- p %>%
+              plotly::add_trace(
+                data = trace_data,
+                x = ~datetime,
+                y = ~Jv_cm3_cm2_hr,
+                type = "scatter",
+                mode = mode,
+                name = trace_name,
+                line = style,
+                marker = if (input$show_points) list(size = 4, color = style$color) else NULL,
+                legendgroup = trace_name,
+                showlegend = TRUE,
+                hovertemplate = paste(
+                  "<b>", trace_name, "</b><br>",
+                  "Date: %{x|%Y-%m-%d %H:%M}<br>",
+                  "Jv: %{y:.2f} cm³/cm²/hr<br>",
+                  "<extra></extra>"
+                )
+              )
+          }
+        }
+
+        # Apply standard layout
+        base_layout <- get_standard_layout(
+          title = "Sap Flux Density Time Series",
+          xtitle = "Date",
+          ytitle = "Sap Flux Density (cm³/cm²/hr)",
+          uirevision = "flux_timeseries_zoom"
+        )
+
+        # Force zoom range persistence
+        if (!is.null(time_range())) {
+          base_layout$xaxis$range <- time_range()
+          base_layout$xaxis$autorange <- FALSE
+        }
+
+        p <- p %>%
+          plotly::layout(
+            title = list(text = base_layout$title, x = 0.5, xanchor = "center"),
+            xaxis = base_layout$xaxis,
+            yaxis = base_layout$yaxis,
+            hovermode = base_layout$hovermode,
+            showlegend = TRUE,
+            legend = base_layout$legend,
+            margin = base_layout$margin,
+            plot_bgcolor = base_layout$plot_bgcolor,
+            paper_bgcolor = base_layout$paper_bgcolor,
+            uirevision = base_layout$uirevision
+          ) %>%
+          apply_standard_plotly_config(filename = "flux_timeseries_plot", add_csv_download = TRUE) %>%
+          plotly::event_register("plotly_relayout")
+
+        return(p)
+
+      }, error = function(e) {
+        plotly::plot_ly() %>%
+          plotly::layout(
+            title = list(text = paste("Error:", e$message), x = 0.5),
+            xaxis = list(title = "Datetime"),
+            yaxis = list(title = "Sap Flux Density (cm³/cm²/hr)"),
+            uirevision = "flux_timeseries_zoom"
+          )
+      })
+    })
+
+    # Update datetime inputs when user zooms the plot
+    relayout_debounced <- debounce(reactive({
+      event_data("plotly_relayout", source = "flux_timeseries_plot")
+    }), 500)
+
+    observeEvent(relayout_debounced(), {
+      rd <- relayout_debounced()
+      if (is.null(rd)) return()
+
+      if (!is.null(rd$xaxis.range) && length(rd$xaxis.range) == 2) {
+        shinyWidgets::updateAirDateInput(session, "start_datetime",
+          value = as.POSIXct(rd$xaxis.range[1], tz = "UTC"))
+        shinyWidgets::updateAirDateInput(session, "end_datetime",
+          value = as.POSIXct(rd$xaxis.range[2], tz = "UTC"))
+        time_range(c(rd$xaxis.range[1], rd$xaxis.range[2]))
+
+      } else if (!is.null(rd$`xaxis.range[0]`)) {
+        shinyWidgets::updateAirDateInput(session, "start_datetime",
+          value = as.POSIXct(rd$`xaxis.range[0]`, tz = "UTC"))
+        shinyWidgets::updateAirDateInput(session, "end_datetime",
+          value = as.POSIXct(rd$`xaxis.range[1]`, tz = "UTC"))
+        time_range(c(rd$`xaxis.range[0]`, rd$`xaxis.range[1]`))
+
+      } else if (isTRUE(rd$`xaxis.autorange`)) {
+        req(rv$flux_data)
+        date_range <- range(rv$flux_data$datetime, na.rm = TRUE)
+        shinyWidgets::updateAirDateInput(session, "start_datetime", value = date_range[1])
+        shinyWidgets::updateAirDateInput(session, "end_datetime", value = date_range[2])
+        time_range(NULL)
+      }
+    })
+
+    # Apply manual range
+    observeEvent(input$apply_range, {
+      req(input$start_datetime, input$end_datetime)
+
+      t_range <- c(
+        format(input$start_datetime, "%Y-%m-%d %H:%M:%S"),
+        format(input$end_datetime, "%Y-%m-%d %H:%M:%S")
+      )
+
+      time_range(t_range)
+
+      plotly::plotlyProxy("flux_timeseries_plot", session) %>%
+        plotly::plotlyProxyInvoke("relayout", list("xaxis.range" = t_range))
+    })
+
+    # Reset zoom
+    observeEvent(input$reset_zoom, {
+      time_range(NULL)
+
+      if (!is.null(rv$flux_data)) {
+        date_range <- range(rv$flux_data$datetime, na.rm = TRUE)
+
+        shinyWidgets::updateAirDateInput(session, "start_datetime", value = date_range[1])
+        shinyWidgets::updateAirDateInput(session, "end_datetime", value = date_range[2])
+
+        plotly::plotlyProxy("flux_timeseries_plot", session) %>%
+          plotly::plotlyProxyInvoke("relayout", list("xaxis.autorange" = TRUE))
+      }
+    })
 
     # Return values for downstream modules
     return(list(
       flux_data = reactive(rv$flux_data),
       has_flux_data = reactive(!is.null(rv$flux_data)),
-      velocity_source = reactive(rv$velocity_source_used),
-      tree_water_use_data = reactive(rv$tree_water_use_data),
-      has_tree_water_use = reactive(!is.null(rv$tree_water_use_data)),
-      tree_dimensions = reactive(rv$tree_dimensions)
+      velocity_source = reactive(rv$velocity_source_used)
     ))
   })
 }

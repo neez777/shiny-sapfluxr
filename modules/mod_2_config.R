@@ -217,15 +217,37 @@ configServer <- function(id, heat_pulse_data = NULL, code_tracker = TRUE) {
 ")
           wood_properties(tool_config)
 
-          # Track code generation
+          # Track code generation. Reference the actual source YAML file, not the
+          # config_name (a descriptive field read from inside the file, which is not
+          # a loadable path). If the user entered properties manually there is no
+          # source file, so point at the YAML they would download from the tool.
           if (!isTRUE(code_tracker)) {
-            code_tracker$add_step(
-              step_name = "Configure Wood Properties",
-              code = sprintf('# Load wood properties\nwood_properties <- sapfluxr::load_wood_properties("%s")',
-                           if (!is.null(tool_config$config_name)) tool_config$config_name else "custom"),
-              description = sprintf("Configured wood properties: %s",
-                                   if (!is.null(tool_config$config_name)) tool_config$config_name else "custom")
-            )
+            src_file <- wood_tool_return$uploaded_filename()
+            if (!is.null(src_file) && nzchar(src_file)) {
+              code_tracker$add_step(
+                step_name = "Configure Wood Properties",
+                code = sprintf(
+                  '# Load wood properties from YAML\nwood_properties <- sapfluxr::load_wood_properties("%s")',
+                  src_file
+                ),
+                description = sprintf("Loaded wood properties from %s", src_file)
+              )
+            } else {
+              dl_file <- wood_tool_return$download_filename()
+              if (is.null(dl_file) || !nzchar(dl_file)) dl_file <- "wood_properties.yaml"
+              code_tracker$add_step(
+                step_name = "Configure Wood Properties",
+                code = sprintf(
+                  paste0(
+                    "# Wood properties were entered manually in the Wood Properties tool.\n",
+                    "# Download the configuration as YAML from that tool, then load it here:\n",
+                    'wood_properties <- sapfluxr::load_wood_properties("%s")'
+                  ),
+                  dl_file
+                ),
+                description = "Wood properties entered manually (save the YAML from the tool to reproduce)"
+              )
+            }
           }
         }
       } else if (input$wood_mode == "builtin") {

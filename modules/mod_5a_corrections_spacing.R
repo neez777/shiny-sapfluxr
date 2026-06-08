@@ -970,6 +970,36 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
           # Update detected results - this will trigger plot re-render
           rv$detected_result <- cpt_result
 
+          # Track changepoint detection in the reproducible script
+          if (!is.null(code_tracker)) {
+            pen_val <- if (identical(input$penalty_type, "Manual")) {
+              sprintf("%g", input$penalty_value)
+            } else {
+              "NULL"
+            }
+            code_tracker$add_step(
+              step_name = "Detect Changepoints",
+              code = sprintf(paste0(
+                "# Detect zero-flow baseline changepoints via PELT\n",
+                "cpt_result <- sapfluxr::detect_changepoints(\n",
+                "  vh_data = vh_results,\n",
+                "  sensor_position = \"%s\",\n",
+                "  hpv_method = \"%s\",\n",
+                "  penalty = \"%s\",\n",
+                "  penalty_value = %s,\n",
+                "  detection_type = \"mean\",\n",
+                "  min_segment_days = %g,\n",
+                "  merge_short_segments = %s\n)\n",
+                "changepoints <- cpt_result$changepoints"),
+                input$detect_sensor_position, input$detect_method_filter,
+                input$penalty_type, pen_val, input$min_segment_days,
+                toupper(as.character(input$merge_short_segments))),
+              description = sprintf(
+                "PELT detection: %d changepoint(s), %d segment(s)",
+                length(cpt_result$changepoints),
+                cpt_result$parameters$n_segments))
+          }
+
           showNotification(
             sprintf("Detected %d changepoint(s), creating %d segment(s)",
                    length(cpt_result$changepoints),
@@ -1399,6 +1429,49 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
           rv$dual_stable_detected_result <- dual_stable_result
           rv$dual_stable_detected_result$detection_sensor <- sensor
           rv$dual_stable_detected_result$detection_method <- method
+
+          # Track changepoint detection in the reproducible script
+          if (!is.null(code_tracker)) {
+            dawn_expr <- if (identical(predawn_mode, "dynamic")) {
+              "dawn_times  # computed via suncalc::getSunlightTimes() for the site"
+            } else {
+              "NULL"
+            }
+            code_tracker$add_step(
+              step_name = "Detect Changepoints",
+              code = sprintf(paste0(
+                "# Detect zero-flow baseline changepoints via dual-stable periods\n",
+                "# (predawn windows where BOTH VPD and sap velocity are stable)\n",
+                "dual_stable <- sapfluxr::find_dual_stable_periods(\n",
+                "  vh_data = vh_results,\n",
+                "  weather_data = weather_vpd,\n",
+                "  vh_col = \"%s\",\n",
+                "  method = \"%s\",\n",
+                "  sensor_position = \"%s\",\n",
+                "  vpd_col = \"vpd_kpa\",\n",
+                "  predawn_window = c(%g, %g),\n",
+                "  mode = \"%s\",\n",
+                "  dawn_times = %s,\n",
+                "  timezone = NULL,\n",
+                "  vpd_threshold = %g,\n",
+                "  vpd_stability = %g,\n",
+                "  vh_threshold = %g,\n",
+                "  vh_stability = %g,\n",
+                "  min_n_points = 4,\n",
+                "  min_segment_days = %g,\n",
+                "  max_changepoints = NULL\n)\n",
+                "changepoints <- dual_stable$changepoints$timestamp"),
+                vh_col, method, sensor,
+                predawn_range[1], predawn_range[2], predawn_mode, dawn_expr,
+                input$dual_vpd_threshold, input$dual_vpd_stability,
+                input$dual_vh_threshold, input$dual_vh_stability,
+                input$dual_min_segment_days),
+              description = sprintf(
+                "Dual-stable detection: %d period(s), %d changepoint(s) (%s sensor, %s)",
+                length(dual_stable_result$dual_stable_dates),
+                nrow(dual_stable_result$changepoints),
+                toupper(sensor), method))
+          }
 
           showNotification(
             sprintf("Detected %d dual-stable period(s) with %d changepoint(s) using %s sensor, %s method",
@@ -2031,6 +2104,45 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         rv$corrected_vh <- corrected_data
         rv$correction_applied <- TRUE
 
+        # Track spacing correction in the reproducible script
+        if (!is.null(code_tracker)) {
+          anchors_expr <- if (offset_model == "gradient") {
+            ts <- format(anchors$timestamp, "%Y-%m-%d %H:%M:%S")
+            sprintf(
+              "data.frame(timestamp = as.POSIXct(c(%s)))",
+              paste(sprintf('"%s"', ts), collapse = ", ")
+            )
+          } else if (length(anchors) > 0) {
+            sprintf(
+              "as.Date(c(%s))",
+              paste(sprintf('"%s"', format(anchors, "%Y-%m-%d")), collapse = ", ")
+            )
+          } else {
+            "as.Date(character(0))"
+          }
+          code_tracker$add_step(
+            step_name = "Apply Spacing Correction",
+            code = sprintf(paste0(
+              "# Apply spacing correction (zero-flow baseline offset)\n",
+              "vh_corrected <- sapfluxr::apply_spacing_correction(\n",
+              "  vh_data = vh_results,\n",
+              "  changepoints = %s,\n",
+              "  offset_model = \"%s\",\n",
+              "  correction_math = \"%s\",\n",
+              "  sensor_position = \"both\",\n",
+              "  hpv_method = \"HRM\",\n",
+              "  wood_properties = wood_properties,\n",
+              "  probe_spacing = %g,\n",
+              "  measurement_time = 80,\n",
+              "  verbose = FALSE\n)"),
+              anchors_expr, offset_model, correction_math, probe_spacing),
+            description = sprintf(
+              "Spacing correction applied (%s offset, %s math, %d segment%s)",
+              offset_model, correction_math, n_segments,
+              if (n_segments != 1) "s" else "")
+          )
+        }
+
         # 4. Notifications
         showNotification(
           sprintf("Success: Applied %s correction (%s math) to both sensors.", 
@@ -2367,13 +2479,20 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
       }
     })
 
-    # Return corrected data for use in other modules
-    return(reactive({
-      if (is.null(rv$corrected_vh)) {
-        vh_results()  # Return original if no correction applied
-      } else {
-        rv$corrected_vh  # Return corrected data
-      }
-    }))
+    # Return corrected data for use in other modules.
+    # `vh` is a passthrough (original data until a correction is committed) so
+    # downstream stages keep working when spacing correction is skipped; `applied`
+    # is the explicit "committed" signal that drives the stage-completion tick so
+    # it only turns green once the user actually applies a correction.
+    return(list(
+      vh = reactive({
+        if (is.null(rv$corrected_vh)) {
+          vh_results()  # Return original if no correction applied
+        } else {
+          rv$corrected_vh  # Return corrected data
+        }
+      }),
+      applied = reactive(isTRUE(rv$correction_applied))
+    ))
   })
 }
