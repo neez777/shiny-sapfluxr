@@ -10,7 +10,16 @@ Interactive web application for processing and visualising heat pulse velocity d
 
 ## Overview
 
-This Shiny application provides an easy-to-use interface for students and researchers to: - Load heat pulse data from ICT sensors (JSON, CSV, or legacy formats), with optional clock-drift and weather/VPD import - Configure probe and wood properties (YAML or manual entry) - Calculate heat pulse velocity using multiple methods, with quality flagging - Apply spacing and wound corrections - Calibrate secondary methods and switch on the Péclet number (sDMA) - Convert to sap flux density and integrate to tree water use - Aggregate to daily totals and visualise results interactively - Generate a fully reproducible R script of the whole session
+This Shiny application provides an easy-to-use interface for students and researchers to:
+
+- Load heat pulse data from ICT sensors (JSON, CSV, or legacy formats), with optional clock-drift and weather/VPD import
+- Configure probe and wood properties (YAML or manual entry)
+- Calculate heat pulse velocity using multiple methods, with quality flagging
+- Apply spacing and wound corrections
+- Calibrate secondary methods and switch on the Péclet number (sDMA)
+- Convert to sap flux density and integrate to tree water use
+- Aggregate to daily totals and visualise results interactively
+- Generate a fully reproducible R script of the whole session
 
 Built on the [sapfluxr](https://github.com/neez777/sapfluxr) R package. The app mirrors the package pipeline; for the underlying functions see the sapfluxr [Get Started](https://github.com/neez777/sapfluxr/blob/master/vignettes/sapfluxr.Rmd) vignette and the [per-stage guides](https://github.com/neez777/sapfluxr/tree/master/vignettes).
 
