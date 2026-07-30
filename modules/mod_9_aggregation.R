@@ -133,12 +133,8 @@ aggregationServer <- function(id,
 
       # Make reactive to these inputs so plot updates when changed
       req(input$aggregation_period)
-      
-      # We now default to 'sum' for all temporal aggregations
-      # as it represents the physical total (integral) for the period.
-      agg_func_name <- "sum"
 
-      # Get appropriate data based on data_type
+      # Get appropriate data and value column based on data_type
       if (input$data_type == "flux_density") {
         req(flux_density_data())
         data <- flux_density_data()
@@ -150,60 +146,27 @@ aggregationServer <- function(id,
         value_col <- "Q_total_L_hr"
       }
 
-      # Determine aggregation period
-      if (input$aggregation_period == "hourly") {
-        data <- data %>%
-          dplyr::mutate(period = lubridate::floor_date(datetime, "hour"))
-      } else if (input$aggregation_period == "daily") {
-        data <- data %>%
-          dplyr::mutate(period = lubridate::floor_date(datetime, "day"))
-      } else if (input$aggregation_period == "weekly") {
-        data <- data %>%
-          dplyr::mutate(period = lubridate::floor_date(datetime, "week"))
-      } else if (input$aggregation_period == "monthly") {
-        data <- data %>%
-          dplyr::mutate(period = lubridate::floor_date(datetime, "month"))
-      }
+      aggregated <- sapfluxr::aggregate_flux(
+        flux_data   = data,
+        period      = input$aggregation_period,
+        agg_fun     = "sum",
+        value_col   = value_col
+      )
 
-      # Detect measurement interval (hours) from unique timestamps
-      # This is critical for 'sum' aggregation (Total volume = sum(rate) * delta_t)
+      # Estimate delta_t for downstream unit labelling
       unique_dts <- sort(unique(data$datetime))
-      delta_t <- 1 # Default fallback
+      delta_t <- 1.0
       if (length(unique_dts) > 1) {
         dt_diffs <- as.numeric(difftime(unique_dts[-1], unique_dts[-length(unique_dts)], units = "hours"))
-        # Use median to be robust to gaps
         delta_t <- median(dt_diffs[dt_diffs > 0], na.rm = TRUE)
       }
 
-      # Apply aggregation function (Integrated sum)
-      agg_func <- function(x, na.rm = TRUE) sum(x, na.rm = na.rm) * delta_t
-
-      # Aggregate across all sensors and methods
-      # Group by period and method_label if available
-      if ("method_label" %in% names(data)) {
-        aggregated <- data %>%
-          dplyr::group_by(period, method_label) %>%
-          dplyr::summarise(
-            aggregated_value = agg_func(.data[[value_col]], na.rm = TRUE),
-            n_points = dplyr::n(),
-            .groups = "drop"
-          )
-      } else {
-        aggregated <- data %>%
-          dplyr::group_by(period) %>%
-          dplyr::summarise(
-            aggregated_value = agg_func(.data[[value_col]], na.rm = TRUE),
-            n_points = dplyr::n(),
-            .groups = "drop"
-          )
-      }
-
       # Add metadata for plotting
-      attr(aggregated, "data_type") <- input$data_type
-      attr(aggregated, "value_col") <- value_col
-      attr(aggregated, "agg_func") <- agg_func_name
+      attr(aggregated, "data_type")  <- input$data_type
+      attr(aggregated, "value_col")  <- value_col
+      attr(aggregated, "agg_func")   <- "sum"
       attr(aggregated, "agg_period") <- input$aggregation_period
-      attr(aggregated, "delta_t") <- delta_t
+      attr(aggregated, "delta_t")    <- delta_t
 
       return(aggregated)
     })
