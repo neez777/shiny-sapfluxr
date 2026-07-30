@@ -203,7 +203,9 @@ toolWoodUI <- function(id) {
             fluidRow(
               column(width = 6,
                 numericInput(ns("c_sap_J_kg_K"), "Sap Specific Heat (J/(kg·K)):", value = 4186, min = 4000, max = 4400, step = 10),
-                numericInput(ns("rho_cell_wall_kg_m3"), "Cell Wall Density (kg/m³):", value = 1530, min = 1400, max = 1600, step = 10)
+                numericInput(ns("rho_cell_wall_kg_m3"), "Cell Wall Density (kg/m³):", value = 1530, min = 1400, max = 1600, step = 10),
+                numericInput(ns("wood_temperature"), "Representative Wood Temperature (°C):", value = 20, min = -20, max = 60, step = 0.5),
+                helpText("Seeds the Static temperature for the sap-flux conversion on the Calculations tab.")
               ),
               column(width = 6,
                 numericInput(ns("rho_sap_kg_m3"), "Sap Density (kg/m³):", value = 1000, min = 900, max = 1100, step = 10),
@@ -394,6 +396,9 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
           }
           if (!is.null(config$wood_property$wood_type)) {
             updateSelectInput(session, "wood_type", selected = config$wood_property$wood_type)
+          }
+          if (!is.null(config$wood_property$temperature)) {
+            updateNumericInput(session, "wood_temperature", value = config$wood_property$temperature)
           }
         }
 
@@ -615,10 +620,11 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
         )
 
         # Set wood_property
+        wood_temp <- if (!is.null(input$wood_temperature) && !is.na(input$wood_temperature)) input$wood_temperature else 20
         config$wood_property <- list(
           species = input$species,
           wood_type = input$wood_type,
-          temperature = 20,
+          temperature = wood_temp,
           comments = "Created via Wood Properties Tool"
         )
 
@@ -911,10 +917,11 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
           )
 
           # Set wood_property
+          wood_temp <- if (!is.null(input$wood_temperature) && !is.na(input$wood_temperature)) input$wood_temperature else 20
           config$wood_property <- list(
             species = input$species,
             wood_type = input$wood_type,
-            temperature = 20,
+            temperature = wood_temp,
             comments = "Created via Wood Properties Tool"
           )
 
@@ -1020,7 +1027,7 @@ toolWoodServer <- function(id, heat_pulse_data = NULL) {
             wood_property = list(
               species = input$species,
               wood_type = input$wood_type,
-              temperature = 20,
+              temperature = wood_temp,
               comments = "Created via Wood Properties Tool"
             ),
             wood_constants = list(

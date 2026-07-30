@@ -71,12 +71,15 @@ weatherUploadUI <- function(id) {
     # Upload status
     uiOutput(ns("upload_status")),
 
-    # VPD calculation controls
+    # VPD options (VPD is calculated automatically on upload)
     conditionalPanel(
       condition = "output.weather_loaded",
       ns = ns,
       wellPanel(
-        h5("VPD Calculation"),
+        h5("VPD Options"),
+        p(class = "help-text",
+          icon("info-circle"),
+          " Vapour pressure deficit is calculated automatically when weather data is loaded."),
         checkboxInput(ns("auto_trim"),
                      "Automatically trim weather data to match heat pulse data dates",
                      value = TRUE),
@@ -85,10 +88,7 @@ weatherUploadUI <- function(id) {
           ns = ns,
           dateRangeInput(ns("date_range"), "Date Range:",
                         start = NULL, end = NULL)
-        ),
-        actionButton(ns("calc_vpd"), "Calculate VPD",
-                    icon = icon("calculator"),
-                    class = "btn-primary")
+        )
       )
     ),
 
@@ -211,10 +211,78 @@ weatherUploadServer <- function(id, heat_pulse_data = reactive(NULL),
         # Show column specification section
         shinyjs::show("col_spec_section")
 
+        # Automatically calculate VPD (and daily minima) for the freshly loaded data
+        compute_vpd()
+
       }, error = function(e) {
         removeNotification("weather_load")
         showNotification(
           paste("Error loading weather data:", e$message),
+          type = "error",
+          duration = 10
+        )
+      })
+    }
+
+    # Compute VPD and daily VPD minima from the currently loaded weather data,
+    # applying any requested date trimming. Runs automatically on upload and
+    # whenever the trim controls or the heat pulse data change, so the user
+    # never has to press a button.
+    compute_vpd <- function() {
+      weather <- rv$weather_raw
+      if (is.null(weather)) return(invisible(NULL))
+
+      tryCatch({
+        # Trim to heat pulse data dates if requested and available
+        trim_code <- ""
+        if (isTRUE(input$auto_trim) && !is.null(heat_pulse_data())) {
+          hp_dates <- range(heat_pulse_data()$measurements$datetime)
+          weather <- weather %>%
+            filter(datetime >= hp_dates[1] & datetime <= hp_dates[2])
+          trim_code <- paste0(
+            "# Trim weather to the heat pulse data date range\n",
+            "hp_dates <- range(heat_pulse_data$measurements$datetime)\n",
+            "weather <- dplyr::filter(weather, ",
+            "datetime >= hp_dates[1], datetime <= hp_dates[2])\n\n"
+          )
+        } else if (!isTRUE(input$auto_trim) && !is.null(input$date_range)) {
+          weather <- weather %>%
+            filter(datetime >= input$date_range[1] & datetime <= input$date_range[2])
+          trim_code <- sprintf(
+            paste0(
+              "# Trim weather to the chosen date range\n",
+              "weather <- dplyr::filter(weather, ",
+              "datetime >= as.POSIXct(\"%s\"), datetime <= as.POSIXct(\"%s\"))\n\n"
+            ),
+            input$date_range[1], input$date_range[2]
+          )
+        }
+
+        # Calculate VPD and daily VPD minima
+        weather_vpd <- sapfluxr::calc_vpd(weather)
+        daily_vpd <- sapfluxr::calculate_daily_vpd_minima(weather_vpd)
+
+        rv$weather_vpd <- weather_vpd
+        rv$daily_vpd <- daily_vpd
+
+        # Track code generation as its own upsertable step
+        if (!isTRUE(code_tracker)) {
+          code_tracker$add_step(
+            step_name = "Calculate VPD",
+            code = paste0(
+              trim_code,
+              "# Calculate vapour pressure deficit and daily minima\n",
+              "weather_vpd <- sapfluxr::calc_vpd(weather)\n",
+              "daily_vpd  <- sapfluxr::calculate_daily_vpd_minima(weather_vpd)"
+            ),
+            description = sprintf("Calculated VPD (%d records, %d days)",
+                                  nrow(weather_vpd), nrow(daily_vpd))
+          )
+        }
+
+      }, error = function(e) {
+        showNotification(
+          paste("Error calculating VPD:", e$message),
           type = "error",
           duration = 10
         )
@@ -282,6 +350,9 @@ weatherUploadServer <- function(id, heat_pulse_data = reactive(NULL),
         # Store data
         rv$weather_raw <- weather
 
+        # Recompute VPD for the reprocessed data
+        compute_vpd()
+
         # Remove loading notification
         removeNotification("weather_reprocess")
 
@@ -302,96 +373,15 @@ weatherUploadServer <- function(id, heat_pulse_data = reactive(NULL),
       })
     })
 
-    # Calculate VPD
-    observeEvent(input$calc_vpd, {
-      req(rv$weather_raw)
+    # Recompute VPD automatically when the trim options change
+    observeEvent(list(input$auto_trim, input$date_range), {
+      if (!is.null(rv$weather_raw)) compute_vpd()
+    }, ignoreInit = TRUE)
 
-      tryCatch({
-        showNotification("Calculating VPD...",
-                        type = "message",
-                        duration = NULL,
-                        id = "vpd_calc")
-
-        weather <- rv$weather_raw
-
-        # Trim to heat pulse data dates if requested
-        if (input$auto_trim && !is.null(heat_pulse_data())) {
-          hp_dates <- range(heat_pulse_data()$measurements$datetime)
-          weather <- weather %>%
-            filter(datetime >= hp_dates[1] & datetime <= hp_dates[2])
-
-          message("Weather data trimmed to match heat pulse data: ",
-                 format(hp_dates[1]), " to ", format(hp_dates[2]))
-        } else if (!input$auto_trim && !is.null(input$date_range)) {
-          # Manual date range
-          weather <- weather %>%
-            filter(datetime >= input$date_range[1] & datetime <= input$date_range[2])
-        }
-
-        # Calculate VPD
-        weather_vpd <- sapfluxr::calc_vpd(weather)
-
-        # Calculate daily VPD minima
-        daily_vpd <- sapfluxr::calculate_daily_vpd_minima(weather_vpd)
-
-        # Store results
-        rv$weather_vpd <- weather_vpd
-        rv$daily_vpd <- daily_vpd
-
-        # Track code generation — reproduce any date trimming then the VPD calc
-        if (!isTRUE(code_tracker)) {
-          trim_code <- if (input$auto_trim) {
-            paste0(
-              "# Trim weather to the heat pulse data date range\n",
-              "hp_dates <- range(heat_pulse_data$measurements$datetime)\n",
-              "weather <- dplyr::filter(weather, ",
-              "datetime >= hp_dates[1], datetime <= hp_dates[2])\n\n"
-            )
-          } else if (!is.null(input$date_range)) {
-            sprintf(
-              paste0(
-                "# Trim weather to the chosen date range\n",
-                "weather <- dplyr::filter(weather, ",
-                "datetime >= as.POSIXct(\"%s\"), datetime <= as.POSIXct(\"%s\"))\n\n"
-              ),
-              input$date_range[1], input$date_range[2]
-            )
-          } else {
-            ""
-          }
-          code_tracker$add_step(
-            step_name = "Calculate VPD",
-            code = paste0(
-              trim_code,
-              "# Calculate vapour pressure deficit and daily minima\n",
-              "weather_vpd <- sapfluxr::calc_vpd(weather)\n",
-              "daily_vpd  <- sapfluxr::calculate_daily_vpd_minima(weather_vpd)"
-            ),
-            description = sprintf("Calculated VPD (%d records, %d days)",
-                                  nrow(weather_vpd), nrow(daily_vpd))
-          )
-        }
-
-        # Remove loading notification
-        removeNotification("vpd_calc")
-
-        # Show success
-        showNotification(
-          paste("VPD calculated successfully:", nrow(weather_vpd), "records,",
-               nrow(daily_vpd), "days"),
-          type = "message",
-          duration = 5
-        )
-
-      }, error = function(e) {
-        removeNotification("vpd_calc")
-        showNotification(
-          paste("Error calculating VPD:", e$message),
-          type = "error",
-          duration = 10
-        )
-      })
-    })
+    # Recompute VPD when heat pulse data loads or changes (auto-trim depends on it)
+    observeEvent(heat_pulse_data(), {
+      if (!is.null(rv$weather_raw) && isTRUE(input$auto_trim)) compute_vpd()
+    }, ignoreInit = TRUE)
 
     # Upload status output
     output$upload_status <- renderUI({

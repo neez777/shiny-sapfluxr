@@ -81,6 +81,28 @@ fluxDensityUI <- function(id) {
 
           hr(),
 
+          h5("Heat-Capacity Temperature:"),
+          selectInput(
+            ns("temp_mode"),
+            HTML('Conversion method <span style="color: #999; cursor: help;" title="How the heat-capacity term of the Vh-to-sap-flux conversion is evaluated. Constant uses the fixed conversion factor from the wood properties, with no temperature dependence. Static evaluates the temperature-dependent coefficient at a single wood temperature (defaults to the wood-properties temperature). Becker &amp; Edwards uses each pulse\'s pre-pulse temperature captured during velocity calculation (the 30 s or 3 s average per the baseline method, or the temperature at pulse release for slope-intercept)."><i class="fa fa-circle-question"></i></span>'),
+            choices = c(
+              "Constant (no temperature dependence)" = "constant",
+              "Static (single fixed temperature)" = "static",
+              "Becker & Edwards (per-pulse pre-pulse temperature)" = "dynamic"
+            ),
+            selected = "static"
+          ),
+          conditionalPanel(
+            condition = sprintf("input['%s'] == 'static'", ns("temp_mode")),
+            numericInput(
+              ns("static_temp"),
+              "Fixed wood temperature (°C):",
+              value = 20, min = -20, max = 60, step = 0.5
+            )
+          ),
+
+          hr(),
+
           actionButton(
             ns("convert_to_flux"),
             "Convert to Sap Flux Density (Jv)",
@@ -248,6 +270,16 @@ fluxDensityServer <- function(id,
       sensor_position_used = NULL,
       conversion_timestamp = NULL
     )
+
+    # Default the Static conversion temperature to the wood-properties value
+    observeEvent(wood_properties(), {
+      wp <- wood_properties()
+      if (!is.null(wp) && !is.null(wp$wood_property$temperature) &&
+          !is.na(wp$wood_property$temperature)) {
+        updateNumericInput(session, "static_temp",
+                           value = wp$wood_property$temperature)
+      }
+    })
 
     # Reactive: Consolidate all available velocity data
     all_velocity_data <- reactive({
@@ -527,12 +559,52 @@ fluxDensityServer <- function(id,
           # Apply flux density conversion
           wood <- wood_properties()
 
+          # Heat-capacity temperature selection (this tab's controls).
+          # UI labels map to sapfluxr's temperature_mode values:
+          #   Constant          -> "constant" (fixed Z, no temperature term)
+          #   Static            -> "static"   (single fixed temperature)
+          #   Becker & Edwards  -> "dynamic"  (per-pulse pre-pulse temperature)
+          temp_mode <- input$temp_mode %||% "static"
+          static_temp <- if (!is.null(input$static_temp) && !is.na(input$static_temp)) {
+            input$static_temp
+          } else if (!is.null(wood$wood_property$temperature)) {
+            wood$wood_property$temperature
+          } else {
+            20
+          }
+
+          # Becker & Edwards needs the per-pulse pre-pulse temperature; fall back
+          # to Static if that column did not survive to this stage.
+          if (temp_mode == "dynamic" && !"prepulse_temp_c" %in% names(vh_data)) {
+            showNotification(
+              "Becker & Edwards selected but pre-pulse temperature is unavailable; using the Static temperature instead.",
+              type = "warning", duration = 8
+            )
+            temp_mode <- "static"
+          }
+
           # Convert using sapfluxr function
           flux_data <- vh_data
-          flux_data$Jv_cm3_cm2_hr <- sapfluxr::calc_sap_flux_density(
-            Vh = vh_data$Vh_for_conversion,
-            wood_properties = wood
-          )
+          flux_data$Jv_cm3_cm2_hr <- if (temp_mode == "dynamic") {
+            sapfluxr::calc_sap_flux_density(
+              Vh = vh_data$Vh_for_conversion,
+              wood_properties = wood,
+              temperature_mode = "dynamic",
+              temperature = vh_data$prepulse_temp_c
+            )
+          } else if (temp_mode == "static") {
+            sapfluxr::calc_sap_flux_density(
+              Vh = vh_data$Vh_for_conversion,
+              wood_properties = wood,
+              temperature_mode = "static",
+              temperature = static_temp
+            )
+          } else {
+            sapfluxr::calc_sap_flux_density(
+              Vh = vh_data$Vh_for_conversion,
+              wood_properties = wood
+            )
+          }
 
           # Get sensor positions in the data
           sensors_used <- unique(flux_data$sensor_position)
@@ -545,18 +617,40 @@ fluxDensityServer <- function(id,
 
           # Code generation
           if (!isTRUE(code_tracker)) {
+            temp_args <- if (temp_mode == "dynamic") {
+              paste0(
+                ",\n  temperature_mode = \"dynamic\",",
+                "\n  temperature      = velocity_data$prepulse_temp_c"
+              )
+            } else if (temp_mode == "static") {
+              sprintf(
+                ",\n  temperature_mode = \"static\",\n  temperature      = %g",
+                static_temp
+              )
+            } else {
+              ""
+            }
+            temp_mode_label <- switch(
+              temp_mode,
+              dynamic  = "Becker & Edwards (per-pulse pre-pulse temperature)",
+              static   = "Static (single fixed temperature)",
+              constant = "Constant (no temperature dependence)"
+            )
             code_tracker$add_step(
               step_name = "Convert to Sap Flux Density",
               code = paste0(
                   '# Convert heat pulse velocity to sap flux density\n',
                   '# velocity_data$Vs_cm_hr is the current best velocity estimate\n',
+                  '# Heat-capacity temperature: ', temp_mode_label, '\n',
                   'flux_data <- velocity_data\n',
                   'flux_data$Jv_cm3_cm2_hr <- sapfluxr::calc_sap_flux_density(\n',
                   '  Vh             = velocity_data$Vs_cm_hr,\n',
-                  '  wood_properties = wood_properties\n',
-                  ')'
+                  '  wood_properties = wood_properties',
+                  temp_args,
+                  '\n)'
                 ),
-              description = sprintf("Converted %d method(s) to flux density", length(input$methods_selected))
+              description = sprintf("Converted %d method(s) to flux density (%s)",
+                                    length(input$methods_selected), temp_mode_label)
             )
           }
 

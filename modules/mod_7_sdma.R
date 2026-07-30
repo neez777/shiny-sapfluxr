@@ -648,9 +648,11 @@ vh_sdma <- vh_sdma_result %%>%%
                    ))
         }
 
-        # Downsample if too many points
+        # Downsample if too many points. Coerce to integer indices -- seq() with
+        # length.out returns doubles, which tibbles reject when subsetting rows.
         if (nrow(combined_data) > 10000) {
-          combined_data <- combined_data[seq(1, nrow(combined_data), length.out = 10000), ]
+          sample_idx <- unique(as.integer(round(seq(1, nrow(combined_data), length.out = 10000))))
+          combined_data <- combined_data[sample_idx, ]
         }
 
         # Color palette

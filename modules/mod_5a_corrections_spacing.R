@@ -1664,6 +1664,29 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
       )
     })
 
+    # Effective gradient anchors: the dual-stable detected changepoints that
+    # remain in the confirmed changepoint list (rv$changepoints). Removing a
+    # confirmed changepoint via its [X] button therefore drops its purple anchor
+    # from the plot AND excludes it from the gradient correction, keeping the
+    # plot and the computation in sync. Matching is by timestamp (dual-stable
+    # adds store the exact POSIXct), with a 1-second tolerance for safety.
+    gradient_anchors <- reactive({
+      det <- rv$dual_stable_detected_result
+      if (is.null(det) || is.null(det$changepoints) || nrow(det$changepoints) == 0) {
+        return(NULL)
+      }
+      cps <- det$changepoints
+      confirmed <- rv$changepoints
+      if (length(confirmed) == 0) {
+        return(cps[0, , drop = FALSE])
+      }
+      confirmed_num <- vapply(confirmed, as.numeric, numeric(1))
+      keep <- vapply(as.numeric(cps$timestamp), function(ts) {
+        any(abs(confirmed_num - ts) < 1)
+      }, logical(1))
+      cps[keep, , drop = FALSE]
+    })
+
     # ==================================================================
     # INTERACTIVE CHANGEPOINT PLOT
     # ==================================================================
@@ -1787,8 +1810,10 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
 
             # Only show gradient overlay if sensor/method match
             if (display_sensor == detection_sensor && method == detection_method) {
-              if (!is.null(dual_results$changepoints) && nrow(dual_results$changepoints) > 0) {
-                changepoints_df <- dual_results$changepoints
+              # Use only anchors that remain in the confirmed changepoint list,
+              # so removing a changepoint also removes its purple anchor here.
+              changepoints_df <- gradient_anchors()
+              if (!is.null(changepoints_df) && nrow(changepoints_df) > 0) {
 
               # Calculate gradient interpolation for visualization
               # Extend to edges of data range
@@ -2033,7 +2058,13 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
           if (is.null(rv$dual_stable_detected_result)) {
             stop("Gradient model requires dual-criterion changepoints. Please run detection first.")
           }
-          anchors <- rv$dual_stable_detected_result$changepoints
+          # Only the anchors still present in the confirmed changepoint list are
+          # used, so anchors removed via [X] are excluded from the correction.
+          anchors <- gradient_anchors()
+          if (is.null(anchors) || nrow(anchors) < 2) {
+            stop("Gradient model requires at least two confirmed dual-criterion anchors. ",
+                 "Run detection and add anchors to the changepoint list, and keep at least two.")
+          }
         } else {
           # Segment model uses the confirm-list of dates
           anchors <- if (!is.null(rv$changepoints) && length(rv$changepoints) > 0) {
@@ -2078,7 +2109,6 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
           hpv_method = "HRM",
           wood_properties = wood_props,
           probe_spacing = probe_spacing,
-          measurement_time = 80,
           verbose = FALSE
         )
 
@@ -2133,7 +2163,6 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
               "  hpv_method = \"HRM\",\n",
               "  wood_properties = wood_properties,\n",
               "  probe_spacing = %g,\n",
-              "  measurement_time = 80,\n",
               "  verbose = FALSE\n)"),
               anchors_expr, offset_model, correction_math, probe_spacing),
             description = sprintf(
@@ -2288,13 +2317,14 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         vh_data_corrected$method == method,
       ]
 
-      # Only sample if REALLY large (>50k points)
+      # Only sample if REALLY large (>50k points). Integer indices -- seq() with
+      # length.out returns doubles, which tibbles reject when subsetting rows.
       if (nrow(after) > 50000) {
-        sample_idx <- seq(1, nrow(after), length.out = 50000)
+        sample_idx <- unique(as.integer(round(seq(1, nrow(after), length.out = 50000))))
         after <- after[sample_idx, ]
       }
       if (nrow(before) > 50000) {
-        sample_idx <- seq(1, nrow(before), length.out = 50000)
+        sample_idx <- unique(as.integer(round(seq(1, nrow(before), length.out = 50000))))
         before <- before[sample_idx, ]
       }
 

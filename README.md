@@ -1,79 +1,127 @@
-# Shiny Sap Flow Analyser  <img src="www/shiny_sapfluxr.png" align="right" width=139 height=139 alt="" />
+# Shiny Sap Flow Analyser <img src="www/shiny_sapfluxr.png" align="right" width="139" height="139"/>
 
 <!-- badges: start -->
-[![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
-[![License: GPL-3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Project Status: Concept](https://www.repostatus.org/badges/latest/concept.svg)](https://www.repostatus.org/#concept)
+
+[![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental) [![License: GPL-3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0) [![Project Status: Concept](https://www.repostatus.org/badges/latest/concept.svg)](https://www.repostatus.org/#concept)
+
 <!-- badges: end -->
 
 Interactive web application for processing and visualising heat pulse velocity data from ICT SFM1x sensors.
 
 ## Overview
 
-This Shiny application provides an easy-to-use interface for students and researchers to:
-- Load heat pulse data from ICT sensors (JSON, CSV, or legacy formats), with optional clock-drift and weather/VPD import
-- Configure probe and wood properties (YAML or manual entry)
-- Calculate heat pulse velocity using multiple methods, with quality flagging
-- Apply spacing and wound corrections
-- Calibrate secondary methods and switch on the Péclet number (sDMA)
-- Convert to sap flux density and integrate to tree water use
-- Aggregate to daily totals and visualise results interactively
-- Generate a fully reproducible R script of the whole session
+This Shiny application provides an easy-to-use interface for students and researchers to: - Load heat pulse data from ICT sensors (JSON, CSV, or legacy formats), with optional clock-drift and weather/VPD import - Configure probe and wood properties (YAML or manual entry) - Calculate heat pulse velocity using multiple methods, with quality flagging - Apply spacing and wound corrections - Calibrate secondary methods and switch on the Péclet number (sDMA) - Convert to sap flux density and integrate to tree water use - Aggregate to daily totals and visualise results interactively - Generate a fully reproducible R script of the whole session
 
-Built on the [sapfluxr](../sapfluxr) R package. The app mirrors the package pipeline; for the
-underlying functions see the sapfluxr [Get Started](../sapfluxr/vignettes/sapfluxr.Rmd) vignette
-and the per-stage guides.
+Built on the [sapfluxr](https://github.com/neez777/sapfluxr) R package. The app mirrors the package pipeline; for the underlying functions see the sapfluxr [Get Started](https://github.com/neez777/sapfluxr/blob/master/vignettes/sapfluxr.Rmd) vignette and the [per-stage guides](https://github.com/neez777/sapfluxr/tree/master/vignettes).
 
 ## Installation
 
-### 1. Install sapfluxr
+The app is **not** an installable R package — it is a Shiny app you download and run from its own directory. Installation therefore has four steps: toolchain → `sapfluxr` → the app files → the Shiny dependencies.
 
-`sapfluxr` contains compiled C++ code (Rcpp). Ensure a C++ toolchain is present first:
+**Requirements:** R \>= 4.0.0, plus a C++ toolchain for the `sapfluxr` step below.
+
+### 1. Install a C++ toolchain
+
+`sapfluxr` contains compiled C++ code (Rcpp), so a compiler must be present *before* you install it:
 
 | Platform | Requirement |
-|---|---|
+|----|----|
 | **Windows** | [Rtools](https://cran.r-project.org/bin/windows/Rtools/) — match your R version |
 | **macOS** | `xcode-select --install` |
 | **Linux** | `gcc`/`g++` via your package manager |
 
-```r
+### 2. Install sapfluxr
+
+``` r
 if (!require(remotes)) install.packages("remotes")
 remotes::install_github("neez777/sapfluxr")
 ```
 
-### 2. Install Shiny dependencies
+Do this before step 4 — `sapfluxr` is not on CRAN, so the dependency step cannot fetch it for you.
 
-```r
+### 3. Get the app files
+
+The app lives in its own repository: [github.com/neez777/shiny-sapfluxr](https://github.com/neez777/shiny-sapfluxr). Pick either option:
+
+**Option A — clone with git** (recommended; makes updates a `git pull`):
+
+``` sh
+git clone https://github.com/neez777/shiny-sapfluxr.git
+```
+
+**Option B — download a ZIP:** on the repository page choose *Code → Download ZIP*, then unzip it. Keep the directory structure intact — the app sources its `modules/` files by relative path and will not start if they are moved.
+
+Either way you end up with a `shiny-sapfluxr/` directory. Note its location; the next steps refer to it as `path/to/shiny-sapfluxr`.
+
+### 4. Install Shiny dependencies
+
+Simplest approach is to let `DESCRIPTION` drive it — set the working directory to the folder from step 3 first:
+
+``` r
+setwd("path/to/shiny-sapfluxr")
+if (!require(remotes)) install.packages("remotes")
+remotes::install_deps(dependencies = TRUE)
+```
+
+Or install the full set explicitly (works from any working directory):
+
+``` r
 install.packages(c(
-  "shiny", "shinydashboard", "shinyWidgets", "shinyjs",
+  "shiny", "shinydashboard", "shinyWidgets", "shinyjs", "shinycssloaders",
   "fresh", "plotly", "DT", "waiter", "leaflet", "webshot2",
-  "dplyr", "tidyr", "purrr", "yaml", "lubridate", "ggplot2",
-  "progressr", "R6"
+  "dplyr", "tidyr", "purrr", "readr", "yaml", "lubridate", "ggplot2",
+  "scales", "rlang", "progressr", "suncalc", "R6",
+  "lutz", "zip"
 ))
 ```
 
-### 3. Run the app
+### 5. Run the app
 
-Clone or download this repository, then launch from R:
-
-```r
+``` r
 shiny::runApp("path/to/shiny-sapfluxr")
 ```
 
-Or, from inside the `shiny-sapfluxr` directory:
+Or, if your working directory is already the app folder:
 
-```r
+``` r
 shiny::runApp()
 ```
+
+The app opens in your browser (RStudio users can also open `app.R` and click **Run App**). Always point `runApp()` at the app directory itself rather than sourcing `app.R` directly, so the relative `source("modules/...")` calls resolve.
+
+### 6. Check it works
+
+On the **Data Upload** tab click **Load Example Data** (and, optionally, **Load Example Weather**). This loads the 10-day sample dataset shipped with `sapfluxr`, so you can walk the full pipeline without your own files. If the example loads and Tab 3 produces velocities, the install is good.
+
+### Updating
+
+``` sh
+cd path/to/shiny-sapfluxr && git pull   # app files (Option A only)
+```
+
+``` r
+remotes::install_github("neez777/sapfluxr")   # underlying package
+```
+
+### Troubleshooting
+
+| Symptom | Fix |
+|----|----|
+| `there is no package called 'sapfluxr'` | Step 2 did not complete — re-run it and read the compiler errors |
+| `cannot open file 'modules/...'` | `runApp()` was pointed somewhere other than the app directory (step 5) |
+| Compilation errors installing `sapfluxr` | C++ toolchain missing or mismatched (step 1); on Windows check the Rtools version matches your R version |
+| `install_deps()` cannot find `sapfluxr` | You are running it before step 2, or from the wrong working directory |
 
 ## Features
 
 ### Data Import
+
 - Automatic format detection (ICT JSON, CSV, legacy formats)
 - Data validation with quality checks
 - Optional clock drift correction
 
 ### Configuration
+
 - **YAML Mode**: Select pre-defined probe and wood property configurations
 - **Manual Mode**: Enter custom parameters with real-time derived value calculation
 - Configurations include:
@@ -82,32 +130,33 @@ shiny::runApp()
   - Tree measurements (DBH, sapwood depth)
 
 ### Heat Pulse Velocity Methods
+
 - **HRM** (Heat Ratio Method) — low/reverse flows
 - **MHR** (Maximum Heat Ratio) — moderate to high flows
 - **Tmax_Coh** / **Tmax_Klu** (T-max, Cohen & Kluitenberg) — high flows
 
 ### Corrections, Calibration & sDMA
-- **Spacing correction**: zero-flow identification (PELT, dual-stable, or VPD changepoints) with
-  segment/gradient offset models and Burgess/linear correction maths (Burgess et al. 2001)
+
+- **Spacing correction**: zero-flow identification (PELT, dual-stable, or VPD changepoints) with segment/gradient offset models and Burgess/linear correction maths (Burgess et al. 2001)
 - **Wound correction**: linear or polynomial scaling with temporal wound tracking
 - **Method calibration**: align secondary methods to the corrected HRM scale
 - **sDMA**: Péclet-based method switching for full diurnal coverage
-- Visual diagnostics: zero-flow period identification, before/after comparison, Burgess
-  coefficient lookup, temperature trace analysis, and symmetry checks
+- Visual diagnostics: zero-flow period identification, before/after comparison, Burgess coefficient lookup, temperature trace analysis, and symmetry checks
 
 ### Flux Density & Aggregation
+
 - Convert velocity to sap flux density ($J_v = Z \cdot V_h$)
 - Radial integration over the sapwood (linear-decay or constant-velocity) to tree water use
 - Daily / hourly aggregation with completeness tracking
 
 ### Interactive Visualisation
+
 - **Time Series Plot**: Interactive plotly chart with:
   - Multiple method comparison
   - Toggle methods on/off
   - Range slider for date selection
   - Quality flag indicators
   - Hover tooltips
-
 - **Pulse Trace Viewer**: Click on time series to view:
   - Individual pulse temperature traces
   - All four thermistor readings (do, di, uo, ui)
@@ -115,22 +164,21 @@ shiny::runApp()
 
 ## Workflow
 
-The app presents the pipeline as a sequence of tabs (the Tools section adds YAML builders and
-the reproducible-script generator):
+The app presents the pipeline as a sequence of tabs (the Tools section adds YAML builders and the reproducible-script generator):
 
-1. **Data Upload** (Tab 1) → load heat pulse data; optional clock-drift and weather/VPD
-2. **Configuration** (Tab 2) → select or enter probe and wood properties
-3. **Calculations** (Tab 3) → run HPV methods and apply quality flags
-4. **Visualise Raw HPV** (Tab 4) → inspect uncorrected data, identify outliers
-5. **Spacing Correction** (Tab 5) → identify zero-flow anchors and correct baseline drift
-6. **Wound Correction** (Tab 5b) → scale for probe-insertion damage
-7. **Calibration & sDMA** (Tabs 6a–7a) → align secondary methods and switch on Péclet
-8. **Flux Density** (Tab 8) → convert to flux density and integrate to tree water use
-9. **Aggregation** (Tab 9) → daily totals and summaries
+1.  **Data Upload** (Tab 1) → load heat pulse data; optional clock-drift and weather/VPD
+2.  **Configuration** (Tab 2) → select or enter probe and wood properties
+3.  **Calculations** (Tab 3) → run HPV methods and apply quality flags
+4.  **Visualise Raw HPV** (Tab 4) → inspect uncorrected data, identify outliers
+5.  **Spacing Correction** (Tab 5) → identify zero-flow anchors and correct baseline drift
+6.  **Wound Correction** (Tab 5b) → scale for probe-insertion damage
+7.  **Calibration & sDMA** (Tabs 6a–7a) → align secondary methods and switch on Péclet
+8.  **Flux Density** (Tab 8) → convert to flux density and integrate to tree water use
+9.  **Aggregation** (Tab 9) → daily totals and summaries
 
 ## Project Structure
 
-```
+```         
 shiny-sapfluxr/
 ├── app.R                          # Main application entry point
 ├── DESCRIPTION                    # Package dependencies
@@ -159,6 +207,7 @@ shiny-sapfluxr/
 This app is under active development.
 
 ### Current Status
+
 - ✅ Data upload, clock-drift, and weather/VPD import
 - ✅ Probe & wood configuration
 - ✅ HPV calculation & quality flagging
@@ -179,4 +228,4 @@ GPL-3
 
 ## Issues & Feedback
 
-Please report issues at: https://github.com/neez777/sapfluxr/issues
+Please report issues at: <https://github.com/neez777/sapfluxr/issues>

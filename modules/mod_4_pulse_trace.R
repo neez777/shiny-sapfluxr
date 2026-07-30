@@ -8,6 +8,110 @@
 #' @return None (displays pulse trace plot)
 #'
 
+# Helpers ----
+
+# Detect the sampling interval (seconds/row) for a pulse from its timestamps,
+# mirroring calc_vh_single_pulse(). Falls back to 1.0 s when timestamps are
+# identical/unusable.
+pt_sampling_interval <- function(pulse_data) {
+  interval <- 1.0
+  if (nrow(pulse_data) >= 2 && "datetime" %in% names(pulse_data)) {
+    n5 <- min(5L, nrow(pulse_data))
+    tdiffs <- as.numeric(difftime(pulse_data$datetime[2:n5],
+                                  pulse_data$datetime[1:(n5 - 1)], units = "secs"))
+    med <- stats::median(tdiffs)
+    if (!is.na(med) && med > 0) interval <- med
+  }
+  interval
+}
+
+# Compute baseline-subtracted delta-T for all four sensors from a single pulse's
+# raw measurements, honouring the chosen pre-pulse baseline method. time_sec is
+# built from the detected sampling interval and offset by the pre-pulse period
+# (so t = 0 is the pulse injection), matching the calculation rather than
+# assuming 1 Hz / a 30-row pre-pulse. Returns the pulse data frame with time_sec
+# and deltaT_do/di/uo/ui.
+pt_baseline_deltaT <- function(pulse_data, baseline_method, pre_pulse = 30) {
+  interval <- pt_sampling_interval(pulse_data)
+  pulse_data$time_sec <- (seq_len(nrow(pulse_data)) - 1) * interval - pre_pulse
+  sensors <- c("do", "di", "uo", "ui")
+
+  if (grepl("slope", baseline_method)) {
+    pre <- pulse_data[pulse_data$time_sec < 0, ]
+    for (s in sensors) {
+      fit <- stats::lm(stats::reformulate("time_sec", s), data = pre)
+      # Intercept = fitted value at t = 0 (temperature at pulse release)
+      pulse_data[[paste0("deltaT_", s)]] <- pulse_data[[s]] - stats::coef(fit)[[1]]
+    }
+  } else {
+    # mean_3s uses the configured short window; mean_30s the full pre-pulse period
+    win <- if (identical(baseline_method, "mean_3s")) {
+      sapfluxr::get_analysis_param("baseline.short_window_seconds")
+    } else {
+      pre_pulse
+    }
+    idx <- pulse_data$time_sec < 0 & pulse_data$time_sec >= -win
+    for (s in sensors) {
+      b <- mean(pulse_data[[s]][idx], na.rm = TRUE)
+      pulse_data[[paste0("deltaT_", s)]] <- pulse_data[[s]] - b
+    }
+  }
+  pulse_data
+}
+
+# Recompute heat pulse velocity for every method calculated for a pulse, using
+# locally recomputed delta-T. HRM/MHR are ratio-based and vary with the pre-pulse
+# baseline; Tmax methods are time-to-peak (baseline-independent) so their Vh is
+# taken from the stored results.
+pt_live_hpv <- function(pd, results, pulse_id, k, x) {
+  # Restrict to this pulse first, dropping missing-pulse rows whose pulse_id is
+  # NA (comparing NA == pulse_id would yield NA and break the if() branches).
+  res_p <- results[!is.na(results$pulse_id) & results$pulse_id == pulse_id, , drop = FALSE]
+  methods <- unique(res_p$method)
+  methods <- methods[!is.na(methods)]
+  if (length(methods) == 0) return(NULL)
+
+  rows <- list()
+  for (m in methods) {
+    for (pos in c("outer", "inner")) {
+      ds <- if (pos == "outer") "deltaT_do" else "deltaT_di"
+      us <- if (pos == "outer") "deltaT_uo" else "deltaT_ui"
+      vh <- NA_real_
+
+      if (m == "HRM" && !is.null(k) && !is.null(x)) {
+        # Use the HRM window the calculation actually used (falls back to config)
+        rr <- res_p[res_p$method == "HRM" & res_p$sensor_position == pos, , drop = FALSE]
+        w_start <- if (nrow(rr) > 0 && "hrm_window_start_sec" %in% names(rr) &&
+                       !is.na(rr$hrm_window_start_sec[1])) {
+          rr$hrm_window_start_sec[1]
+        } else sapfluxr::get_analysis_param("hrm.start_seconds")
+        w_end <- if (nrow(rr) > 0 && "hrm_window_end_sec" %in% names(rr) &&
+                     !is.na(rr$hrm_window_end_sec[1])) {
+          rr$hrm_window_end_sec[1]
+        } else sapfluxr::get_analysis_param("hrm.end_seconds")
+        win <- pd$time_sec >= w_start & pd$time_sec < w_end
+        ratio <- mean(pd[[ds]][win] / pd[[us]][win], na.rm = TRUE)
+        if (is.finite(ratio) && ratio > 0) vh <- (k / x) * log(ratio) * 3600
+      } else if (m == "MHR" && !is.null(k) && !is.null(x)) {
+        ratio <- max(pd[[ds]], na.rm = TRUE) / max(pd[[us]], na.rm = TRUE)
+        if (is.finite(ratio) && ratio > 0) vh <- (k / x) * log(ratio) * 3600
+      } else {
+        # Tmax (or missing k/x): use the stored value (baseline-independent)
+        rr <- res_p[res_p$method == m & res_p$sensor_position == pos, , drop = FALSE]
+        if (nrow(rr) > 0) vh <- rr$Vh_cm_hr[1]
+      }
+
+      rows[[length(rows) + 1]] <- data.frame(
+        Method = m, Sensor = pos,
+        `Vh (cm/hr)` = round(vh, 2),
+        check.names = FALSE, stringsAsFactors = FALSE
+      )
+    }
+  }
+  do.call(rbind, rows)
+}
+
+
 # UI ----
 pulseTraceUI <- function(id) {
   ns <- NS(id)
@@ -36,6 +140,16 @@ pulseTraceUI <- function(id) {
             selected = "outer",
             inline = TRUE
           ),
+
+          hr(),
+
+          h5("Calculation Parameters"),
+          p(class = "help-text", style = "font-size: 0.9em;",
+            "Vary the parameters to see the effect on the trace and velocities in real time. Defaults match the calculation step."),
+          uiOutput(ns("param_controls_ui")),
+
+          h5("Live Velocity"),
+          shiny::tableOutput(ns("hpv_readout")),
 
           hr(),
 
@@ -80,7 +194,8 @@ pulseTraceUI <- function(id) {
 }
 
 # Server ----
-pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results = NULL, plot_settings = reactive(NULL)) {
+pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results = NULL,
+                             plot_settings = reactive(NULL)) {
   moduleServer(id, function(input, output, session) {
 
     # ========================================================================
@@ -122,6 +237,44 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
       pulse_measurements
     })
 
+    # Parameter controls, defaulting to the settings used in the calculation step
+    output$param_controls_ui <- renderUI({
+      res <- if (!is.null(vh_results)) vh_results() else NULL
+      bm <- attr(res, "baseline_method") %||% "mean_30s"
+      if (!bm %in% c("mean_30s", "mean_3s", "slope_intercept")) {
+        bm <- if (grepl("3", bm)) "mean_3s" else
+              if (grepl("slope", bm)) "slope_intercept" else "mean_30s"
+      }
+      selectInput(
+        session$ns("pt_baseline_method"), "Pre-pulse baseline:",
+        choices = c("30-second average" = "mean_30s",
+                    "3-second average" = "mean_3s",
+                    "Slope-intercept" = "slope_intercept"),
+        selected = bm
+      )
+    })
+
+    # Live velocity readout: recompute Vh (and sap velocity vs) for every method
+    # calculated for the selected pulse, honouring the parameter controls above.
+    output$hpv_readout <- renderTable({
+      pulse_id <- selected_pulse_id()
+      if (is.null(pulse_id) || is.na(pulse_id) || is.null(vh_results)) return(NULL)
+
+      results <- vh_results()
+      pd_raw <- selected_pulse_data()
+      if (is.null(results) || is.null(pd_raw) || nrow(pd_raw) == 0) return(NULL)
+
+      baseline_method <- input$pt_baseline_method %||%
+        (attr(results, "baseline_method") %||% "mean_30s")
+      pre_pulse <- attr(results, "pre_pulse") %||% 30
+
+      pd <- pt_baseline_deltaT(pd_raw, baseline_method, pre_pulse)
+      k  <- attr(results, "diffusivity")
+      x  <- attr(results, "probe_spacing")
+
+      pt_live_hpv(pd, results, pulse_id, k, x)
+    }, striped = TRUE, spacing = "xs", width = "100%", na = "—")
+
     # Dynamic calculation windows UI based on available methods
     output$show_windows_ui <- renderUI({
       pulse_id <- selected_pulse_id()
@@ -161,16 +314,14 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
       )
     })
 
-    # UI for detrending slope
+    # UI for detrending slope (reacts to the interactive pre-pulse control)
     output$detrend_slope_ui <- renderUI({
-      pulse_id <- selected_pulse_id()
-      if (is.null(pulse_id) || is.na(pulse_id) || is.null(vh_results)) return(NULL)
-
-      results <- vh_results()
-      if (is.null(results) || nrow(results) == 0) return(NULL)
-
-      method_attr <- attr(results, "baseline_method")
-      if (!is.null(method_attr) && grepl("slope", method_attr)) {
+      bm <- input$pt_baseline_method
+      if (is.null(bm)) {
+        res <- if (!is.null(vh_results)) vh_results() else NULL
+        bm <- attr(res, "baseline_method")
+      }
+      if (!is.null(bm) && grepl("slope", bm)) {
         tagList(
           hr(),
           checkboxInput(
@@ -256,30 +407,26 @@ pulseTraceServer <- function(id, heat_pulse_data, selected_pulse_id, vh_results 
         )
       }
 
-      # 1. Always set heat pulse injection at t=0
-      # Standard raw data format has 30 seconds of pre-pulse data before injection
-      # So row 31 (index 30) is always the injection point.
-      if (!"time_sec" %in% names(pulse_data)) {
-        pulse_data <- pulse_data %>%
-          dplyr::mutate(time_sec = row_number() - 1)
-      }
-      
-      # Constant offset: injection is at 30 seconds
-      pulse_data <- pulse_data %>%
-        dplyr::mutate(time_sec = time_sec - 30)
+      # 1. Determine baseline method and pre-pulse period.
+      # Prefer the interactive control (defaults to the calculation-step method);
+      # fall back to the vh_results attribute if the control is not yet bound.
+      res <- if (!is.null(vh_results)) vh_results() else NULL
+      baseline_method <- input$pt_baseline_method %||%
+        (attr(res, "baseline_method") %||% "mean_30s")
+      pt_pre_pulse <- attr(res, "pre_pulse") %||% 30
 
-      # 2. Determine baseline method and shading window duration
-      # Get from vh_results attributes (set on Page 3)
-      baseline_window_sec <- 30
-      baseline_method <- "30-sec mean"
-      
-      if (!is.null(vh_results)) {
-        res <- vh_results()
-        method_attr <- attr(res, "baseline_method")
-        if (!is.null(method_attr)) {
-          baseline_method <- method_attr
-          if (grepl("3-sec|mean_3s", baseline_method)) baseline_window_sec <- 3
-        }
+      # 2. Build the time axis in seconds from the detected sampling interval, with
+      # t = 0 at the pulse injection (pre_pulse seconds in), rather than assuming
+      # 1 Hz sampling and a 30-row pre-pulse.
+      pt_interval <- pt_sampling_interval(pulse_data)
+      pulse_data <- pulse_data %>%
+        dplyr::mutate(time_sec = (dplyr::row_number() - 1) * pt_interval - pt_pre_pulse)
+
+      # Shading window: mean_3s uses the configured short window; mean_30s the full pre-pulse
+      baseline_window_sec <- if (grepl("3-sec|mean_3s", baseline_method)) {
+        sapfluxr::get_analysis_param("baseline.short_window_seconds")
+      } else {
+        pt_pre_pulse
       }
 
       # 3. Calculate temperature deltas (ΔT) based on the method

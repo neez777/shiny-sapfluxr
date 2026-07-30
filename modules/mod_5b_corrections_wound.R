@@ -140,13 +140,6 @@ woundCorrectionUI <- function(id) {
             " Correction uses temporal wound diameter tracking if reinstallations are defined."
           ),
 
-          selectInput(
-            ns("probe_spacing"),
-            "Probe Spacing:",
-            choices = c("5mm" = "5mm", "6mm" = "6mm"),
-            selected = "5mm"
-          ),
-
           radioButtons(
             ns("wound_method"),
             "Correction Method:",
@@ -627,10 +620,20 @@ woundCorrectionServer <- function(id,
         }
 
         tryCatch({
+          # Derive the wound coefficient table (5mm/6mm) from the configured probe
+          # (Tab 2) rather than a separate dropdown. Probe spacing is in cm.
+          pc <- probe_config()
+          spacing_cm <- tryCatch(
+            if (!is.null(pc)) pc$probe_spacing else NULL,
+            error = function(e) NULL
+          )
+          wound_table <- if (!is.null(spacing_cm) && !is.na(spacing_cm) &&
+                             round(spacing_cm * 10) >= 6) "6mm" else "5mm"
+
           # Apply wound correction
           result <- sapfluxr::apply_wound_correction(
             vh_data = vh_data(),
-            probe_spacing = input$probe_spacing,
+            probe_spacing = wound_table,
             method = input$wound_method,
             wood_properties = wood,
             confirm_parameters = FALSE
@@ -655,7 +658,7 @@ woundCorrectionServer <- function(id,
   method = "%s",
   wood_properties = wood_properties
 )',
-                input$probe_spacing,
+                wound_table,
                 input$wound_method
               ),
               description = sprintf("Wound correction applied (%s method)%s",
@@ -702,6 +705,13 @@ woundCorrectionServer <- function(id,
       B_range <- range(after$wound_correction_factor, na.rm = TRUE)
       mean_correction <- mean(after$Vh_cm_hr - before$Vh_cm_hr, na.rm = TRUE)
 
+      # Probe-spacing label derived from the configured probe (5mm/6mm table)
+      probe_label <- {
+        pc <- probe_config()
+        sc <- tryCatch(if (!is.null(pc)) pc$probe_spacing else NULL, error = function(e) NULL)
+        if (!is.null(sc) && !is.na(sc) && round(sc * 10) >= 6) "6mm" else "5mm"
+      }
+
       sprintf(
         paste0(
           "Wound Correction Applied\n",
@@ -715,7 +725,7 @@ woundCorrectionServer <- function(id,
         ),
         nrow(after),
         input$wound_method,
-        input$probe_spacing,
+        probe_label,
         wound_range[1] * 10, wound_range[2] * 10,
         B_range[1], B_range[2],
         mean_correction
@@ -912,14 +922,16 @@ woundCorrectionServer <- function(id,
       # Plotly gets slow with >30000 points, so downsample for visualisation
       max_plot_points <- 30000
 
+      # Integer indices -- seq() with length.out returns doubles, which tibbles
+      # reject when subsetting rows.
       if (nrow(after) > max_plot_points) {
-        sample_idx <- seq(1, nrow(after), length.out = max_plot_points)
+        sample_idx <- unique(as.integer(round(seq(1, nrow(after), length.out = max_plot_points))))
         after <- after[sample_idx, ]
         cat("Downsampled after:", nrow(after), "rows (from original for plotting)\n")
       }
 
       if (nrow(before) > max_plot_points) {
-        sample_idx <- seq(1, nrow(before), length.out = max_plot_points)
+        sample_idx <- unique(as.integer(round(seq(1, nrow(before), length.out = max_plot_points))))
         before <- before[sample_idx, ]
         cat("Downsampled before:", nrow(before), "rows (from original for plotting)\n")
       }
@@ -1074,9 +1086,10 @@ woundCorrectionServer <- function(id,
 
       data <- rv$wound_corrected_data
 
-      # Sample if too many rows
+      # Sample if too many rows. Integer indices -- seq() with length.out returns
+      # doubles, which tibbles reject when subsetting rows.
       if (nrow(data) > 100) {
-        sample_idx <- seq(1, nrow(data), length.out = 100)
+        sample_idx <- unique(as.integer(round(seq(1, nrow(data), length.out = 100))))
         sample_data <- data[sample_idx, ]
       } else {
         sample_data <- data

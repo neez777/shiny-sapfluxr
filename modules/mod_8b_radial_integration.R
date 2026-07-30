@@ -571,7 +571,7 @@ radialIntegrationServer <- function(id,
 
         if (is.null(q_data) || nrow(q_data) == 0) {
           return(
-            plotly::plot_ly() %>%
+            plotly::plotly_empty(type = "scatter", mode = "markers") %>%
               plotly::layout(
                 title = "No tree water use data available",
                 xaxis = list(title = "Datetime"),
@@ -581,17 +581,25 @@ radialIntegrationServer <- function(id,
           )
         }
 
-        # Sample if too many points
+        # Guard the grouping column (mirrors the daily plot) so a single-method
+        # dataset without method_label cannot break the per-method loop.
+        if (!"method_label" %in% names(q_data)) {
+          q_data$method_label <- "Tree Water Use"
+        }
+
+        # Sample if too many points. seq(length.out=) returns doubles; tibbles
+        # (as returned by apply_sap_flux_integration) reject non-integer row
+        # indices, so coerce to integer.
         if (nrow(q_data) > 30000) {
-          sample_idx <- seq(1, nrow(q_data), length.out = 30000)
+          sample_idx <- unique(as.integer(round(seq(1, nrow(q_data), length.out = 30000))))
           q_data <- q_data[sample_idx, ]
         }
 
-        mode <- if (input$show_points) "lines+markers" else "lines"
+        mode <- if (isTRUE(input$show_points)) "lines+markers" else "lines"
 
         fig <- plotly::plot_ly(source = "water_use_hourly_plot")
 
-        methods <- unique(q_data$method_label %||% "Tree Water Use")
+        methods <- unique(q_data$method_label)
 
         for (m in methods) {
           trace_data <- q_data %>% dplyr::filter(method_label == m)
@@ -615,7 +623,7 @@ radialIntegrationServer <- function(id,
               mode = mode,
               name = m,
               line = style,
-              marker = if (input$show_points) list(size = 4, color = style$color) else NULL,
+              marker = if (isTRUE(input$show_points)) list(size = 4, color = style$color) else NULL,
               legendgroup = m,
               showlegend = TRUE,
               hovertemplate = paste(
@@ -667,9 +675,16 @@ radialIntegrationServer <- function(id,
         return(fig)
 
       }, error = function(e) {
-        plotly::plot_ly() %>%
+        # Let Shiny's silent conditions (req()/validate()) propagate so the output
+        # stays blank instead of being rendered as a bare "Error:" title.
+        if (inherits(e, "shiny.silent.error")) stop(e)
+        msg <- conditionMessage(e)
+        plotly::plotly_empty(type = "scatter", mode = "markers") %>%
           plotly::layout(
-            title = list(text = paste("Error:", e$message), x = 0.5),
+            title = list(
+              text = if (nzchar(msg)) paste("Error:", msg) else "Unable to render tree water use plot",
+              x = 0.5
+            ),
             xaxis = list(title = "Datetime"),
             yaxis = list(title = "Water Use (L/hr)"),
             uirevision = "water_use_hourly_zoom"
@@ -685,7 +700,7 @@ radialIntegrationServer <- function(id,
 
         if (is.null(q_data) || nrow(q_data) == 0) {
           return(
-            plotly::plot_ly() %>%
+            plotly::plotly_empty(type = "scatter", mode = "markers") %>%
               plotly::layout(
                 title = "No tree water use data available",
                 xaxis = list(title = "Date"),
@@ -771,9 +786,14 @@ radialIntegrationServer <- function(id,
         return(fig)
 
       }, error = function(e) {
-        plotly::plot_ly() %>%
+        if (inherits(e, "shiny.silent.error")) stop(e)
+        msg <- conditionMessage(e)
+        plotly::plotly_empty(type = "scatter", mode = "markers") %>%
           plotly::layout(
-            title = list(text = paste("Error:", e$message), x = 0.5),
+            title = list(
+              text = if (nzchar(msg)) paste("Error:", msg) else "Unable to render tree water use plot",
+              x = 0.5
+            ),
             xaxis = list(title = "Date"),
             yaxis = list(title = "Daily Water Use (L/day)"),
             uirevision = "water_use_daily_zoom"

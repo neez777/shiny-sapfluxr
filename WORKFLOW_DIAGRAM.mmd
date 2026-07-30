@@ -8,7 +8,7 @@ graph TB
     subgraph "PHASE 1: DATA IMPORT (Tab 1)"
         A1[Upload Heat Pulse Data<br/>.txt / .csv file] --> B1[read_heat_pulse_data]
         A3[Upload Weather Data<br/>optional .csv] --> B3[read_weather_data]
-        B3 --> B3b[calc_vpd<br/>vpd_kPa]
+        B3 --> B3b[calc_vpd + calculate_daily_vpd_minima<br/>auto on upload · vpd_kPa · daily minima]
 
         B1 --> B1b{Clock drift<br/>correction?}
         B1b -->|yes| B1c[fix_clock_drift]
@@ -32,7 +32,7 @@ graph TB
         E2 --> G0
         G0 --> G1[calc_heat_pulse_velocity]
         G1 --> G2[flag_vh_quality<br/>OK / WARNING / ERROR / SUSPECT]
-        G2 --> H1[vh_results<br/>Vh_cm_hr column]
+        G2 --> H1[vh_results<br/>Vh_cm_hr · prepulse_temp_c columns]
     end
 
     subgraph "PHASE 4: VISUALISE RAW (Tab 4)"
@@ -88,7 +88,7 @@ graph TB
     end
 
     subgraph "PHASE 8: FLUX DENSITY & TREE WATER USE (Tab 8)"
-        Y1 --> AA1[calc_sap_flux_density<br/>Jv = Z x Vh<br/>Jv_cm3_cm2_hr]
+        Y1 --> AA1[calc_sap_flux_density<br/>Jv = Z(T) x Vh<br/>Becker & Edwards temp: static / dynamic<br/>Jv_cm3_cm2_hr]
         Y2 --> AA1
         F2 --> AA1
         AA1 --> AA2[apply_sap_flux_integration<br/>radial: linear_decay / constant_velocity<br/>dbh, sapwood, bark]

@@ -200,24 +200,24 @@ get_plot_style <- function(method = NULL, sensor = "outer", is_corrected = FALSE
     col <- "black"
     width <- 1.0
     dash <- "dot"
-    
+
     # Override from config if available
     if (!is.null(config$special_traces$vpd)) {
       if (!is.null(config$special_traces$vpd$color)) col <- config$special_traces$vpd$color
       if (!is.null(config$special_traces$vpd$width)) width <- config$special_traces$vpd$width
       if (!is.null(config$special_traces$vpd$dash)) dash <- config$special_traces$vpd$dash
     }
-    
+
     return(list(color = col, width = width, dash = dash))
   }
-  
+
   # Map method name to config key
   method_key <- method
   if (is.null(method_key)) method_key <- "HRM"
-  
+
   # Get method settings from config or use defaults
   m_settings <- config$methods[[method_key]]
-  
+
   # Default colors
   default_colors <- list(
     "HRM"      = list(outer = "#1f77b4", inner = "#aec7e8", raw_width = 1.0, raw_style = "solid", corrected_width = 0.7, corrected_style = "solid"),
@@ -230,7 +230,7 @@ get_plot_style <- function(method = NULL, sensor = "outer", is_corrected = FALSE
     "CHPM"     = list(outer = "#8c564b", inner = "#c49c94", raw_width = 1.0, raw_style = "solid", corrected_width = 0.7, corrected_style = "solid"),
     "DRM"      = list(outer = "#e377c2", inner = "#f7b6d2", raw_width = 1.0, raw_style = "solid", corrected_width = 0.7, corrected_style = "solid")
   )
-  
+
   # Determine Color
   col <- if (!is.null(m_settings)) {
     if (tolower(sensor) == "inner") m_settings$inner else m_settings$outer
@@ -238,7 +238,7 @@ get_plot_style <- function(method = NULL, sensor = "outer", is_corrected = FALSE
     def_col <- default_colors[[method_key]] %||% list(outer = "#7f7f7f", inner = "#c7c7c7")
     if (tolower(sensor) == "inner") def_col$inner else def_col$outer
   }
-  
+
   # Determine Width and Dash
   if (is_corrected) {
     width <- if (!is.null(m_settings)) m_settings$corrected_width else default_colors[[method_key]]$corrected_width %||% 0.7
@@ -247,7 +247,7 @@ get_plot_style <- function(method = NULL, sensor = "outer", is_corrected = FALSE
     width <- if (!is.null(m_settings)) m_settings$raw_width else default_colors[[method_key]]$raw_width %||% 1.0
     dash <- if (!is.null(m_settings)) m_settings$raw_style else default_colors[[method_key]]$raw_style %||% "solid"
   }
-  
+
   return(list(color = col, width = width, dash = dash))
 }
 
@@ -291,11 +291,11 @@ get_standard_layout <- function(title = "", xtitle = "Date", ytitle = "Vh (cm/hr
     hovermode = "closest",
     margin = list(b = 100, t = 60, l = 60, r = 20)
   )
-  
+
   if (!is.null(uirevision)) {
     l$uirevision <- uirevision
   }
-  
+
   return(l)
 }
 
@@ -312,8 +312,8 @@ apply_standard_plotly_config <- function(p, filename = "plot_download", add_csv_
     displayModeBar = TRUE,
     displaylogo = FALSE,
     modeBarButtonsToRemove = c(
-      "lasso2d", "select2d", "autoScale2d", 
-      "hoverClosestCartesian", "hoverCompareCartesian", 
+      "lasso2d", "select2d", "autoScale2d",
+      "hoverClosestCartesian", "hoverCompareCartesian",
       "toggleSpikelines"
     ),
     toImageButtonOptions = list(
@@ -338,7 +338,7 @@ apply_standard_plotly_config <- function(p, filename = "plot_download", add_csv_
         function(gd) {
           var traces = gd.data;
           var xRange = gd.layout.xaxis ? gd.layout.xaxis.range : null;
-          
+
           var minTime = -Infinity, maxTime = Infinity;
           if (xRange && xRange.length === 2) {
             // Plotly often returns ranges as string dates, convert to timestamp
@@ -347,11 +347,11 @@ apply_standard_plotly_config <- function(p, filename = "plot_download", add_csv_
             minTime = new Date(start).getTime();
             maxTime = new Date(end).getTime();
           }
-          
+
           var baseTrace = traces.find(t => t.x && t.x.length > 0);
           if (!baseTrace) return;
           var xData = baseTrace.x;
-          
+
           var csv = [];
           var header = ['datetime'];
           traces.forEach(function(trace) {
@@ -359,11 +359,11 @@ apply_standard_plotly_config <- function(p, filename = "plot_download", add_csv_
             header.push('\\\"' + String(colName).replace(/\\\"/g, '\\\"\\\"') + '\\\"');
           });
           csv.push(header.join(','));
-          
+
           for(var i = 0; i < xData.length; i++) {
              var currentX = xData[i];
              var t = typeof currentX === 'string' ? new Date(currentX.replace(' ', 'T')).getTime() : new Date(currentX).getTime();
-             
+
              // If not a date or within range, include it
              if (isNaN(t) || (t >= minTime && t <= maxTime)) {
                 var row = ['\\\"' + String(currentX).replace(/\\\"/g, '\\\"\\\"') + '\\\"'];
@@ -374,7 +374,7 @@ apply_standard_plotly_config <- function(p, filename = "plot_download", add_csv_
                 csv.push(row.join(','));
              }
           }
-          
+
           var blob = new Blob([csv.join('\\n')], { type: 'text/csv;charset=utf-8;' });
           var link = document.createElement('a');
           link.href = URL.createObjectURL(blob);
@@ -385,7 +385,7 @@ apply_standard_plotly_config <- function(p, filename = "plot_download", add_csv_
         }
       ", filename))
     )
-    
+
     # Explicitly construct the modebar to place CSV button next to the Camera
     config_args$modeBarButtonsToRemove <- NULL
     config_args$modeBarButtons <- list(
@@ -756,7 +756,7 @@ plot_probe_vertical <- function(validation) {
              label = "Sapwood/Heartwood\nBoundary",
              hjust = -0.1, vjust = 0.5, size = 3, color = "red") +
     labs(
-      title = "Vertical View: Probe Configuration",
+      title = "Longitudinal Section : Probe Configuration",
       x     = "Depth from outer bark surface (cm)",
       y     = "Axial position (cm)"
     ) +
@@ -798,7 +798,7 @@ plot_probe_radial <- function(validation) {
   h_notch <- 1.2  # cm (tangential half-height of the bark notch)
 
   if (h_notch >= probe_bk_r) h_notch <- probe_bk_r * 0.8
-  
+
   theta_out_top <- pi - asin(h_notch / outer_r)
   theta_in_top  <- pi - asin(h_notch / probe_bk_r)
   theta_out_bot <- pi + asin(h_notch / outer_r)
@@ -841,7 +841,7 @@ plot_probe_radial <- function(validation) {
   # with horizontal walls matching the probe handle height
   t_out_top_seq <- seq(start_angle, theta_out_top, length.out = 40)
   t_in_top_seq  <- seq(theta_in_top, start_angle, length.out = 40)
-  
+
   outer_bk_left <- data.frame(
     x = c(outer_r * cos(t_out_top_seq), probe_bk_r * cos(t_in_top_seq)),
     y = c(outer_r * sin(t_out_top_seq), probe_bk_r * sin(t_in_top_seq)),
@@ -851,7 +851,7 @@ plot_probe_radial <- function(validation) {
 
   t_out_bot_seq <- seq(theta_out_bot, end_angle, length.out = 40)
   t_in_bot_seq  <- seq(end_angle, theta_in_bot, length.out = 40)
-  
+
   outer_bk_right <- data.frame(
     x = c(outer_r * cos(t_out_bot_seq), probe_bk_r * cos(t_in_bot_seq)),
     y = c(outer_r * sin(t_out_bot_seq), probe_bk_r * sin(t_in_bot_seq)),

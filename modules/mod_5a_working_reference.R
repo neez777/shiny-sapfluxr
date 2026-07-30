@@ -2285,13 +2285,14 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         vh_data_corrected$method == method,
       ]
 
-      # Only sample if REALLY large (>50k points)
+      # Only sample if REALLY large (>50k points). Integer indices -- seq() with
+      # length.out returns doubles, which tibbles reject when subsetting rows.
       if (nrow(after) > 50000) {
-        sample_idx <- seq(1, nrow(after), length.out = 50000)
+        sample_idx <- unique(as.integer(round(seq(1, nrow(after), length.out = 50000))))
         after <- after[sample_idx, ]
       }
       if (nrow(before) > 50000) {
-        sample_idx <- seq(1, nrow(before), length.out = 50000)
+        sample_idx <- unique(as.integer(round(seq(1, nrow(before), length.out = 50000))))
         before <- before[sample_idx, ]
       }
 
