@@ -26,7 +26,7 @@ graph TD
 
     subgraph "3. HPV CALCULATION"
         C[vh_results tibble]
-        C1[Core columns:<br/>datetime, pulse_id,<br/>method, sensor_position,<br/>Vh_cm_hr]
+        C1[Core columns:<br/>datetime, pulse_id,<br/>method, sensor_position,<br/>Vh_cm_hr, prepulse_temp_c]
         C2[HRM-specific:<br/>hrm_Tr, hrm_window_start_sec]
         C3[MHR / Tmax-specific:<br/>mhr_Tr_max, tmax_*]
         C4[Quality flags:<br/>quality_flag,<br/>quality_issues]
@@ -98,7 +98,7 @@ graph TD
 
     subgraph "8. FLUX DENSITY & TREE WATER USE"
         H[flux / tree_water_use tibble]
-        H1[Jv_cm3_cm2_hr:<br/>sap flux density (Jv = Z x Vh)]
+        H1[Jv_cm3_cm2_hr:<br/>sap flux density (Jv = Z(T) x Vh)<br/>Becker & Edwards temp: static / dynamic]
         H2[Q_total_cm3_hr / Q_total_L_day:<br/>radial integration<br/>(linear_decay / constant_velocity)]
         H3[Method tracking carried through]
 
