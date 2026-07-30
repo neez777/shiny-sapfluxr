@@ -1,0 +1,15 @@
+# RStudio / R session state
+.Rproj.user
+.Rhistory
+.RData
+.RDataTmp
+.Ruserdata
+
+# R output artefacts
+Rplots.pdf
+
+# Local working notes (not published)
+knowledge_docs/
+
+# Tooling
+.positai
