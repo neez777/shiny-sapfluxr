@@ -8,6 +8,52 @@
 # disable the autoload to silence the (false-alarm) "Loading R/ subdirectory" warning.
 options(shiny.autoload.r = FALSE)
 
+# ---- STARTUP ENVIRONMENT CHECKS ----
+# These run before any library() call so that an unmet requirement reports itself
+# clearly, rather than surfacing later as an obscure failure on a single page.
+# Both checks exist because of real incidents: the app ran to completion on
+# R 4.3.3 but stalled on the zero-flow changepoint page, and a fresh install
+# revealed its missing packages one crash at a time.
+local({
+  min_r <- "4.4.0"
+  if (getRversion() < min_r) {
+    stop(
+      "sapfluxr Shiny requires R >= ", min_r, ", but this is R ", getRversion(), ".\n",
+      "The app relies on the base R null-coalescing operator `%||%`, introduced\n",
+      "in R 4.4.0. On older R the app starts but fails partway through analysis.\n",
+      "Please upgrade R.",
+      call. = FALSE
+    )
+  }
+
+  required <- c(
+    "shiny", "shinydashboard", "shinyWidgets", "shinyjs", "shinycssloaders",
+    "fresh", "plotly", "DT", "waiter", "leaflet", "htmlwidgets",
+    "dplyr", "tidyr", "purrr", "readr", "yaml", "lubridate", "ggplot2",
+    "scales", "rlang", "progressr", "suncalc", "R6", "lutz", "zip",
+    "sapfluxr"
+  )
+  missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
+
+  if (length(missing) > 0) {
+    from_github <- "sapfluxr" %in% missing
+    cran <- setdiff(missing, "sapfluxr")
+    msg <- paste0(
+      "The sapfluxr Shiny app needs ", length(missing),
+      " package(s) that are not installed:\n  ",
+      paste(missing, collapse = ", "), "\n\nInstall them with:\n"
+    )
+    if (length(cran) > 0) {
+      msg <- paste0(msg, '  install.packages(c("',
+                    paste(cran, collapse = '", "'), '"))\n')
+    }
+    if (from_github) {
+      msg <- paste0(msg, '  remotes::install_github("neez777/sapfluxr")\n')
+    }
+    stop(msg, call. = FALSE)
+  }
+})
+
 library(shiny)
 library(shinydashboard)
 library(shinyWidgets)

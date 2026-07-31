@@ -311,10 +311,16 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties, co
 
         # Apply quality control with user-configured parameters
         shiny::withProgress(message = "Applying Quality Checks", value = 0.5, {
+          # Only the arguments with a corresponding UI control are passed. The
+          # panel has no input for detect_missing_pulses, check_cross_sensor,
+          # cross_sensor_threshold, add_rows_for_missing or max_gap_to_fill_hours,
+          # so passing input$qc_* for those sent NULL into flag_vh_quality(),
+          # which failed with "argument is of length zero". The error was caught
+          # and the unflagged results returned, so quality control was silently
+          # skipped for every run. Omitting them applies the documented defaults.
           results <- tryCatch({
             sapfluxr::flag_vh_quality(
               results,
-              detect_missing_pulses = input$qc_detect_missing_pulses,
               check_illogical = input$qc_check_illogical,
               hard_max_vh = input$qc_hard_max_vh,
               flag_negative = input$qc_flag_negative,
@@ -323,15 +329,18 @@ methodsServer <- function(id, heat_pulse_data, probe_config, wood_properties, co
               rolling_threshold = input$qc_rolling_threshold,
               detect_rate_of_change = input$qc_detect_rate_of_change,
               max_change_cm_hr = input$qc_max_change_cm_hr,
-              check_cross_sensor = input$qc_check_cross_sensor,
-              cross_sensor_threshold = input$qc_cross_sensor_threshold,
-              add_rows_for_missing = input$qc_add_rows_for_missing,
-              max_gap_to_fill_hours = input$qc_max_gap_to_fill_hours,
               verbose = FALSE,
               return_full_report = FALSE
             )
           }, error = function(e) {
+            # Degrading to unflagged results is a material loss of information,
+            # so say so in the app rather than only in the console.
             message("Quality control failed: ", e$message)
+            showNotification(
+              paste0("Quality control could not be applied: ", e$message,
+                     " Results are unflagged."),
+              type = "error", duration = 10
+            )
             results
           })
         })

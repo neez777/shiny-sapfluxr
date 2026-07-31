@@ -686,6 +686,11 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
       correction_applied = FALSE
     )
 
+    # TRUE only while the before/after plot holds its hidden raw overlay trace,
+    # so the visibility toggle never addresses an index the current render did
+    # not create.
+    raw_overlay_rendered <- reactiveVal(FALSE)
+
     # Auto-populate dynamic lat/lon fields from wood_properties.
     # Note: WoodProperties is R6 — Shiny's reactiveVal uses identical() so the
     # NULL-then-set in apply_site_location (mod_2) is required to force this to fire.
@@ -2331,9 +2336,14 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
       list(before = before, after = after)
     })
 
-    # Before/After Comparison Plot - initial render with base trace only
+    # Before/After Comparison Plot - corrected trace plus a hidden raw overlay
     output$plot_before_after <- plotly::renderPlotly({
       req(spacing_plot_data())
+
+      # Cleared until the plot below is built, so the toggle observer never
+      # restyles a trace that this render did not create (the stop() below aborts
+      # the render, leaving no traces at all).
+      raw_overlay_rendered(FALSE)
 
       plot_data <- spacing_plot_data()
       after <- plot_data$after
@@ -2430,6 +2440,9 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         ) %>%
         apply_standard_plotly_config(filename = "spacing_correction_comparison", add_csv_download = TRUE)
 
+      # Only now does the raw overlay trace exist client-side.
+      raw_overlay_rendered(TRUE)
+
       p
     })
 
@@ -2438,7 +2451,7 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
     # invalid-index error that add/remove by index used to cause. A sensor change
     # re-renders the plot and sets visibility there, so it is not bound here.
     observe({
-      req(spacing_plot_data())
+      if (!isTRUE(isolate(raw_overlay_rendered()))) return()
 
       plotly::plotlyProxy("plot_before_after", session) %>%
         plotly::plotlyProxyInvoke(

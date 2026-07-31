@@ -110,6 +110,12 @@ calibrationValidationServer <- function(id,
     # Internal state
     time_range <- reactiveVal(NULL)
 
+    # How many overlay traces the observer below added on top of the base trace,
+    # so they can be removed by exact index. Discovering the count by deleting
+    # until plotly errors is not viable: the error is raised in the browser,
+    # cannot be caught in R, and stalls Shiny's client message queue.
+    n_overlay_traces <- reactiveVal(0)
+
     # Initialise date/time range inputs when raw data becomes available
     observe({
       req(vh_raw())
@@ -156,6 +162,10 @@ calibrationValidationServer <- function(id,
     output$validation_plot <- plotly::renderPlotly({
       req(vh_raw())
       req(input$sensor_position)
+
+      # A re-render replaces the plot with the base trace only, so any overlays
+      # the observer previously added no longer exist client-side.
+      n_overlay_traces(0)
 
       raw_data <- vh_raw()
       sensor <- input$sensor_position
@@ -241,17 +251,23 @@ calibrationValidationServer <- function(id,
       methods <- input$methods_selected
       states <- input$calibration_states
       
-      # 1. Clear all overlays (everything except the base HRM trace at index 0)
-      tryCatch({
-        for (i in 1:20) { # Max possible methods/states
-          plotly::plotlyProxy("validation_plot", session) %>%
-            plotly::plotlyProxyInvoke("deleteTraces", list(1))
-        }
-      }, error = function(e) {})
+      # 1. Clear the overlays added last time, at the indices they were placed at
+      # (everything except the base HRM trace at index 0). Deleting an index that
+      # does not exist raises a plotly.js error in the browser, which cannot be
+      # caught in R and stalls Shiny's client message queue for the rest of the
+      # session, so nothing here may rely on a delete failing. Read the counter
+      # without a reactive dependency, or writing it below re-triggers this.
+      n_prev <- isolate(n_overlay_traces())
+      if (n_prev > 0) {
+        plotly::plotlyProxy("validation_plot", session) %>%
+          plotly::plotlyProxyInvoke("deleteTraces", as.list(seq_len(n_prev)))
+      }
+      n_overlay_traces(0)
 
-      # 2. Add back selected traces
+      # 2. Add back selected traces, counting them for the next run
       style_config <- plot_settings()
-      
+      n_added <- 0L
+
       for (m in methods) {
         # Raw State
         if ("raw" %in% states) {
@@ -265,6 +281,7 @@ calibrationValidationServer <- function(id,
                 name = paste0(m, " (Raw)"), line = style,
                 hovertemplate = paste0("<b>", m, " (Raw)</b><br>Time: %{x}<br>Vel: %{y:.2f}<extra></extra>")
               ))
+            n_added <- n_added + 1L
           }
         }
         
@@ -281,9 +298,13 @@ calibrationValidationServer <- function(id,
                 name = paste0(m, " (Calibrated)"), line = style,
                 hovertemplate = paste0("<b>", m, " (Cal)</b><br>Time: %{x}<br>Vel: %{y:.2f}<extra></extra>")
               ))
+            n_added <- n_added + 1L
           }
         }
       }
+
+      # Record what was added so the next run can remove exactly these traces.
+      n_overlay_traces(n_added)
     }) %>% bindEvent(input$sensor_position, input$methods_selected, input$calibration_states, vh_calibrated())
 
     # Update datetime inputs when user zooms the validation plot

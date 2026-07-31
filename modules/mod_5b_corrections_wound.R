@@ -325,6 +325,11 @@ woundCorrectionServer <- function(id,
       initial_wound_mm = NULL
     )
 
+    # TRUE only while the comparison plot holds its Raw and Spacing Corrected
+    # overlay traces, so the visibility toggle never addresses a trace index the
+    # current render did not create.
+    overlays_rendered <- reactiveVal(FALSE)
+
     # Heartwood warning output
     output$heartwood_warning <- renderUI({
       req(wood_properties(), probe_config())
@@ -943,6 +948,10 @@ woundCorrectionServer <- function(id,
     output$wound_correction_comparison <- plotly::renderPlotly({
       req(wound_plot_data())
 
+      # Cleared until the full plot below is built, so the toggle observer never
+      # restyles traces that this render did not create.
+      overlays_rendered(FALSE)
+
       data_list <- wound_plot_data()
       before <- data_list$before
       after <- data_list$after
@@ -999,6 +1008,46 @@ woundCorrectionServer <- function(id,
         uirevision = "wound_comparison_zoom"
       )
       
+      # Both overlays are rendered up-front, as traces 1 and 2, hidden unless
+      # ticked. They must always exist: removing a trace index that is not
+      # present raises a plotly.js error in the browser which cannot be caught in
+      # R and stalls Shiny's client message queue for the rest of the session.
+      # The observer below therefore restyles them rather than adding and
+      # removing them. isolate() keeps the checkboxes from forcing a re-render.
+      sc_col <- if ("Vh_cm_hr_sc" %in% names(before)) "Vh_cm_hr_sc" else "Vh_cm_hr"
+
+      p <- p %>%
+        plotly::add_trace(
+          data = before,
+          x = ~datetime,
+          y = ~Vh_cm_hr,
+          type = "scatter",
+          mode = "lines",
+          name = "Raw Data",
+          line = list(color = "#d62728", width = 1.0),
+          visible = isTRUE(shiny::isolate(input$show_raw_data)),
+          hovertemplate = paste(
+            "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
+            "<b>Raw:</b> %{y:.2f} cm/hr<br>",
+            "<extra></extra>"
+          )
+        ) %>%
+        plotly::add_trace(
+          data = before,
+          x = ~datetime,
+          y = as.formula(paste0("~", sc_col)),
+          type = "scatter",
+          mode = "lines",
+          name = "Spacing Corrected",
+          line = list(color = "#ff7f0e", width = 1.2),
+          visible = isTRUE(shiny::isolate(input$show_spacing_corrected)),
+          hovertemplate = paste(
+            "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
+            "<b>Spacing Corrected:</b> %{y:.2f} cm/hr<br>",
+            "<extra></extra>"
+          )
+        )
+
       p <- p %>%
         plotly::layout(
           title = base_layout$title,
@@ -1015,70 +1064,32 @@ woundCorrectionServer <- function(id,
         apply_standard_plotly_config(filename = "wound_correction_comparison", add_csv_download = TRUE) %>%
         plotly::event_register("plotly_relayout")
 
+      # Only now do the overlay traces exist client-side.
+      overlays_rendered(TRUE)
+
       return(p)
     })
 
-    # Use plotlyProxy to add/remove Raw and Spacing Corrected overlays (preserves zoom)
+    # Toggle the Raw and Spacing Corrected overlays via restyle, which preserves
+    # zoom. Traces 1 and 2 are created by the renderer above, so this cannot raise
+    # the invalid-index error that add/remove by index used to cause. A sensor or
+    # data change re-renders the plot and sets visibility there, so neither is
+    # bound here.
     observe({
-      req(wound_plot_data())
-      
-      data_list <- wound_plot_data()
-      before <- data_list$before
+      # The renderer returns a trace-less placeholder when there is no data for
+      # the selected sensor; restyling then would target traces that do not exist.
+      if (!isTRUE(isolate(overlays_rendered()))) return()
 
-      # First, try to remove existing overlay traces (Traces 1 and 2)
-      tryCatch({
-        plotly::plotlyProxy("wound_correction_comparison", session) %>%
-          plotly::plotlyProxyInvoke("deleteTraces", list(1))
-        plotly::plotlyProxy("wound_correction_comparison", session) %>%
-          plotly::plotlyProxyInvoke("deleteTraces", list(1))
-      }, error = function(e) {})
+      plotly::plotlyProxy("wound_correction_comparison", session) %>%
+        plotly::plotlyProxyInvoke(
+          "restyle", list(visible = isTRUE(input$show_raw_data)), list(1)
+        )
 
-      # Add Raw Data overlay (Red)
-      if (isTRUE(input$show_raw_data)) {
-        raw_col <- "Vh_cm_hr"
-        
-        plotly::plotlyProxy("wound_correction_comparison", session) %>%
-          plotly::plotlyProxyInvoke(
-            "addTraces",
-            list(
-              x = before$datetime,
-              y = before[[raw_col]],
-              type = "scatter",
-              mode = "lines",
-              name = "Raw Data",
-              line = list(color = "#d62728", width = 1.0),
-              hovertemplate = paste(
-                "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
-                "<b>Raw:</b> %{y:.2f} cm/hr<br>",
-                "<extra></extra>"
-              )
-            )
-          )
-      }
-
-      # Add Spacing Corrected overlay (Orange)
-      if (isTRUE(input$show_spacing_corrected)) {
-        sc_col <- if ("Vh_cm_hr_sc" %in% names(before)) "Vh_cm_hr_sc" else "Vh_cm_hr"
-
-        plotly::plotlyProxy("wound_correction_comparison", session) %>%
-          plotly::plotlyProxyInvoke(
-            "addTraces",
-            list(
-              x = before$datetime,
-              y = before[[sc_col]],
-              type = "scatter",
-              mode = "lines",
-              name = "Spacing Corrected",
-              line = list(color = "#ff7f0e", width = 1.2),
-              hovertemplate = paste(
-                "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
-                "<b>Spacing Corrected:</b> %{y:.2f} cm/hr<br>",
-                "<extra></extra>"
-              )
-            )
-          )
-      }
-    }) %>% bindEvent(input$show_raw_data, input$show_spacing_corrected, input$plot_sensor_position, rv$wound_corrected_data)
+      plotly::plotlyProxy("wound_correction_comparison", session) %>%
+        plotly::plotlyProxyInvoke(
+          "restyle", list(visible = isTRUE(input$show_spacing_corrected)), list(2)
+        )
+    }) %>% bindEvent(input$show_raw_data, input$show_spacing_corrected, ignoreInit = TRUE)
 
     # Wound coefficients table
     output$wound_coefficients_table <- renderText({
