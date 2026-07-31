@@ -2388,6 +2388,33 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         uirevision = "spacing_comparison_zoom"
       )
       
+      # Raw overlay is rendered up-front as trace index 1, hidden unless ticked.
+      # It must always exist: deleting a trace index that is not present throws a
+      # client-side plotly.js error ("indices must be valid indices for gd.data"),
+      # which breaks Shiny's browser message queue and freezes the whole page.
+      # The visibility toggle below therefore restyles this trace rather than
+      # adding and removing it. Read the checkbox with isolate() so that toggling
+      # it does not re-render the plot.
+      raw_col <- if ("Vh_cm_hr_raw" %in% names(after)) "Vh_cm_hr_raw" else "Vh_cm_hr"
+
+      p <- p %>%
+        plotly::add_trace(
+          data = after,
+          x = ~datetime,
+          y = as.formula(paste0("~", raw_col)),
+          type = 'scatter',
+          mode = 'lines',
+          name = 'Raw Data',
+          line = list(color = "#d62728", width = 1.0),
+          fill = 'none',
+          visible = isTRUE(shiny::isolate(input$show_raw_overlay)),
+          hovertemplate = paste(
+            "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
+            "<b>Raw:</b> %{y:.2f} cm/hr<br>",
+            "<extra></extra>"
+          )
+        )
+
       p <- p %>%
         plotly::layout(
           title = base_layout$title,
@@ -2406,43 +2433,20 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
       p
     })
 
-    # Use plotlyProxy to add/remove raw data overlay (preserves zoom)
+    # Toggle the raw data overlay via restyle, which preserves zoom. Trace index 1
+    # is created by the renderer above and always exists, so this cannot raise the
+    # invalid-index error that add/remove by index used to cause. A sensor change
+    # re-renders the plot and sets visibility there, so it is not bound here.
     observe({
       req(spacing_plot_data())
-      
-      plot_data <- spacing_plot_data()
-      after <- plot_data$after
 
-      # First, try to remove any existing raw data trace
-      tryCatch({
-        plotly::plotlyProxy("plot_before_after", session) %>%
-          plotly::plotlyProxyInvoke("deleteTraces", list(1))
-      }, error = function(e) {})
-
-      # Then add it back if checkbox is ticked
-      if (isTRUE(input$show_raw_overlay)) {
-        raw_col <- if ("Vh_cm_hr_raw" %in% names(after)) "Vh_cm_hr_raw" else "Vh_cm_hr"
-
-        plotly::plotlyProxy("plot_before_after", session) %>%
-          plotly::plotlyProxyInvoke(
-            "addTraces",
-            list(
-              x = after$datetime,
-              y = after[[raw_col]],
-              type = "scatter",
-              mode = "lines",
-              name = "Raw Data",
-              line = list(color = "#d62728", width = 1.0),
-              fill = "none",
-              hovertemplate = paste(
-                "<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>",
-                "<b>Raw:</b> %{y:.2f} cm/hr<br>",
-                "<extra></extra>"
-              )
-            )
-          )
-      }
-    }) %>% bindEvent(input$show_raw_overlay, input$plot_sensor_position_spacing)
+      plotly::plotlyProxy("plot_before_after", session) %>%
+        plotly::plotlyProxyInvoke(
+          "restyle",
+          list(visible = isTRUE(input$show_raw_overlay)),
+          list(1)
+        )
+    }) %>% bindEvent(input$show_raw_overlay, ignoreInit = TRUE)
 
     # Correction summary
     output$correction_summary <- renderPrint({

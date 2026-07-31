@@ -284,6 +284,15 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
     # Store selected pulse ID from click
     selected_pulse_id <- reactiveVal(NULL)
 
+    # Overlay traces (quality flags, interpolation, VPD) are added to the base plot
+    # by proxy. Track how many were added, and how many base traces existed at the
+    # time, so they can be removed by exact index. Discovering the count by deleting
+    # until plotly errors is not viable: the error is raised in the browser, cannot
+    # be caught in R, and stalls Shiny's client message queue for the rest of the
+    # session. Both reset to 0 whenever the base plot re-renders.
+    n_overlay_traces <- reactiveVal(0)
+    n_base_at_overlay <- reactiveVal(0)
+
     # Initialize date/time range inputs with full data range
     observe({
       req(vh_results())
@@ -855,6 +864,11 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
 
     # Main time series plot - Integrated render (handles base lines with persistent zoom)
     output$timeseries_plot <- plotly::renderPlotly({
+      # A re-render replaces the plot with base traces only, so any overlays the
+      # proxy observer previously added no longer exist client-side.
+      n_overlay_traces(0)
+      n_base_at_overlay(0)
+
       tryCatch({
         style_config <- plot_settings()
         data <- filtered_data()
@@ -993,14 +1007,26 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
       
       # Determine base line count (one for each method/sensor)
       n_base <- length(input$methods) * length(input$sensor_position)
-      
-      # Step 1: Clear all previous overlays (Traces at indices n_base..END)
-      tryCatch({
-        for (i in 1:100) { 
-          plotly::plotlyProxy("timeseries_plot", session) %>%
-            plotly::plotlyProxyInvoke("deleteTraces", list(n_base))
-        }
-      }, error = function(e) {})
+
+      # Step 1: Remove exactly the overlays added last time, at the indices they
+      # were placed at. Deleting an index that does not exist raises a plotly.js
+      # error in the browser which Shiny cannot recover from, so nothing here may
+      # rely on a delete failing. Read the counters without taking a reactive
+      # dependency, otherwise writing them below would re-trigger this observer.
+      n_prev <- isolate(n_overlay_traces())
+      base_prev <- isolate(n_base_at_overlay())
+      if (n_prev > 0) {
+        plotly::plotlyProxy("timeseries_plot", session) %>%
+          plotly::plotlyProxyInvoke(
+            "deleteTraces",
+            as.list(seq.int(base_prev, base_prev + n_prev - 1L))
+          )
+      }
+      n_overlay_traces(0)
+      n_base_at_overlay(n_base)
+
+      # Counts overlay traces as they are added, so the next run can remove them.
+      n_added <- 0L
 
       # Determine column names for markers
       vh_col <- if ("Vs_cm_hr" %in% names(data)) "Vs_cm_hr" else 
@@ -1037,6 +1063,7 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
                   marker = list(symbol = shape, size = 8, color = col, line = list(width = 1, color = "white")),
                   hovertemplate = paste0("<b>", flag, "</b><br>Time: %{x}<br>Vel: %{y:.2f}<extra></extra>")
                 ))
+              n_added <- n_added + 1L
             }
           }
         }
@@ -1069,6 +1096,7 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
                 marker = list(symbol = "circle-open", size = 8, color = style$color, line = list(width = 2, color = style$color)),
                 hovertemplate = paste0("<b>Interpolated</b><br>Method: ", m, "<br>Time: %{x}<br>Vel: %{y:.2f}<extra></extra>")
               ))
+            n_added <- n_added + 1L
           }
         }
       }
@@ -1118,6 +1146,7 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
                             showline = TRUE, linecolor = "black", fixedrange = TRUE),
               "margin.r" = 80
             ))
+          n_added <- n_added + 1L
         }
       } else {
         # Ensure axis reset and restore standard theme (black lines, no grid)
@@ -1133,10 +1162,13 @@ plotTimeseriesServer <- function(id, vh_results, daily_vpd = reactive(NULL), wea
               zerolinecolor = "black", 
               zerolinewidth = 0.5
             ),
-            yaxis2 = NULL, 
+            yaxis2 = NULL,
             "margin.r" = 40
           ))
       }
+
+      # Record what was added so the next run can remove exactly these traces.
+      n_overlay_traces(n_added)
     }) %>% bindEvent(input$show_quality_flags, input$quality_flags, input$show_interpolated, input$show_vpd, input$methods, input$sensor_position, cleaning_applied())
 
     # Capture current plot zoom/ranges when user interacts with range slider
