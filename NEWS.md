@@ -1,3 +1,90 @@
+# shiny-sapfluxr 0.6.0
+
+## Breaking Changes
+
+* **R 4.4.0 is now the minimum.** `DESCRIPTION` previously declared `R (>= 4.0.0)`,
+  but the app relies throughout on the null-coalescing operator `%||%`, which only
+  entered base R in 4.4.0. On R 4.3.3 the app started, loaded data and ran most
+  pages normally, then stalled on the zero-flow changepoint page with nothing in
+  the R console — the worst possible failure mode. `app.R` now checks the R version
+  before anything else and refuses to start with an explicit message.
+
+  Upgrading R resolves it. There is no workaround on 4.3.
+
+## Behaviour Changes
+
+* **Quality control now actually runs.** `flag_vh_quality()` was called with five
+  arguments taken from `input$qc_*` values that the Methods panel never creates —
+  `qc_detect_missing_pulses`, `qc_check_cross_sensor`, `qc_cross_sensor_threshold`,
+  `qc_add_rows_for_missing` and `qc_max_gap_to_fill_hours`. All arrived as `NULL`,
+  so the call failed with "argument is of length zero", the surrounding handler
+  caught it, and the **unflagged** results were returned instead. Quality control
+  was therefore skipped on every run, on every machine, in every prior version.
+
+  Those five arguments are now omitted so the documented `sapfluxr` defaults apply
+  (`detect_missing_pulses = TRUE`, `check_cross_sensor = FALSE`,
+  `cross_sensor_threshold = 3`, `add_rows_for_missing = TRUE`,
+  `max_gap_to_fill_hours = 24`), and a failure now raises a notification in the app
+  rather than only a console message.
+
+  **Results will differ from earlier versions.** Runs now carry real quality flags
+  where previously everything came through unflagged, so flag counts and anything
+  filtered on them will not match previously generated output. Re-run affected
+  analyses rather than comparing across versions.
+
+## Bug Fixes
+
+* **Plots no longer freeze the app on current Shiny.** Four modules removed plotly
+  traces by index without establishing that those indices existed. Deleting a
+  non-existent trace raises `indices must be valid indices for gd.data` in the
+  browser; because the error is raised client-side it cannot be caught in R, so the
+  `tryCatch(error = function(e) {})` wrapped around each call had no effect and
+  nothing appeared in the R console.
+
+  In Shiny 1.14 that exception escapes into the client action queue, which then
+  stops processing server messages for the remainder of the session. Every later
+  message is dropped, including `waiter`'s request to hide its overlay — so the
+  zero-flow changepoint page dimmed and never recovered, while R completed the
+  analysis normally. Shiny 1.13 handled each message independently and tolerated
+  the errors, which is why the same code worked on some machines and not others.
+
+  - `mod_4_plot_timeseries.R` deleted trace `n_base` one hundred times in a loop,
+    relying on the delete failing to know when to stop, emitting up to a hundred
+    client errors per trigger. It now tracks how many overlay traces it added and
+    at which offset, and removes exactly those.
+  - `mod_6b_calibration_validation.R` did the same over twenty iterations, and is
+    fixed the same way.
+  - `mod_5a_corrections_spacing.R` and `mod_5b_corrections_wound.R` added and
+    removed overlays at fixed indices on plots rendered with fewer traces than
+    that. Both now render their overlays up-front, hidden, and toggle visibility
+    with `restyle`. Both also guard the toggle against renders that produce no
+    overlay traces, which happens when the selected sensor has no data.
+
+* **Missing requirements are reported at startup.** `app.R` now checks every
+  required package in one pass and names all missing ones in a single
+  `install.packages()` line, instead of surfacing them one failed launch at a time.
+
+* **The app icon no longer disappears on Linux.** `www/sapfluxR.png` was tracked
+  with a capital R while `app.R` requests `sapfluxr.png`. Case-insensitive
+  filesystems resolve both to the same file; Linux does not, so a fresh clone
+  served a 404 and the header icon was missing. Renamed in the index; content
+  unchanged.
+
+* **Dependency declarations corrected.** `htmlwidgets` was used in `modules/utils.R`
+  but declared nowhere, arriving only transitively via plotly. `lutz` and `zip` were
+  called unguarded with `::` but only listed under `Suggests`. All three move to
+  `Imports`. `webshot2` is removed, having no usages anywhere in the app.
+
+## Diagnostics
+
+* Added `inst/diagnostics/repro_dual_stable.R`, which runs the same
+  `find_dual_stable_periods()` call as the zero-flow changepoint page without
+  Shiny, waiter, plotly or a browser, against the example data shipped with
+  `sapfluxr`. Output is comparable across machines, so it separates a fault in the
+  analysis from a fault in the Shiny layer.
+
+---
+
 # shiny-sapfluxr 0.5.1
 
 ## Behaviour Changes
