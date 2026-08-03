@@ -145,7 +145,7 @@ dataUploadServer <- function(id, code_tracker = TRUE) {
           "This might be a Unicode/regex issue. ",
           "Please ensure sapfluxr is up to date.\n\n",
           "Try running in R console:\n",
-          "devtools::load_all('E:/R/project/sapfluxr')"
+          'remotes::install_github("neez777/sapfluxr")'
         )
 
         shinyWidgets::sendSweetAlert(
