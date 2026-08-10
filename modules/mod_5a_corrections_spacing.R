@@ -935,12 +935,15 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
 
       vh_data <- vh_results()
 
-      # Show waiter
+      # Show waiter. on.exit guarantees it lifts on every exit path, including
+      # ones nobody anticipated -- without it, an unhandled condition leaves the
+      # page dimmed forever with no error anywhere.
       waiter <- waiter::Waiter$new(
         html = waiter::spin_fading_circles(),
         color = waiter::transparent(0.5)
       )
       waiter$show()
+      on.exit(waiter$hide(), add = TRUE)
 
       tryCatch({
         # Step 1: Detect changepoints (calculates minima internally)
@@ -1161,12 +1164,13 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
 
       vpd_data <- daily_vpd()
 
-      # Show waiter
+      # Show waiter (see the note on on.exit above)
       waiter <- waiter::Waiter$new(
         html = waiter::spin_fading_circles(),
         color = waiter::transparent(0.5)
       )
       waiter$show()
+      on.exit(waiter$hide(), add = TRUE)
 
       tryCatch({
         # Detect VPD-based changepoints
@@ -1320,18 +1324,41 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
 
     # Dual-criterion changepoint detection
     observeEvent(input$detect_dual_stable_changepoints, {
-      req(weather_vpd(), vh_results())
+      # A bare req() here aborts silently, which is indistinguishable from a
+      # hang. Say what is missing instead.
+      lacking <- character(0)
+      if (is.null(weather_vpd())) lacking <- c(lacking, "weather/VPD data")
+      if (is.null(vh_results()))  lacking <- c(lacking, "heat pulse velocity results")
+      if (length(lacking) > 0) {
+        showNotification(
+          paste0("Cannot run dual-criterion detection without ",
+                 paste(lacking, collapse = " and "), "."),
+          type = "error", duration = 10
+        )
+        return(invisible(NULL))
+      }
 
       # Get raw weather data (hourly/sub-hourly)
       weather_data <- weather_vpd()
       vh_data <- vh_results()
 
-      # Show waiter
+      # Show waiter (see the note on on.exit above)
       waiter <- waiter::Waiter$new(
         html = waiter::spin_fading_circles(),
         color = waiter::transparent(0.5)
       )
       waiter$show()
+      on.exit(waiter$hide(), add = TRUE)
+
+      # This handler has repeatedly failed on other machines with nothing
+      # printed anywhere, because every error is converted to a toast below.
+      # Trace the stages to the console so a stall can be located from a log.
+      trace_stage <- function(...) {
+        message("[dual-stable] ", ..., appendLF = TRUE)
+        utils::flush.console()
+      }
+      trace_stage("start: ", nrow(vh_data), " vh rows, ",
+                  nrow(weather_data), " weather rows")
 
       tryCatch({
         predawn_mode <- input$dual_predawn_mode %||% "static"
@@ -1365,31 +1392,65 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
         if (identical(predawn_mode, "dynamic")) {
           lat <- input$dyn_latitude
           lon <- input$dyn_longitude
-          if (is.null(lat) || is.na(lat) || is.null(lon) || is.na(lon)) {
+          # A missing numericInput is NULL, but a cleared one is numeric(0),
+          # and `||` on a zero-length value is an error from R 4.3 onward.
+          usable <- function(x) length(x) == 1 && !is.na(x)
+          if (!usable(lat) || !usable(lon)) {
             stop("Latitude and longitude are required for Dynamic mode. ",
                  "Enter coordinates in the panel above or in Step 2 → Tree Properties.")
           }
-          tryCatch({
+          trace_stage("computing dawn times via suncalc")
+          # The fallback below used `<<-`, but predawn_mode and predawn_range are
+          # local to this handler, so `<<-` wrote past them into the module scope
+          # and the fallback never took effect -- execution continued in dynamic
+          # mode with dawn_times = NULL, which then hit a stop() inside
+          # find_dual_stable_periods(). Return the value instead.
+          dawn_times <- tryCatch({
             dates <- unique(as.Date(vh_data$datetime))
             dawn_df <- suncalc::getSunlightTimes(
               date = dates, lat = lat, lon = lon, keep = "dawn",
               tz = tz %||% Sys.timezone()
             )
-            dawn_times <- dawn_df$dawn
+            dawn_df$dawn
           }, error = function(e) {
+            message("[dual-stable] dawn computation failed: ", conditionMessage(e))
             showNotification(
-              paste("Could not compute dawn times:", e$message,
+              paste("Could not compute dawn times:", conditionMessage(e),
                     "— falling back to static mode."),
               type = "warning", duration = 6
             )
-            predawn_mode <<- "static"
-            predawn_range <<- c(abs(vals[1]), abs(vals[2]))
+            NULL
           })
+
+          if (is.null(dawn_times)) {
+            # Fall back to the static window. The dynamic slider holds hours
+            # *before dawn*, which are not valid clock hours, so use the static
+            # panel's values rather than reinterpreting the dynamic ones.
+            predawn_mode <- "static"
+            predawn_range <- c(as.integer(input$static_start_hr %||% 2),
+                               as.integer(input$static_end_hr   %||% 6))
+            trace_stage("fell back to static window ",
+                        predawn_range[1], "-", predawn_range[2], "h")
+          }
         }
 
         # Detect dual-stable periods. We deliberately pass timezone = NULL
         # because data is already in local time (even if tagged as UTC during import).
         # Passing 'tz' here would cause with_tz to shift the clock hours incorrectly.
+        # Report the arguments before the call. A NULL here (an input the UI
+        # never created) shows up as "NULL" and is the first thing to check.
+        describe <- function(x) if (is.null(x)) "NULL" else paste(x, collapse = ", ")
+        trace_stage("calling find_dual_stable_periods(): ",
+                    "vh_col=", vh_col, " method=", describe(method),
+                    " sensor=", describe(sensor),
+                    " mode=", describe(predawn_mode),
+                    " window=", describe(predawn_range),
+                    " vpd_threshold=", describe(input$dual_vpd_threshold),
+                    " vpd_stability=", describe(input$dual_vpd_stability),
+                    " vh_threshold=", describe(input$dual_vh_threshold),
+                    " vh_stability=", describe(input$dual_vh_stability),
+                    " min_segment_days=", describe(input$dual_min_segment_days))
+
         dual_stable_result <- sapfluxr::find_dual_stable_periods(
           vh_data = vh_data,
           weather_data = weather_data,
@@ -1412,6 +1473,9 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
 
         # Hide waiter
         waiter$hide()
+        trace_stage("detection returned ",
+                    length(dual_stable_result$dual_stable_dates),
+                    " dual-stable date(s)")
 
         if (length(dual_stable_result$dual_stable_dates) == 0) {
           # No dual-stable periods detected
@@ -1490,8 +1554,16 @@ correctionsServer <- function(id, vh_results, heat_pulse_data, probe_config, woo
 
       }, error = function(e) {
         waiter$hide()
+        # Also report to the console: a toast disappears after ten seconds and
+        # cannot be copied into a bug report, which is why this page has been
+        # undiagnosable from a distance.
+        message("[dual-stable] ERROR: ", conditionMessage(e))
+        if (!is.null(conditionCall(e))) {
+          message("[dual-stable] call : ", deparse(conditionCall(e))[1])
+        }
+        utils::flush.console()
         showNotification(
-          paste("Error detecting dual-stable periods:", e$message),
+          paste("Error detecting dual-stable periods:", conditionMessage(e)),
           type = "error",
           duration = 10
         )
