@@ -27,7 +27,7 @@ Built on the [sapfluxr](https://github.com/neez777/sapfluxr) R package. The app 
 
 The app is **not** an installable R package — it is a Shiny app you download and run from its own directory. Installation therefore has four steps: toolchain → `sapfluxr` → the app files → the Shiny dependencies.
 
-**Requirements:** R \>= 4.0.0, plus a C++ toolchain for the `sapfluxr` step below.
+**Requirements:** R \>= 4.4.0, plus a C++ toolchain for the `sapfluxr` step below. The app checks the R version at startup and refuses to launch on anything older.
 
 ### 1. Install a C++ toolchain
 
@@ -77,12 +77,14 @@ Or install the full set explicitly (works from any working directory):
 ``` r
 install.packages(c(
   "shiny", "shinydashboard", "shinyWidgets", "shinyjs", "shinycssloaders",
-  "fresh", "plotly", "DT", "waiter", "leaflet", "webshot2",
+  "fresh", "plotly", "DT", "waiter", "leaflet", "htmlwidgets",
   "dplyr", "tidyr", "purrr", "readr", "yaml", "lubridate", "ggplot2",
   "scales", "rlang", "progressr", "suncalc", "R6",
   "lutz", "zip"
 ))
 ```
+
+You do not have to get this list right by hand. The app checks all of them at startup and, if any are missing, stops with a single `install.packages()` line naming exactly what to install.
 
 ### 5. Run the app
 
@@ -120,6 +122,7 @@ remotes::install_github("neez777/sapfluxr")   # underlying package
 | `cannot open file 'modules/...'` | `runApp()` was pointed somewhere other than the app directory (step 5) |
 | Compilation errors installing `sapfluxr` | C++ toolchain missing or mismatched (step 1); on Windows check the Rtools version matches your R version |
 | `install_deps()` cannot find `sapfluxr` | You are running it before step 2, or from the wrong working directory |
+| Anything else, on a machine where the app has not run before | Run `Rscript inst/diagnostics/env_report.R` from the app directory and include its output in the bug report — it lists your R version, library paths, and every dependency version |
 
 ## Features
 

@@ -52,6 +52,23 @@ local({
     }
     stop(msg, call. = FALSE)
   }
+
+  # Updating the app without updating the package is the easiest step to miss:
+  # `git pull` refreshes this directory but leaves the installed sapfluxr alone,
+  # so the app can be current while the analysis code behind it is not. Check the
+  # version rather than only that it loads.
+  min_sapfluxr <- "0.9.2"
+  have_sapfluxr <- utils::packageVersion("sapfluxr")
+  if (have_sapfluxr < min_sapfluxr) {
+    stop(
+      "This app needs sapfluxr >= ", min_sapfluxr,
+      ", but version ", have_sapfluxr, " is installed.\n",
+      "Updating the app does not update the package. Update it with:\n",
+      '  remotes::install_github("neez777/sapfluxr")\n',
+      "then restart R before relaunching.",
+      call. = FALSE
+    )
+  }
 })
 
 library(shiny)
