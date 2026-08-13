@@ -57,7 +57,7 @@ local({
   # `git pull` refreshes this directory but leaves the installed sapfluxr alone,
   # so the app can be current while the analysis code behind it is not. Check the
   # version rather than only that it loads.
-  min_sapfluxr <- "0.9.2"
+  min_sapfluxr <- "0.9.3"
   have_sapfluxr <- utils::packageVersion("sapfluxr")
   if (have_sapfluxr < min_sapfluxr) {
     stop(
